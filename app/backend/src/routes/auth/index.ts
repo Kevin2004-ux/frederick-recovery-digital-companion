@@ -1,12 +1,11 @@
-import { acceptConsent, findUserById } from "../../repositories/userRepo.js";
-
+// app/backend/src/routes/auth/index.ts
 import { Router } from "express";
 import { z } from "zod";
 
-import { createUser, findUserByEmail } from "../../repositories/userRepo.js";
-import { hashPassword, verifyPassword } from "../../utils/password.js";
+import { acceptConsent, createUser, findUserByEmail, findUserById } from "../../repositories/userRepo.js";
+import { requireAuth } from "../../middleware/requireAuth.js";
 import { signAccessToken } from "../../utils/jwt.js";
-import { requireAuth, type AuthedRequest } from "../../middleware/requireAuth.js";
+import { hashPassword, verifyPassword } from "../../utils/password.js";
 
 export const authRouter = Router();
 
@@ -71,11 +70,11 @@ authRouter.post("/login", async (req, res) => {
 });
 
 authRouter.get("/me", requireAuth, (req, res) => {
-  const { user } = req as AuthedRequest;
-  return res.json({ user });
+  return res.json({ user: req.user });
 });
+
 authRouter.get("/consent", requireAuth, (req, res) => {
-  const user = findUserById((req as AuthedRequest).user.id);
+  const user = findUserById(req.user!.id);
   return res.json({
     accepted: Boolean(user?.consentAcceptedAt),
     acceptedAt: user?.consentAcceptedAt ?? null,
@@ -83,8 +82,7 @@ authRouter.get("/consent", requireAuth, (req, res) => {
 });
 
 authRouter.post("/consent", requireAuth, (req, res) => {
-  const userId = (req as AuthedRequest).user.id;
+  const userId = req.user!.id;
   acceptConsent(userId);
-
   return res.status(204).send();
 });
