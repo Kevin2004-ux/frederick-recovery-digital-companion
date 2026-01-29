@@ -11,4 +11,6 @@ coverage
 .env.*.local
 .vscode
 .idea
+*.csv
+*.json
 
