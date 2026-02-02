@@ -18,4 +18,15 @@ coverage
 !package.json
 !app/frontend/package.json
 !app/backend/package.json
+# Required JSON manifests and TS configs
+!package.json
+!app/**/package.json
+!app/frontend/tsconfig.json
+!app/frontend/tsconfig.*.json
+!app/frontend/tsconfig.app.json
+!app/frontend/tsconfig.node.json
+!app/backend/tsconfig.json
+!app/backend/tsconfig.*.json
+!tsconfig.json
+!tsconfig.*.json
 
