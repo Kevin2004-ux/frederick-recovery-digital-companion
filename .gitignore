@@ -14,4 +14,8 @@ coverage
 *.csv
 *.json
 !pnpm-lock.yaml
+# Allow package manifests (required for builds)
+!package.json
+!app/frontend/package.json
+!app/backend/package.json
 
