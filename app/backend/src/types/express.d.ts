@@ -1,14 +1,12 @@
 // app/backend/src/types/express.d.ts
-import "express";
+import "express-serve-static-core";
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id: string;
-        email: string;
-      };
-    }
+declare module "express-serve-static-core" {
+  interface Request {
+    user?: {
+      id: string;
+      email?: string;
+    };
   }
 }
 
