@@ -6,7 +6,15 @@ export type ApiErrorCode =
   | "ONBOARDING_REQUIRED"
   | "ENTRY_ALREADY_EXISTS"
   | "VALIDATION_ERROR"
-  | "UNKNOWN_ERROR";
+  | "NOT_FOUND"
+  | "USER_NOT_FOUND"
+  | "EMAIL_ALREADY_EXISTS"
+  | "EMAIL_NOT_VERIFIED"
+  | "INVALID_CREDENTIALS"
+  | "INVALID_CODE"
+  | "CODE_EXPIRED"
+  | "UNKNOWN_ERROR"
+
 
 export type ApiError = {
   status: number;
@@ -44,7 +52,7 @@ async function parseError(res: Response): Promise<ApiError> {
   try {
     data = await res.json();
   } catch {
-    // ignore – response body is not JSON
+    // ignore
   }
 
   const payload = isErrorPayload(data) ? data : undefined;
@@ -73,7 +81,6 @@ async function parseError(res: Response): Promise<ApiError> {
 }
 
 function handleGate(err: ApiError) {
-  // CRITICAL routing behavior
   if (err.status === 401 && err.code === "UNAUTHORIZED") {
     clearToken();
     safeNavigate("/login");
@@ -97,7 +104,6 @@ export async function api<T>(
 
   headers.set("Accept", "application/json");
 
-  // only set JSON headers when we are sending JSON
   const hasJson = typeof init.json !== "undefined";
   if (hasJson) headers.set("Content-Type", "application/json");
 
@@ -116,17 +122,13 @@ export async function api<T>(
     throw err;
   }
 
-  // 204 no content
   if (res.status === 204) return undefined as T;
 
-  // Some endpoints return files; caller should use fetch directly for downloads.
   const ct = res.headers.get("content-type") ?? "";
   if (!ct.includes("application/json")) {
-    // best-effort: return blob
     const blob = await res.blob();
     return blob as unknown as T;
   }
 
   return (await res.json()) as T;
 }
- 

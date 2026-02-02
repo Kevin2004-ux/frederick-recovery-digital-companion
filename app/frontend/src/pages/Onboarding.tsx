@@ -9,7 +9,7 @@ import { Alert } from "@/components/ui/alert";
 import { Loader2, ArrowRight } from "lucide-react";
 
 type Profile = {
-  procedureCode: string;
+  procedureName: string;
   recoveryStartDate: string; // YYYY-MM-DD
 };
 
@@ -31,21 +31,22 @@ function formatError(e: unknown): string {
 export default function Onboarding() {
   const navigate = useNavigate();
 
-  const [procedureCode, setProcedureCode] = useState("");
+  const [procedureName, setProcedureName] = useState("");
   const [recoveryStartDate, setRecoveryStartDate] = useState(todayLocalYYYYMMDD());
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const canSubmit = useMemo(() => {
-    return procedureCode.trim().length > 0 && recoveryStartDate.length === 10 && !loading;
-  }, [procedureCode, recoveryStartDate, loading]);
+    return procedureName.trim().length > 0 && recoveryStartDate.length === 10 && !loading;
+  }, [procedureName, recoveryStartDate, loading]);
 
   async function onSubmit() {
     setError(null);
     setLoading(true);
+
     const payload: Profile = {
-      procedureCode: procedureCode.trim(),
+      procedureName: procedureName.trim(),
       recoveryStartDate,
     };
 
@@ -72,14 +73,14 @@ export default function Onboarding() {
 
       <div className="mt-6 space-y-4">
         <div className="space-y-2">
-          <label className="text-sm font-medium">Procedure code</label>
+          <label className="text-sm font-medium">Procedure name</label>
           <Input
-            value={procedureCode}
-            onChange={(e) => setProcedureCode(e.target.value)}
-            placeholder="e.g., RHINO-2026-01"
+            value={procedureName}
+            onChange={(e) => setProcedureName(e.target.value)}
+            placeholder="e.g., Rhinoplasty"
           />
           <p className="text-xs text-muted-foreground">
-            Use whatever your clinic provided (or any short label).
+            Use the name your clinic used (or type something simple you’ll recognize).
           </p>
         </div>
 
@@ -98,11 +99,7 @@ export default function Onboarding() {
           </Alert>
         ) : null}
 
-        <Button
-          className="w-full rounded-xl"
-          onClick={onSubmit}
-          disabled={!canSubmit}
-        >
+        <Button className="w-full rounded-xl" onClick={onSubmit} disabled={!canSubmit}>
           {loading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

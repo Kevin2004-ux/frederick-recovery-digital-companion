@@ -10,10 +10,11 @@ dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 // IMPORTANT: dynamic imports so env.ts parses AFTER dotenv loads
 const { createApp } = await import("./app.js");
-const { env } = await import("./config/env.js");
+const { getEnv } = await import("./config/env.js");
 
 const app = createApp();
 
+const env = getEnv();
 app.listen(env.API_PORT, () => {
   console.log(`API listening on http://localhost:${env.API_PORT}`);
 });

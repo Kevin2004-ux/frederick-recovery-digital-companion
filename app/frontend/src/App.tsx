@@ -3,6 +3,8 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-
 import { setApiNavigator } from "@/api/client";
 
 import Login from "@/pages/Login.tsx";
+import Signup from "@/pages/Signup.tsx";
+import Verify from "@/pages/Verify.tsx";
 import Consent from "@/pages/Consent.tsx";
 import Onboarding from "@/pages/Onboarding.tsx";
 import RecoveryLog from "@/pages/RecoveryLog.tsx";
@@ -17,20 +19,19 @@ function NavigatorBridge() {
   return null;
 }
 
+function pageLabel(pathname: string): string {
+  if (pathname.startsWith("/login")) return "Login";
+  if (pathname.startsWith("/signup")) return "Create account";
+  if (pathname.startsWith("/verify")) return "Verify email";
+  if (pathname.startsWith("/consent")) return "Consent";
+  if (pathname.startsWith("/onboarding")) return "Onboarding";
+  if (pathname.startsWith("/log")) return "Recovery log";
+  return "Frederick Recovery";
+}
+
 function AppShell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-
-  const steps = [
-    { label: "Login", path: "/login" },
-    { label: "Consent", path: "/consent" },
-    { label: "Onboarding", path: "/onboarding" },
-    { label: "Log", path: "/log" },
-  ];
-
-  const activeIndex = Math.max(
-    0,
-    steps.findIndex((s) => location.pathname.startsWith(s.path))
-  );
+  const label = pageLabel(location.pathname);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -43,36 +44,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
             Recovery Companion
           </h1>
 
-          <div className="mt-4 flex items-center justify-between gap-2">
-            {steps.map((s, i) => {
-              const isActive = i === activeIndex;
-              const isDone = i < activeIndex;
-              return (
-                <div key={s.path} className="flex-1">
-                  <div
-                    className={[
-                      "h-2 w-full rounded-full",
-                      isActive
-                        ? "bg-foreground"
-                        : isDone
-                          ? "bg-muted-foreground/60"
-                          : "bg-muted",
-                    ].join(" ")}
-                  />
-                  <div
-                    className={[
-                      "mt-2 text-[11px]",
-                      isActive
-                        ? "text-foreground"
-                        : "text-muted-foreground",
-                    ].join(" ")}
-                  >
-                    {s.label}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <div className="mt-4 text-sm font-medium text-foreground">{label}</div>
         </div>
 
         {children}
@@ -93,10 +65,15 @@ export default function App() {
       <AppShell>
         <Routes>
           <Route path="/" element={<Navigate to="/login" replace />} />
+
           <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/verify" element={<Verify />} />
+
           <Route path="/consent" element={<Consent />} />
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/log" element={<RecoveryLog />} />
+
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AppShell>

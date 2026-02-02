@@ -1,0 +1,53 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String   @id @default(uuid())
+  email                 String   @unique
+  passwordHash          String
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // consent + onboarding
+  consentAcceptedAt     DateTime?
+
+  // canonical + legacy
+  procedureName         String?
+  procedureCode         String?  // legacy compatibility
+  recoveryStartDate     String?  // keep as YYYY-MM-DD string
+
+  // email verification
+  emailVerifiedAt       DateTime?
+  verificationCode      String?
+  verificationExpiresAt DateTime?
+
+  logEntries            LogEntry[]
+}
+
+model LogEntry {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date          String   // YYYY-MM-DD (string avoids timezone bugs)
+
+  painLevel     Int
+  swellingLevel Int
+  notes         String?
+
+  schemaVersion Int      @default(1)
+  details       Json?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}

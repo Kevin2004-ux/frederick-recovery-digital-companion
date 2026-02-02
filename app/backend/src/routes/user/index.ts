@@ -11,22 +11,21 @@ userRouter.use(requireAuth);
 userRouter.use(requireConsent);
 
 const profileSchema = z.object({
-  procedureCode: z.string().min(1, "procedureCode is required"),
-  recoveryStartDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "recoveryStartDate must be YYYY-MM-DD"),
+  procedureName: z.string().min(1).optional(),
+  procedureCode: z.string().min(1).optional(), // legacy compatibility
+  recoveryStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
 });
 
-userRouter.get("/profile", (req, res) => {
+userRouter.get("/profile", async (req, res) => {
   try {
-    const profile = getUserProfile(req.user!.id);
+    const profile = await getUserProfile(req.user!.id);
     return res.status(200).json({ profile });
   } catch {
     return res.status(404).json({ code: "USER_NOT_FOUND" });
   }
 });
 
-userRouter.put("/profile", (req, res) => {
+userRouter.put("/profile", async (req, res) => {
   const parsed = profileSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
@@ -38,8 +37,27 @@ userRouter.put("/profile", (req, res) => {
     });
   }
 
+  // Normalize: prefer procedureName, fall back to legacy procedureCode
+  const procedureName = parsed.data.procedureName ?? parsed.data.procedureCode;
+
+  if (!procedureName) {
+    return res.status(400).json({
+      code: "VALIDATION_ERROR",
+      issues: [
+        {
+          path: "procedureName",
+          message: "Procedure name is required",
+        },
+      ],
+    });
+  }
+
   try {
-    const profile = updateUserProfile(req.user!.id, parsed.data);
+    const profile = await updateUserProfile(req.user!.id, {
+      procedureName,
+      recoveryStartDate: parsed.data.recoveryStartDate,
+    });
+
     return res.status(200).json({ profile });
   } catch {
     return res.status(404).json({ code: "USER_NOT_FOUND" });

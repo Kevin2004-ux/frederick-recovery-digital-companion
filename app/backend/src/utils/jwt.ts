@@ -1,16 +1,18 @@
+// app/backend/src/utils/jwt.ts
 import jwt from "jsonwebtoken";
-import { env } from "../config/env.js";
+import { getEnv } from "../config/env.js";
 
-export type AuthTokenPayload = {
-  sub: string; // user id
-  email: string;
-};
-
-export function signAccessToken(payload: AuthTokenPayload) {
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: "7d" });
+export function signAccessToken(params: { sub: string; email: string }) {
+  const env = getEnv();
+  return jwt.sign(
+    { sub: params.sub, email: params.email },
+    env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
 }
 
-export function verifyAccessToken(token: string): AuthTokenPayload {
-  const decoded = jwt.verify(token, env.JWT_SECRET);
-  return decoded as AuthTokenPayload;
+export function verifyAccessToken(token: string): { sub: string; email: string } {
+  const env = getEnv();
+  const payload = jwt.verify(token, env.JWT_SECRET) as any;
+  return { sub: payload.sub, email: payload.email };
 }

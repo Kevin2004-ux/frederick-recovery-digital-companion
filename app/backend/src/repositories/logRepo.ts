@@ -3,12 +3,17 @@
 
 export type RecoveryLogEntry = {
   date: string; // YYYY-MM-DD
+
+  // Core metrics (always present, even in v2)
   painLevel: number; // 1–10
   swellingLevel: number; // 1–10
   notes?: string;
 
-  // Allows evolution of questionnaire over time
+  // Questionnaire version
   schemaVersion: number;
+
+  // NEW — extended questionnaire data (schemaVersion >= 2)
+  details?: Record<string, unknown>;
 };
 
 type EntryKey = `${string}:${string}`; // `${userId}:${date}`
@@ -21,7 +26,7 @@ function keyFor(userId: string, date: string): EntryKey {
 
 /**
  * Create a log entry for a user on a date.
- * Immutable (for now): throws if an entry already exists for that date.
+ * One per date per user.
  *
  * schemaVersion defaults to 1 unless explicitly provided.
  */
@@ -44,6 +49,40 @@ export function createEntry(
 
   entriesByUserAndDate.set(key, stored);
   return { ...stored };
+}
+
+/**
+ * Update-only: update an existing entry for a user/date.
+ * schemaVersion is preserved.
+ */
+export function updateEntry(
+  userId: string,
+  date: string,
+  patch: Pick<RecoveryLogEntry, "painLevel" | "swellingLevel" | "details"> & {
+    notes?: string;
+  }
+): RecoveryLogEntry {
+  const key = keyFor(userId, date);
+  const existing = entriesByUserAndDate.get(key);
+
+  if (!existing) {
+    const err = new Error("No entry exists for this date");
+    // @ts-expect-error lightweight error code
+    err.code = "NOT_FOUND";
+    throw err;
+  }
+
+  const updated: RecoveryLogEntry = {
+    ...existing,
+    painLevel: patch.painLevel,
+    swellingLevel: patch.swellingLevel,
+    notes: patch.notes,
+    details: patch.details ?? existing.details,
+    schemaVersion: existing.schemaVersion,
+  };
+
+  entriesByUserAndDate.set(key, updated);
+  return { ...updated };
 }
 
 /**

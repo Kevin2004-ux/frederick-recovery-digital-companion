@@ -1,30 +1,24 @@
 import { useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/api/client";
-import { setToken } from "@/auth/token";
 
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
-import { Loader2, LogIn, UserPlus } from "lucide-react";
-
-type AuthResponse = { token: string };
+import { Loader2, UserPlus, ArrowLeft } from "lucide-react";
 
 function formatError(e: unknown): string {
   const err = e as Partial<ApiError>;
   if (err?.code === "VALIDATION_ERROR") return "Please check the fields and try again.";
-  if (err?.code === "INVALID_CREDENTIALS" || err?.status === 401) return "Email or password is incorrect.";
-  if (err?.code === "EMAIL_NOT_VERIFIED") return "Please verify your email to continue.";
-  if (err?.code === "UNAUTHORIZED") return "Your session expired. Please log in again.";
+  if (err?.code === "EMAIL_ALREADY_EXISTS") return "That email is already in use. Try logging in.";
   return "Something went wrong. Please try again.";
 }
 
-export default function Login() {
+export default function Signup() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
 
-  const [email, setEmail] = useState(() => searchParams.get("email") ?? "");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
@@ -34,34 +28,16 @@ export default function Login() {
     return email.trim().length > 3 && password.length >= 8 && !loading;
   }, [email, password, loading]);
 
-  async function forward() {
-    try {
-      await api("/auth/me", { method: "GET" });
-      await api("/log/entries", { method: "GET" });
-      navigate("/log", { replace: true });
-    } catch (e) {
-      const err = e as Partial<ApiError>;
-      if (err?.code === "CONSENT_REQUIRED" || err?.code === "ONBOARDING_REQUIRED") return;
-      setError(formatError(e));
-    }
-  }
-
-  async function onLogin() {
+  async function onSignup() {
     setError(null);
     setLoading(true);
     try {
-      const res = await api<AuthResponse>("/auth/login", {
+      await api("/auth/signup", {
         method: "POST",
         json: { email: email.trim(), password },
       });
-      setToken(res.token);
-      await forward();
+      navigate(`/verify?email=${encodeURIComponent(email.trim())}`, { replace: true });
     } catch (e) {
-      const err = e as Partial<ApiError>;
-      if (err?.code === "EMAIL_NOT_VERIFIED") {
-        navigate(`/verify?email=${encodeURIComponent(email.trim())}`, { replace: true });
-        return;
-      }
       setError(formatError(e));
     } finally {
       setLoading(false);
@@ -71,9 +47,9 @@ export default function Login() {
   return (
     <Card className="rounded-2xl p-6 shadow-sm">
       <div className="space-y-2">
-        <h2 className="text-xl font-semibold">Welcome back</h2>
+        <h2 className="text-xl font-semibold">Create account</h2>
         <p className="text-sm text-muted-foreground">
-          Log in to track your daily recovery and export a shareable record.
+          We’ll send a 6-digit code to verify your email before you can log in.
         </p>
       </div>
 
@@ -93,7 +69,7 @@ export default function Login() {
           <label className="text-sm font-medium">Password</label>
           <Input
             type="password"
-            autoComplete="current-password"
+            autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
@@ -108,16 +84,16 @@ export default function Login() {
         ) : null}
 
         <div className="flex flex-col gap-3">
-          <Button className="w-full rounded-xl" onClick={onLogin} disabled={!canSubmit}>
+          <Button className="w-full rounded-xl" onClick={onSignup} disabled={!canSubmit}>
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Logging in…
+                Creating…
               </>
             ) : (
               <>
-                <LogIn className="mr-2 h-4 w-4" />
-                Log in
+                <UserPlus className="mr-2 h-4 w-4" />
+                Create account
               </>
             )}
           </Button>
@@ -125,11 +101,11 @@ export default function Login() {
           <Button
             variant="outline"
             className="w-full rounded-xl"
-            onClick={() => navigate("/signup")}
+            onClick={() => navigate("/login")}
             disabled={loading}
           >
-            <UserPlus className="mr-2 h-4 w-4" />
-            Create account
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to login
           </Button>
         </div>
       </div>

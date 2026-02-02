@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, ApiError } from "@/api/client";
-import { getToken } from "@/auth/token";
+import { useNavigate } from "react-router-dom";
+
+import { api } from "@/api/client";
+import { clearToken } from "@/auth/token";
+
+import CheckInWizard, { WizardState } from "@/components/log/CheckInWizard";
+import { WeekLogPicker } from "@/components/log/WeekLogPicker";
+import { DayEntrySummary } from "@/components/log/DayEntrySummary";
+import {
+  buildClinicianReportHtml,
+  downloadPdfReport,
+} from "@/components/log/reportExport";
 
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Alert } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
-import { Download, Loader2, PlusCircle } from "lucide-react";
+
+import { Eye, Download } from "lucide-react";
 
 type LogEntry = {
   date: string; // YYYY-MM-DD
@@ -16,6 +23,12 @@ type LogEntry = {
   swellingLevel: number; // 1-10
   notes?: string;
   schemaVersion: number;
+  details?: Record<string, unknown>;
+};
+
+type Profile = {
+  procedureName: string;
+  recoveryStartDate: string; // YYYY-MM-DD
 };
 
 function todayLocalYYYYMMDD(): string {
@@ -26,78 +39,58 @@ function todayLocalYYYYMMDD(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function formatError(e: unknown): string {
-  const err = e as Partial<ApiError>;
-  if (err?.code === "VALIDATION_ERROR") return "Please check the fields and try again.";
-  if (err?.code === "ENTRY_ALREADY_EXISTS") return "An entry for this date already exists.";
-  return "Something went wrong. Please try again.";
+function parseLocalDateYYYYMMDD(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  // local midnight
+  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
 }
 
-/**
- * Downloads exports (JSON/CSV) using raw fetch because these are file responses.
- * NOTE: this does not auto-handle gate routing the way api() does.
- * If token is invalid due to backend restart, the download may fail—user will then
- * naturally hit an api() call and be routed to /login.
- */
-async function downloadFile(path: string, filename: string) {
-  const token = getToken();
-  const base = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+function isWithinLastNDays(dateStr: string, n: number): boolean {
+  const dt = parseLocalDateYYYYMMDD(dateStr);
 
-  const res = await fetch(`${base}${path}`, {
-    method: "GET",
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
-  if (!res.ok) {
-    throw new Error(`Download failed (${res.status})`);
-  }
+  const min = new Date(today);
+  min.setDate(min.getDate() - (n - 1));
 
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-
-  URL.revokeObjectURL(url);
+  return dt >= min && dt <= today;
 }
 
 export default function RecoveryLog() {
+  const navigate = useNavigate();
+
+  function onLogout() {
+    clearToken();
+    navigate("/login", { replace: true });
+  }
+
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [loadingList, setLoadingList] = useState(false);
 
-  const [date, setDate] = useState(todayLocalYYYYMMDD());
-  const [painLevel, setPainLevel] = useState(5);
-  const [swellingLevel, setSwellingLevel] = useState(5);
-  const [notes, setNotes] = useState("");
+  const [profile, setProfile] = useState<Profile | null>(null);
 
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // View UI
+  const [viewOpen, setViewOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(todayLocalYYYYMMDD());
 
-  const [submitLoading, setSubmitLoading] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+  // Wizard UI state
+  const [wizardDate, setWizardDate] = useState(todayLocalYYYYMMDD());
+  const [wizardMode, setWizardMode] = useState<"create" | "edit">("create");
+  const [wizardInitial, setWizardInitial] = useState<
+    Partial<WizardState> | undefined
+  >(undefined);
+  const [wizardKey, setWizardKey] = useState(0);
 
-  const [exportLoading, setExportLoading] = useState<"json" | "csv" | null>(null);
-  const [exportError, setExportError] = useState<string | null>(null);
-
-  const isDuplicateForSelectedDate = useMemo(() => {
-    return entries.some((e) => e.date === date);
-  }, [entries, date]);
+  const todayEntry = useMemo(
+    () => entries.find((e) => e.date === todayLocalYYYYMMDD()) ?? null,
+    [entries]
+  );
 
   async function loadEntries(): Promise<LogEntry[]> {
     setLoadingList(true);
     try {
-      const qs = new URLSearchParams();
-      if (from) qs.set("from", from);
-      if (to) qs.set("to", to);
-
-      const path = qs.toString() ? `/log/entries?${qs.toString()}` : "/log/entries";
-      const data = await api<LogEntry[]>(path, { method: "GET" });
-
+      const data = await api<LogEntry[]>("/log/entries", { method: "GET" });
       // Newest first in UI
       const sorted = [...data].sort((a, b) => (a.date < b.date ? 1 : -1));
       setEntries(sorted);
@@ -112,287 +105,230 @@ export default function RecoveryLog() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function onApplyFilter() {
-    await loadEntries();
+  useEffect(() => {
+    api<Profile>("/user/profile", { method: "GET" })
+      .then(setProfile)
+      .catch(() => setProfile(null));
+  }, []);
+
+  // Keep wizard mode synced for today when user is on today
+  useEffect(() => {
+    const today = todayLocalYYYYMMDD();
+    const existing = entries.find((e) => e.date === today) ?? null;
+    if (wizardDate !== today) return;
+
+    setWizardMode(existing ? "edit" : "create");
+    setWizardInitial(
+      existing
+        ? {
+            painLevel: existing.painLevel,
+            notes: existing.notes ?? "",
+          }
+        : undefined
+    );
+  }, [entries, wizardDate]);
+
+  function openWizardForDate(targetDate: string) {
+    const existing = entries.find((e) => e.date === targetDate) ?? null;
+
+    setWizardDate(targetDate);
+    setWizardMode(existing ? "edit" : "create");
+    setWizardInitial(
+      existing
+        ? {
+            painLevel: existing.painLevel,
+            notes: existing.notes ?? "",
+          }
+        : undefined
+    );
+
+    setWizardKey((k) => k + 1);
   }
 
-  async function onSubmit() {
-    setSubmitError(null);
-    setSubmitSuccess(null);
-
-    setSubmitLoading(true);
-    try {
+  async function saveWizardSnapshot(payload: {
+    painLevel: number;
+    swellingLevel: number;
+    notes?: string;
+    details: Record<string, unknown>;
+  }) {
+    if (wizardMode === "edit") {
+      await api<LogEntry>(`/log/entries/${encodeURIComponent(wizardDate)}`, {
+        method: "PUT",
+        json: {
+          painLevel: payload.painLevel,
+          swellingLevel: payload.swellingLevel,
+          notes: payload.notes,
+          details: payload.details,
+        },
+      });
+    } else {
       await api<LogEntry>("/log/entries", {
         method: "POST",
         json: {
-          date,
-          painLevel,
-          swellingLevel,
-          notes: notes.trim() ? notes.trim() : undefined,
+          date: wizardDate,
+          painLevel: payload.painLevel,
+          swellingLevel: payload.swellingLevel,
+          notes: payload.notes,
+          schemaVersion: 2,
+          details: payload.details,
         },
       });
-
-      setSubmitSuccess("Saved. Nice job staying consistent.");
-      setNotes("");
-
-      // Refresh list — but don't punish user if refresh fails
-      try {
-        await loadEntries();
-      } catch {
-        // ignore list refresh errors
-      }
-    } catch (e) {
-      const err = e as Partial<ApiError>;
-
-      if (err?.code === "ENTRY_ALREADY_EXISTS") {
-        setSubmitError("You already submitted an entry for this date.");
-        return;
-      }
-
-      // IMPORTANT FIX:
-      // Sometimes a request can succeed but the UI sees an error (network blip, non-JSON edge case, etc.).
-      // We re-load the list and verify whether today's entry exists. If it does, treat as saved.
-      try {
-        const refreshed = await loadEntries();
-        const nowExists = refreshed.some((en) => en.date === date);
-        if (nowExists) {
-          setSubmitSuccess("Saved (confirmed).");
-          setSubmitError(null);
-          setNotes("");
-          return;
-        }
-      } catch {
-        // ignore; show error below
-      }
-
-      setSubmitError(formatError(e));
-    } finally {
-      setSubmitLoading(false);
     }
+
+    await loadEntries();
   }
 
-  async function onExportJson() {
-    setExportError(null);
-    setExportLoading("json");
-    try {
-      await downloadFile("/log/entries/export", "frederick-recovery-log.json");
-    } catch {
-      setExportError("Could not download JSON export.");
-    } finally {
-      setExportLoading(null);
-    }
+  async function onDownloadReport() {
+    // Pull all entries, then filter to rolling 30 days
+    const all = await api<LogEntry[]>("/log/entries", { method: "GET" });
+    const last30 = all.filter((e) => isWithinLastNDays(e.date, 30));
+
+    // Fallback profile if not loaded (should be rare)
+    const safeProfile: Profile = profile ?? {
+      procedureName: "Procedure",
+      recoveryStartDate: todayLocalYYYYMMDD(),
+    };
+
+    const html = buildClinicianReportHtml({
+      profile: safeProfile,
+      entries: last30,
+      rangeLabel: "Last 30 days (rolling)",
+    });
+
+    const filename = `frederick-recovery-report-${todayLocalYYYYMMDD()}.pdf`;
+    await downloadPdfReport(filename, html);
   }
 
-  async function onExportCsv() {
-    setExportError(null);
-    setExportLoading("csv");
-    try {
-      await downloadFile("/log/entries/export.csv", "frederick-recovery-log.csv");
-    } catch {
-      setExportError("Could not download CSV export.");
-    } finally {
-      setExportLoading(null);
-    }
-  }
+  const selectedEntry = useMemo(
+    () => entries.find((e) => e.date === selectedDate) ?? null,
+    [entries, selectedDate]
+  );
 
   return (
     <div className="space-y-4">
+      {/* Top bar */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold">Recovery Log</h1>
+        <Button variant="outline" className="rounded-xl" onClick={onLogout}>
+          Log out
+        </Button>
+      </div>
+
+      {/* Wizard-first card */}
       <Card className="rounded-2xl p-6 shadow-sm">
         <div className="space-y-1">
           <h2 className="text-xl font-semibold">Today’s check-in</h2>
           <p className="text-sm text-muted-foreground">
-            Track a quick snapshot. You can export anytime for your clinic.
+            Step-by-step check-in. You can export anytime for your clinic.
           </p>
         </div>
 
-        <div className="mt-5 space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Date</label>
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">Pain level</label>
-              <div className="text-sm text-muted-foreground">{painLevel}/10</div>
+        <div className="mt-4 rounded-xl border bg-muted/20 px-4 py-3 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <span className="font-medium">Date:</span>{" "}
+              <span className="font-mono">{wizardDate}</span>
+              {wizardDate === todayLocalYYYYMMDD() && todayEntry ? (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  (editing today)
+                </span>
+              ) : null}
             </div>
-            <input
-              className="w-full"
-              type="range"
-              min={1}
-              max={10}
-              value={painLevel}
-              onChange={(e) => setPainLevel(Number(e.target.value))}
-            />
+
+            {wizardDate !== todayLocalYYYYMMDD() ? (
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={() => openWizardForDate(todayLocalYYYYMMDD())}
+              >
+                Back to today
+              </Button>
+            ) : null}
           </div>
+        </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">Swelling level</label>
-              <div className="text-sm text-muted-foreground">{swellingLevel}/10</div>
-            </div>
-            <input
-              className="w-full"
-              type="range"
-              min={1}
-              max={10}
-              value={swellingLevel}
-              onChange={(e) => setSwellingLevel(Number(e.target.value))}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Notes (optional)</label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Sleep, meds, appetite, mobility, concerns…"
-              className="min-h-[96px]"
-            />
-          </div>
-
-          {submitSuccess ? (
-            <Alert className="rounded-xl">
-              <div className="text-sm">{submitSuccess}</div>
-            </Alert>
-          ) : null}
-
-          {submitError ? (
-            <Alert className="rounded-xl">
-              <div className="text-sm">{submitError}</div>
-            </Alert>
-          ) : null}
-
-          <Button
-            className="w-full rounded-xl"
-            onClick={onSubmit}
-            disabled={submitLoading || isDuplicateForSelectedDate}
-          >
-            {submitLoading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : isDuplicateForSelectedDate ? (
-              "Entry already exists for this date"
-            ) : (
-              <>
-                <PlusCircle className="mr-2 h-4 w-4" />
-                Save check-in
-              </>
-            )}
-          </Button>
+        <div className="mt-5">
+          <CheckInWizard
+            key={wizardKey}
+            mode={wizardMode}
+            date={wizardDate}
+            initial={wizardInitial}
+            onCancel={() => openWizardForDate(todayLocalYYYYMMDD())}
+            onSaveSnapshot={saveWizardSnapshot}
+          />
         </div>
       </Card>
 
+      {/* Log history: Week-at-a-time picker + details AFTER selection */}
       <Card className="rounded-2xl p-6 shadow-sm">
-        <div>
-          <h3 className="text-lg font-semibold">Your entries</h3>
-          <p className="text-sm text-muted-foreground">
-            Filter by date range if needed.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">Log history</h3>
+            <p className="text-sm text-muted-foreground">
+              Browse the last 30 days week-by-week. Tap a day to view details.
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={() => {
+                setSelectedDate(todayLocalYYYYMMDD());
+                setViewOpen(true);
+              }}
+              disabled={loadingList}
+            >
+              <Eye className="mr-2 h-4 w-4" />
+              View
+            </Button>
+
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={() => void onDownloadReport()}
+              disabled={loadingList}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Download
+            </Button>
+          </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">From</label>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">To</label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          </div>
-        </div>
-
-        <Button
-          className="mt-4 w-full rounded-xl"
-          variant="outline"
-          onClick={onApplyFilter}
-          disabled={loadingList}
-        >
-          {loadingList ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Loading…
-            </>
-          ) : (
-            "Apply filter"
-          )}
-        </Button>
-
-        <Separator className="my-5" />
-
-        {loadingList ? (
-          <div className="text-sm text-muted-foreground">Loading entries…</div>
-        ) : entries.length === 0 ? (
-          <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
-            No entries yet. Add your first check-in above.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {entries.map((e) => (
-              <div key={e.date} className="rounded-xl border p-4">
-                <div className="flex items-center justify-between">
-                  <div className="font-medium">{e.date}</div>
-                  <div className="text-xs text-muted-foreground">v{e.schemaVersion}</div>
-                </div>
-                <div className="mt-2 text-sm text-muted-foreground">
-                  Pain: <span className="text-foreground">{e.painLevel}/10</span> • Swelling:{" "}
-                  <span className="text-foreground">{e.swellingLevel}/10</span>
-                </div>
-                {e.notes ? <div className="mt-2 text-sm">{e.notes}</div> : null}
+        {viewOpen ? (
+          <div className="mt-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-muted-foreground">
+                Week view (last 30 days)
               </div>
-            ))}
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={() => setViewOpen(false)}
+              >
+                Close
+              </Button>
+            </div>
+
+            <WeekLogPicker
+              entries={entries}
+              selectedDate={selectedDate}
+              onSelectDate={setSelectedDate}
+              windowDays={30}
+              weekStartsOn={0}
+            />
+
+            {/* Details appear after selecting a date */}
+            <DayEntrySummary
+              selectedDate={selectedDate}
+              entry={selectedEntry}
+              onEdit={(d) => {
+                setViewOpen(false);
+                openWizardForDate(d);
+              }}
+            />
           </div>
-        )}
-
-        <Separator className="my-5" />
-
-        {exportError ? (
-          <Alert className="mb-4 rounded-xl">
-            <div className="text-sm">{exportError}</div>
-          </Alert>
         ) : null}
-
-        <div className="grid grid-cols-2 gap-3">
-          <Button
-            className="rounded-xl"
-            variant="outline"
-            onClick={onExportJson}
-            disabled={exportLoading !== null}
-          >
-            {exportLoading === "json" ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Exporting…
-              </>
-            ) : (
-              <>
-                <Download className="mr-2 h-4 w-4" />
-                JSON
-              </>
-            )}
-          </Button>
-
-          <Button
-            className="rounded-xl"
-            variant="outline"
-            onClick={onExportCsv}
-            disabled={exportLoading !== null}
-          >
-            {exportLoading === "csv" ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Exporting…
-              </>
-            ) : (
-              <>
-                <Download className="mr-2 h-4 w-4" />
-                CSV
-              </>
-            )}
-          </Button>
-        </div>
       </Card>
     </div>
   );
