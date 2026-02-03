@@ -4,11 +4,9 @@ import { getEnv } from "../config/env.js";
 
 export function signAccessToken(params: { sub: string; email: string }) {
   const env = getEnv();
-  return jwt.sign(
-    { sub: params.sub, email: params.email },
-    env.JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+  return jwt.sign({ sub: params.sub, email: params.email }, env.JWT_SECRET, {
+    expiresIn: "7d",
+  });
 }
 
 export function verifyAccessToken(token: string): { sub: string; email: string } {

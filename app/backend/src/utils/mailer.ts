@@ -1,7 +1,7 @@
 import { Resend } from "resend";
 
-const apiKey = process.env.RESEND_API_KEY;
-const from = process.env.MAIL_FROM;
+const apiKey = process.env.RESEND_API_KEY?.trim();
+const from = process.env.MAIL_FROM?.trim();
 
 const resend = apiKey ? new Resend(apiKey) : null;
 
@@ -11,14 +11,6 @@ export async function sendVerificationEmail(params: {
   expiresMinutes: number;
 }) {
   const to = params.to.trim().toLowerCase();
-
-  // Safe dev fallback: if Resend isn’t configured, log instead of failing signup.
-  if (!resend || !from) {
-    console.log(
-      `[FRDC] (mailer not configured) Verification code for ${to}: ${params.code} (expires in ${params.expiresMinutes}m)`
-    );
-    return;
-  }
 
   const subject = "Your Frederick Recovery verification code";
 
@@ -36,10 +28,40 @@ export async function sendVerificationEmail(params: {
     </div>
   `;
 
-  await resend.emails.send({
-    from,
-    to,
-    subject,
-    html,
-  });
+  // Safe fallback: if Resend isn’t configured, log instead of failing signup.
+  if (!resend || !from) {
+    console.log(
+      `[FRDC] (mailer not configured) Verification code for ${to}: ${params.code} (expires in ${params.expiresMinutes}m)`
+    );
+    return;
+  }
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from,
+      to,
+      subject,
+      html,
+    });
+
+    if (error) {
+      // This is where SPF / domain verification errors usually show up
+      console.error("[FRDC] Resend send failed:", error);
+      console.log(
+        `[FRDC] (fallback code) Verification code for ${to}: ${params.code} (expires in ${params.expiresMinutes}m)`
+      );
+      return;
+    }
+
+    if (data?.id) {
+      console.log(`[FRDC] Verification email sent to ${to} (id: ${data.id})`);
+    } else {
+      console.log(`[FRDC] Verification email sent to ${to}`);
+    }
+  } catch (err) {
+    console.error("[FRDC] Resend exception:", err);
+    console.log(
+      `[FRDC] (fallback code) Verification code for ${to}: ${params.code} (expires in ${params.expiresMinutes}m)`
+    );
+  }
 }
