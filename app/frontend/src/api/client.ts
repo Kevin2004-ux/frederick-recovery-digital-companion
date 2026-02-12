@@ -1,134 +1,123 @@
-import { clearToken, getToken } from "@/auth/token";
+// app/backend/src/prisma/seed.ts
+import { PrismaClient, RecoveryPlanCategory } from "@prisma/client";
 
-export type ApiErrorCode =
-  | "UNAUTHORIZED"
-  | "CONSENT_REQUIRED"
-  | "ONBOARDING_REQUIRED"
-  | "ENTRY_ALREADY_EXISTS"
-  | "VALIDATION_ERROR"
-  | "NOT_FOUND"
-  | "USER_NOT_FOUND"
-  | "EMAIL_ALREADY_EXISTS"
-  | "EMAIL_NOT_VERIFIED"
-  | "INVALID_CREDENTIALS"
-  | "INVALID_CODE"
-  | "CODE_EXPIRED"
-  | "UNKNOWN_ERROR"
+const prisma = new PrismaClient();
 
+/**
+ * Deterministic seed:
+ * - Always upserts the exact template version we intend to serve (v2)
+ * - Always uses the same JSON objects
+ * - Optional stable demo activation codes (enabled by env flag)
+ */
+async function main() {
+  // ✅ Seed the template version you are serving (v2)
+  const template = await prisma.recoveryPlanTemplate.upsert({
+    where: {
+      category_version: {
+        category: RecoveryPlanCategory.general_outpatient,
+        version: 2,
+      },
+    },
+    update: {
+      title: "General Outpatient Recovery Plan (Educational)",
+      planJson: defaultGeneralOutpatientPlanJsonV2(),
+      sourcesJson: defaultSourcesJson(),
+    },
+    create: {
+      category: RecoveryPlanCategory.general_outpatient,
+      version: 2,
+      title: "General Outpatient Recovery Plan (Educational)",
+      planJson: defaultGeneralOutpatientPlanJsonV2(),
+      sourcesJson: defaultSourcesJson(),
+    },
+  });
 
-export type ApiError = {
-  status: number;
-  code: ApiErrorCode;
-  message?: string;
-  issues?: unknown[];
-};
+  // ✅ Optional deterministic demo activation codes
+  // Turn on only when you want them:
+  //   SEED_DEMO_CODES=true pnpm -C app/backend exec prisma db seed
+  const seedDemoCodes = (process.env.SEED_DEMO_CODES ?? "").toLowerCase() === "true";
 
-type NavigateFn = (to: string, opts?: { replace?: boolean }) => void;
+  const demoCodes = ["FR-DEMO-0001", "FR-DEMO-0002", "FR-DEMO-0003"] as const;
 
-let navigate: NavigateFn | null = null;
-
-export function setApiNavigator(fn: NavigateFn) {
-  navigate = fn;
-}
-
-function safeNavigate(to: string) {
-  if (navigate) navigate(to, { replace: true });
-}
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
-
-/** Narrow unknown JSON into the shape we care about (without using `any`). */
-function isErrorPayload(v: unknown): v is {
-  code?: unknown;
-  message?: unknown;
-  issues?: unknown;
-} {
-  return typeof v === "object" && v !== null;
-}
-
-async function parseError(res: Response): Promise<ApiError> {
-  let data: unknown = null;
-
-  try {
-    data = await res.json();
-  } catch {
-    // ignore
+  if (seedDemoCodes) {
+    for (const code of demoCodes) {
+      await prisma.activationCode.upsert({
+        where: { code },
+        update: {}, // never overwrite a claimed code
+        create: {
+          code,
+          clinicTag: "local-test",
+          // status defaults to UNUSED if your schema does that
+        },
+      });
+    }
   }
 
-  const payload = isErrorPayload(data) ? data : undefined;
+  console.log("✅ Seed complete");
+  console.log("Template:", {
+    id: template.id,
+    category: template.category,
+    version: template.version,
+    title: template.title,
+    sourcesJsonPresent: template.sourcesJson != null,
+  });
 
-  const codeFromBody =
-    payload?.code && typeof payload.code === "string"
-      ? (payload.code as ApiErrorCode)
-      : undefined;
+  if (seedDemoCodes) {
+    console.log("Demo Activation Codes:", demoCodes);
+  } else {
+    console.log("Demo Activation Codes: (skipped) set SEED_DEMO_CODES=true to seed");
+  }
+}
 
-  const code: ApiErrorCode =
-    codeFromBody ?? (res.status === 401 ? "UNAUTHORIZED" : "UNKNOWN_ERROR");
-
-  const message =
-    payload?.message && typeof payload.message === "string"
-      ? payload.message
-      : undefined;
-
-  const issues = Array.isArray(payload?.issues) ? payload?.issues : undefined;
-
+/**
+ * Sources are for educational reference only.
+ * (These should be general, non-prescriptive, and NOT clinic-specific medical instructions.)
+ */
+function defaultSourcesJson() {
   return {
-    status: res.status,
-    code,
-    message,
-    issues,
+    schemaVersion: 1,
+    source: "MedlinePlus",
+    links: [
+      {
+        title: "Surgical wound care (general information)",
+        url: "https://medlineplus.gov/surgicalwoundcare.html",
+      },
+      {
+        title: "Pain medicines (general information)",
+        url: "https://medlineplus.gov/painrelievers.html",
+      },
+      {
+        title: "Preventing infections (general information)",
+        url: "https://medlineplus.gov/infectioncontrol.html",
+      },
+    ],
+    disclaimer:
+      "Educational information only. Not medical advice. Always follow your surgeon/clinician’s instructions. If you have urgent symptoms, contact your clinician or seek emergency care.",
   };
 }
 
-function handleGate(err: ApiError) {
-  if (err.status === 401 && err.code === "UNAUTHORIZED") {
-    clearToken();
-    safeNavigate("/login");
-    return;
-  }
-  if (err.status === 403 && err.code === "CONSENT_REQUIRED") {
-    safeNavigate("/consent");
-    return;
-  }
-  if (err.status === 403 && err.code === "ONBOARDING_REQUIRED") {
-    safeNavigate("/onboarding");
-    return;
-  }
+/**
+ * Template planJson is NOT your generated patient plan.
+ * Your “brain” (engine) generates the actual plan stored on RecoveryPlan.planJson.
+ *
+ * This is still useful as:
+ * - a stable placeholder contract
+ * - a place to version template-level metadata if needed later
+ */
+function defaultGeneralOutpatientPlanJsonV2() {
+  return {
+    schemaVersion: 2,
+    templateName: "general_outpatient",
+    notes: "Template placeholder. Actual plan is generated by engineVersion v1.",
+    days: [],
+  };
 }
 
-export async function api<T>(
-  path: string,
-  init: RequestInit & { json?: unknown } = {}
-): Promise<T> {
-  const headers = new Headers(init.headers);
-
-  headers.set("Accept", "application/json");
-
-  const hasJson = typeof init.json !== "undefined";
-  if (hasJson) headers.set("Content-Type", "application/json");
-
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers,
-    body: hasJson ? JSON.stringify(init.json) : init.body,
+main()
+  .catch((e) => {
+    console.error("❌ Seed failed", e);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
   });
-
-  if (!res.ok) {
-    const err = await parseError(res);
-    handleGate(err);
-    throw err;
-  }
-
-  if (res.status === 204) return undefined as T;
-
-  const ct = res.headers.get("content-type") ?? "";
-  if (!ct.includes("application/json")) {
-    const blob = await res.blob();
-    return blob as unknown as T;
-  }
-
-  return (await res.json()) as T;
-}

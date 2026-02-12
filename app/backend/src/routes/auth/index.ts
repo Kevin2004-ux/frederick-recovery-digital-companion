@@ -143,7 +143,13 @@ authRouter.post("/login", async (req, res) => {
   const ok = await verifyPassword(password, user.passwordHash);
   if (!ok) return res.status(401).json({ code: "INVALID_CREDENTIALS" });
 
-  const token = signAccessToken({ sub: user.id, email: user.email });
+  // FIXED: Now passing role to the JWT signer
+  const token = signAccessToken({ 
+    sub: user.id, 
+    email: user.email, 
+    role: user.role 
+  });
+
   return res.json({
     token,
     user: { id: user.id, email: user.email, role: user.role ?? "PATIENT" },

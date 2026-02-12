@@ -27,8 +27,11 @@ model User {
   email                 String   @unique
   passwordHash          String
 
-  // NEW: role-based auth (doctor/clinic users are CLINIC)
+  // role-based auth (doctor/clinic users are CLINIC)
   role                  UserRole @default(PATIENT)
+
+  // NEW: clinic identity for CLINIC users (enables ownership enforcement on activation codes)
+  clinicTag             String?
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -52,9 +55,11 @@ model User {
   claimedActivationCodes ActivationCode[] @relation("ActivationCodeClaimedByUser")
   recoveryPlanInstances  RecoveryPlanInstance[]
 
-  // NEW: audit links (optional)
-  createdActivationBatches ActivationBatch[] @relation("ActivationBatchCreatedBy")
-  capturedActivationConfigs ActivationCode[] @relation("ActivationCodeConfigCapturedByUser")
+  // audit links (optional)
+  createdActivationBatches   ActivationBatch[] @relation("ActivationBatchCreatedBy")
+  capturedActivationConfigs  ActivationCode[] @relation("ActivationCodeConfigCapturedByUser")
+
+  @@index([clinicTag])
 }
 
 model LogEntry {
@@ -90,9 +95,6 @@ model ClinicPlanConfig {
   activationCodes ActivationCode[]
 }
 
-//
-// NEW: Batch of activation codes for easy printing/export
-//
 model ActivationBatch {
   id              String    @id @default(uuid())
 
@@ -118,11 +120,11 @@ model ActivationCode {
   clinicTag       String?
   clinicConfig    ClinicPlanConfig?    @relation(fields: [clinicTag], references: [clinicTag])
 
-  // NEW: batch linkage
+  // batch linkage
   batchId         String?
   batch           ActivationBatch?     @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
-  // NEW: doctor-first workflow (categorical, non-PHI)
+  // doctor-first workflow (categorical, non-PHI)
   configJson              Json?
   configCapturedAt        DateTime?
   configCapturedByUserId  String?
@@ -178,9 +180,8 @@ model RecoveryPlanInstance {
   engineVersion    String
   startDate        String
 
-  // REQUIRED: categorical non-PHI config used to generate the plan
+  // categorical non-PHI config used to generate the plan
   configJson       Json
-
   planJson         Json
 
   createdAt        DateTime             @default(now())

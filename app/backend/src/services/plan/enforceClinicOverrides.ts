@@ -94,6 +94,17 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function normalizeDayNumber(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return 0;
+  // Keep audit + requiredByDay stable even if out of range
+  return Math.max(0, Math.min(1000, Math.floor(n)));
+}
+
+function normalizePhase(v: unknown): "early" | "mid" | "late" | "" {
+  return v === "early" || v === "mid" || v === "late" ? v : "";
+}
+
 /**
  * Enforce clinic overrides on a planJson that already includes:
  * - schemaVersion 2
@@ -150,7 +161,7 @@ export function enforceClinicOverrides(args: {
       if (modulesDict[id]) out.push(id);
       else auditPush?.({ type: "clinic_unknown_module_ignored", moduleId: id, reason });
     }
-    return out;
+    return uniqPreserveOrder(out);
   };
 
   const requiredGlobalKnown = filterKnown(requiredGlobal, "requiredModuleIds");
@@ -168,12 +179,11 @@ export function enforceClinicOverrides(args: {
   }
 
   const maxModulesPerDay = overrides.maxModulesPerDay;
-
   const days = (plan as any).days as any[];
 
   const newDays = days.map((dayObj) => {
-    const dayNum = Number(dayObj?.day);
-    const phase = String(dayObj?.phase ?? "");
+    const dayNum = normalizeDayNumber(dayObj?.day);
+    const phase = normalizePhase(dayObj?.phase);
 
     const original = Array.isArray(dayObj?.moduleIds) ? (dayObj.moduleIds as string[]) : [];
     let moduleIds = uniqPreserveOrder(original);
@@ -251,9 +261,13 @@ export function enforceClinicOverrides(args: {
       }
     }
 
-    // 5) Validate module ids exist in library (defensive; never output unknown ids)
-    // (Template/rules should already guarantee this, but clinic rules can reference bad ids)
+    // 5) Defensive: ensure only known module ids are output
     moduleIds = moduleIds.filter((id) => Boolean(modulesDict[id]));
+
+    // ✅ 5.5) Fail-closed: forbidden wins even if also listed as required
+    if (forbiddenGlobalSet.size > 0) {
+      moduleIds = removeAll(moduleIds, forbiddenGlobalSet);
+    }
 
     // 6) Cap per-day modules (deterministic: trim from end)
     if (typeof maxModulesPerDay === "number" && maxModulesPerDay > 0) {
@@ -272,6 +286,8 @@ export function enforceClinicOverrides(args: {
 
     return {
       ...dayObj,
+      day: dayNum, // keep normalized day
+      phase: phase || dayObj?.phase, // keep original if it was non-standard, otherwise normalized
       moduleIds,
     };
   });

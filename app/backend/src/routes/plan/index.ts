@@ -73,12 +73,14 @@ async function getLatestPlanInstanceForUser(userId: string) {
     },
   });
 }
+
 async function regenInstanceIfRequested(args: {
   instance: any;
   regen: boolean;
 }) {
   const { instance, regen } = args;
 
+  // DEV-only regen (ignored in prod)
   if (!regen || process.env.NODE_ENV === "production") {
     return instance;
   }
@@ -103,7 +105,7 @@ async function regenInstanceIfRequested(args: {
     category,
   });
 
-  // Persist regen to DB (your choice B)
+  // Persist regen to DB
   const updated = await prisma.recoveryPlanInstance.update({
     where: { id: instance.id },
     data: {
@@ -163,13 +165,8 @@ function resolvePlanForFrontend(shaped: any) {
 
   const resolvedDays = days.map((day: any) => {
     const moduleIds: string[] = Array.isArray(day?.moduleIds) ? day.moduleIds : [];
-
     const modulesResolved = moduleIds.map((id) => (modulesDict as any)[id]).filter(Boolean);
-
-    return {
-      ...day,
-      modulesResolved,
-    };
+    return { ...day, modulesResolved };
   });
 
   return {
@@ -192,26 +189,18 @@ function resolveDayBlock(planJson: any, dayBlock: any) {
   if (!isPlainObject(modulesDict)) return dayBlock;
   if (!isPlainObject(dayBlock)) return dayBlock;
 
-  const moduleIds: string[] = Array.isArray((dayBlock as any).moduleIds) ? (dayBlock as any).moduleIds : [];
+  const moduleIds: string[] = Array.isArray((dayBlock as any).moduleIds)
+    ? (dayBlock as any).moduleIds
+    : [];
   const modulesResolved = moduleIds.map((id) => (modulesDict as any)[id]).filter(Boolean);
 
-  return {
-    ...dayBlock,
-    modulesResolved,
-  };
+  return { ...dayBlock, modulesResolved };
 }
 
 /**
  * POST /plan/generate
  * Patient submits the 6-field categorical config AFTER claiming activation code
  * (used when /activation/claim returned planStatus="NEEDS_CONFIG").
- *
- * Rules:
- * - JWT required
- * - User must have a CLAIMED activation code
- * - All 6 fields required (no defaults) => 400 VALIDATION_ERROR
- * - If plan already exists for that activation code => 409 PLAN_ALREADY_EXISTS
- * - Creates RecoveryPlanInstance with config snapshot + deterministic 21-day planJson
  */
 planRouter.post("/generate", async (req, res) => {
   const userId = getUserIdOrRespond(req, res);
@@ -298,6 +287,7 @@ planRouter.post("/generate", async (req, res) => {
 /**
  * GET /plan/current
  * Returns the latest plan instance for this user.
+ * DEV: add ?regen=1 to rebuild plan (ignored in production).
  */
 planRouter.get("/current", async (req, res) => {
   const userId = getUserIdOrRespond(req, res);
@@ -305,7 +295,7 @@ planRouter.get("/current", async (req, res) => {
 
   const regen = String(req.query.regen ?? "") === "1";
 
-  // If regen is requested, we must include clinicConfig for overridesJson
+  // If regen requested, include clinicConfig for overridesJson
   const instance = regen
     ? await prisma.recoveryPlanInstance.findFirst({
         where: { userId },
@@ -332,24 +322,17 @@ planRouter.get("/current", async (req, res) => {
   }
 });
 
-
 /**
  * GET /plan/current/resolved
  * Same as /plan/current but resolves modulesResolved into each day (schemaVersion 2).
- *
- * DEV TOOLING:
- * Add ?regen=1 to force regeneration of the stored planJson using:
- * - latest template for the instance's category
- * - stored configJson on the instance
- * - clinic overrides (activationCode.clinicConfig.overridesJson)
- *
- * This is DEV-ONLY (ignored in production).
+ * DEV: add ?regen=1 to rebuild plan (ignored in production).
  */
 planRouter.get("/current/resolved", async (req, res) => {
   const userId = getUserIdOrRespond(req, res);
   if (!userId) return;
 
-  // NOTE: we need clinicConfig here (for overridesJson), so include it
+  const regen = String(req.query.regen ?? "") === "1";
+
   const instance = await prisma.recoveryPlanInstance.findFirst({
     where: { userId },
     orderBy: { createdAt: "desc" },
@@ -365,8 +348,6 @@ planRouter.get("/current/resolved", async (req, res) => {
     return res.status(404).json({ code: "NO_PLAN" });
   }
 
-    const regen = String(req.query.regen ?? "") === "1";
-
   try {
     const maybeUpdated = await regenInstanceIfRequested({ instance, regen });
     const shaped = shapePlanInstance(maybeUpdated);
@@ -378,12 +359,13 @@ planRouter.get("/current/resolved", async (req, res) => {
     }
     throw e;
   }
-
 });
 
-
 /**
- * GET /plan/today
+ * GET /plan/today/resolved
+ * Returns today's dayBlock + next 3 days, resolved with modulesResolved.
+ * DEV: add ?regen=1 to rebuild plan (ignored in production).
+ *
  * IMPORTANT: must be declared BEFORE "/:id" to avoid route shadowing.
  */
 planRouter.get("/today/resolved", async (req, res) => {
@@ -392,17 +374,15 @@ planRouter.get("/today/resolved", async (req, res) => {
 
   const regen = String(req.query.regen ?? "") === "1";
 
-  // Need clinicConfig only for regen
-  const instance = regen
-    ? await prisma.recoveryPlanInstance.findFirst({
-        where: { userId },
-        orderBy: { createdAt: "desc" },
-        include: {
-          template: true,
-          activationCode: { include: { clinicConfig: true } },
-        },
-      })
-    : await getLatestPlanInstanceForUser(userId);
+  // Need clinicConfig only for regen, but easiest is to always include it here
+  const instance = await prisma.recoveryPlanInstance.findFirst({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    include: {
+      template: true,
+      activationCode: { include: { clinicConfig: true } },
+    },
+  });
 
   if (!instance) {
     return res.status(404).json({ code: "NO_PLAN" });
@@ -441,51 +421,6 @@ planRouter.get("/today/resolved", async (req, res) => {
 
   return res.status(200).json({
     startDate: finalInstance.startDate,
-    today: todayYmd,
-    dayIndex,
-    dayBlock,
-    nextDays,
-  });
-});
-
-
-/**
- * GET /plan/today/resolved
- * Same as /plan/today but resolves dayBlock.modulesResolved (and nextDays too).
- */
-planRouter.get("/today/resolved", async (req, res) => {
-  const userId = getUserIdOrRespond(req, res);
-  if (!userId) return;
-
-  const instance = await getLatestPlanInstanceForUser(userId);
-
-  if (!instance) {
-    return res.status(404).json({ code: "NO_PLAN" });
-  }
-
-  const start = toUtcDateFromYmd(instance.startDate);
-  if (!start) {
-    return res.status(500).json({ code: "INVALID_PLAN_START_DATE" });
-  }
-
-  const todayYmd = ymdTodayUtc();
-  const today = toUtcDateFromYmd(todayYmd)!;
-
-  const msPerDay = 24 * 60 * 60 * 1000;
-  let dayIndex = Math.floor((today.getTime() - start.getTime()) / msPerDay);
-  if (dayIndex < 0) dayIndex = 0;
-
-  const days = extractDays(instance.planJson);
-  const dayBlockRaw = days ? days[dayIndex] ?? null : null;
-  const next3Raw = days ? days.slice(dayIndex + 1, dayIndex + 4) : [];
-
-  // Resolve using the *planJson* dict (schema v2)
-  const planJson = instance.planJson as any;
-  const dayBlock = dayBlockRaw ? resolveDayBlock(planJson, dayBlockRaw) : null;
-  const nextDays = next3Raw.map((d) => resolveDayBlock(planJson, d));
-
-  return res.status(200).json({
-    startDate: instance.startDate,
     today: todayYmd,
     dayIndex,
     dayBlock,

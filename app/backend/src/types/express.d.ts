@@ -1,3 +1,4 @@
+// app/backend/src/types/express.d.ts
 export {};
 
 declare global {
@@ -5,7 +6,9 @@ declare global {
     interface Request {
       user?: {
         id: string;
-        email?: string;
+        email: string;
+        role: "PATIENT" | "CLINIC";
+        clinicTag: string | null;
       };
     }
   }

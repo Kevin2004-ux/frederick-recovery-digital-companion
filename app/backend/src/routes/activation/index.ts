@@ -111,8 +111,12 @@ activationRouter.post("/claim", async (req, res) => {
     }
   }
 
-  // Always issue JWT on successful authentication
-  const token = signAccessToken({ sub: user.id, email: user.email });
+ // Always issue JWT on successful authentication
+const token = signAccessToken({ 
+  sub: user.id, 
+  email: user.email, 
+  role: user.role // <--- Add this!
+});
 
   // 4) If there is already a plan instance for this activation code, return it (idempotent)
   const existingInstance = await prisma.recoveryPlanInstance.findFirst({
