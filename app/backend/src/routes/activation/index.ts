@@ -16,60 +16,32 @@ import { generatePlan } from "../../services/plan/generatePlan.js";
  *
  * Patient claim flow:
  * - Activation code REQUIRED to create account
- * - config OPTIONAL at claim-time (clinic config may be captured earlier by doctor)
+ * - config OPTIONAL at claim-time (clinic config may be captured earlier by clinic user)
  *
- * Behavior:
- * - If config provided OR activation code already has configJson => generate plan + create instance
- * - Else => return planStatus: "NEEDS_CONFIG" and do NOT create instance
+ * Precedence (per handoff):
+ * 1) req.body.config (if present + valid)
+ * 2) ActivationCode.configJson (if present + valid)
+ * 3) else => return planStatus: "NEEDS_CONFIG"
+ *
+ * Idempotency (per handoff):
+ * - If activation already claimed by another user => error
+ * - If same user re-claims => return consistent response (existing plan if present)
+ * - Ensure only one RecoveryPlanInstance per activation code (guard in code)
  */
 
 export const activationRouter = Router();
 
 /**
- * Strict categorical config (no defaults).
- * Keep values stable; frontend depends on them.
+ * Canonical 6-field categorical config (NO DEFAULTS).
+ * These enum values must match the Feb 11, 2026 backend handoff.
  */
 export const PlanConfigSchema = z.object({
-  recovery_region: z.enum([
-    "head_neck",
-    "chest",
-    "abdomen",
-    "back",
-    "arm_hand",
-    "leg_foot",
-    "general",
-  ]),
-  recovery_duration: z.enum([
-    "short_3_7",
-    "medium_8_14",
-    "standard_15_21",
-    "extended_22_42",
-  ]),
-  mobility_impact: z.enum([
-    "none",
-    "limited",
-    "assistive_device",
-    "non_weight_bearing",
-  ]),
-  incision_status: z.enum([
-    "intact_dressings",
-    "minor_drainage",
-    "open_or_wet",
-    "has_drains",
-  ]),
-  discomfort_pattern: z.enum([
-    "expected_soreness",
-    "sharp_with_movement",
-    "throbbing",
-    "burning_or_nerve",
-  ]),
-  follow_up_expectation: z.enum([
-    "none_scheduled",
-    "within_7_days",
-    "within_14_days",
-    "within_21_days",
-    "unknown",
-  ]),
+  recovery_region: z.enum(["leg_foot", "arm_hand", "torso", "face_neck", "general"]),
+  recovery_duration: z.enum(["standard_0_7", "standard_8_14", "standard_15_21", "extended_22_plus"]),
+  mobility_impact: z.enum(["none", "mild", "limited", "non_weight_bearing"]),
+  incision_status: z.enum(["intact_dressings", "sutures_staples", "drains_present", "open_wound", "none_visible"]),
+  discomfort_pattern: z.enum(["expected_soreness", "sharp_intermittent", "burning_tingling", "escalating"]),
+  follow_up_expectation: z.enum(["within_7_days", "within_14_days", "within_30_days", "none_scheduled"]),
 });
 
 const ClaimSchema = z.object({
@@ -88,10 +60,6 @@ const ClaimSchema = z.object({
     .optional(),
 });
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 activationRouter.post("/claim", async (req, res) => {
   const parsed = ClaimSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -103,13 +71,18 @@ activationRouter.post("/claim", async (req, res) => {
 
   const { code, email, password, profile } = parsed.data;
 
-  // 1) Lookup activation code
+  // 1) Lookup activation code (allow UNUSED or CLAIMED for idempotency)
   const activation = await prisma.activationCode.findUnique({
     where: { code },
     include: { clinicConfig: true },
   });
 
-  if (!activation || activation.status !== "UNUSED") {
+  if (!activation) {
+    return res.status(400).json({ code: "INVALID_ACTIVATION_CODE" });
+  }
+
+  if (activation.status !== "UNUSED" && activation.status !== "CLAIMED") {
+    // Defensive: if other statuses exist later
     return res.status(400).json({ code: "INVALID_ACTIVATION_CODE" });
   }
 
@@ -131,7 +104,46 @@ activationRouter.post("/claim", async (req, res) => {
     if (!ok) return res.status(401).json({ code: "INVALID_CREDENTIALS" });
   }
 
-  // 3) Resolve plan category (clinicTag config wins)
+  // 3) If activation is already claimed, enforce ownership
+  if (activation.status === "CLAIMED") {
+    if (activation.claimedByUserId && activation.claimedByUserId !== user.id) {
+      return res.status(409).json({ code: "CODE_ALREADY_CLAIMED" });
+    }
+  }
+
+  // Always issue JWT on successful authentication
+  const token = signAccessToken({ sub: user.id, email: user.email });
+
+  // 4) If there is already a plan instance for this activation code, return it (idempotent)
+  const existingInstance = await prisma.recoveryPlanInstance.findFirst({
+    where: { activationCodeId: activation.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      startDate: true,
+      templateId: true,
+    },
+  });
+
+  if (existingInstance) {
+    const template = await prisma.recoveryPlanTemplate.findUnique({
+      where: { id: existingInstance.templateId },
+      select: { title: true, category: true },
+    });
+
+    return res.status(200).json({
+      token,
+      planStatus: "READY",
+      plan: {
+        id: existingInstance.id,
+        title: template?.title ?? "Recovery Plan",
+        startDate: existingInstance.startDate,
+        category: template?.category ?? RecoveryPlanCategoryEnum.general_outpatient,
+      },
+    });
+  }
+
+  // 5) Resolve plan category (clinicTag defaultCategory wins; else profile; else fallback)
   const fromProfile: RecoveryPlanCategory | undefined = profile?.recoveryCategory;
 
   const category: RecoveryPlanCategory =
@@ -139,7 +151,7 @@ activationRouter.post("/claim", async (req, res) => {
     fromProfile ??
     RecoveryPlanCategoryEnum.general_outpatient;
 
-  // 4) Determine the effective config (request body wins; else use doctor-captured config)
+  // 6) Determine the effective config (request body wins; else use clinic-captured configJson)
   let effectiveConfig: unknown | undefined = parsed.data.config;
 
   if (!effectiveConfig && activation.configJson) {
@@ -151,23 +163,22 @@ activationRouter.post("/claim", async (req, res) => {
     effectiveConfig = reParsed.data;
   }
 
-  // Always issue JWT on successful claim
-  const token = signAccessToken({ sub: user.id, email: user.email });
-
-  // 5) If still no config, return NEEDS_CONFIG and DO NOT create a plan instance
+  // 7) If still no config, claim code (if needed) and return NEEDS_CONFIG, no plan instance created
   if (!effectiveConfig) {
-    // Claim code but no plan yet
+    // Claim the code if it is still UNUSED. If already CLAIMED by this user, this is still fine.
     await prisma.$transaction(async (tx) => {
-      const updated = await tx.activationCode.updateMany({
-        where: { id: activation.id, status: "UNUSED" },
-        data: {
-          status: "CLAIMED",
-          claimedByUserId: user!.id,
-          claimedAt: new Date(),
-        },
-      });
+      if (activation.status === "UNUSED") {
+        const updated = await tx.activationCode.updateMany({
+          where: { id: activation.id, status: "UNUSED" },
+          data: {
+            status: "CLAIMED",
+            claimedByUserId: user!.id,
+            claimedAt: new Date(),
+          },
+        });
 
-      if (updated.count !== 1) throw new Error("CODE_ALREADY_CLAIMED");
+        if (updated.count !== 1) throw new Error("CODE_ALREADY_CLAIMED");
+      }
     });
 
     return res.status(201).json({
@@ -176,7 +187,7 @@ activationRouter.post("/claim", async (req, res) => {
     });
   }
 
-  // 6) Select latest template (only if generating a plan)
+  // 8) Select latest template (only if generating a plan)
   const template = await prisma.recoveryPlanTemplate.findFirst({
     where: { category },
     orderBy: { version: "desc" },
@@ -186,7 +197,7 @@ activationRouter.post("/claim", async (req, res) => {
     return res.status(500).json({ code: "NO_PLAN_TEMPLATE" });
   }
 
-  // 7) Generate plan deterministically
+  // 9) Generate plan deterministically
   const { planJson, configJson } = generatePlan({
     templatePlanJson: template.planJson,
     clinicOverridesJson: activation.clinicConfig?.overridesJson,
@@ -197,20 +208,31 @@ activationRouter.post("/claim", async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
-  // 8) Transaction: claim code + create plan instance
+  // 10) Transaction: claim code (if needed) + create plan instance once
   const planInstance = await prisma.$transaction(async (tx) => {
-    const updated = await tx.activationCode.updateMany({
-      where: { id: activation.id, status: "UNUSED" },
-      data: {
-        status: "CLAIMED",
-        claimedByUserId: user!.id,
-        claimedAt: new Date(),
-      },
+    // If still UNUSED, claim now (race-safe)
+    if (activation.status === "UNUSED") {
+      const updated = await tx.activationCode.updateMany({
+        where: { id: activation.id, status: "UNUSED" },
+        data: {
+          status: "CLAIMED",
+          claimedByUserId: user!.id,
+          claimedAt: new Date(),
+        },
+      });
+
+      if (updated.count !== 1) {
+        throw new Error("CODE_ALREADY_CLAIMED");
+      }
+    }
+
+    // Guard: ensure no instance exists (race-safe)
+    const already = await tx.recoveryPlanInstance.findFirst({
+      where: { activationCodeId: activation.id },
+      select: { id: true, startDate: true, templateId: true },
     });
 
-    if (updated.count !== 1) {
-      throw new Error("CODE_ALREADY_CLAIMED");
-    }
+    if (already) return already;
 
     return tx.recoveryPlanInstance.create({
       data: {
@@ -229,9 +251,9 @@ activationRouter.post("/claim", async (req, res) => {
     token,
     planStatus: "READY",
     plan: {
-      id: planInstance.id,
+      id: (planInstance as any).id,
       title: template.title,
-      startDate: planInstance.startDate,
+      startDate: (planInstance as any).startDate,
       category: template.category,
     },
   });

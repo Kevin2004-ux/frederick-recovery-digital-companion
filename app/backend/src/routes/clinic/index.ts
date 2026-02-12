@@ -23,6 +23,123 @@ async function requireClinicRole(userId: string): Promise<boolean> {
   return u?.role === "CLINIC";
 }
 
+/**
+ * GET /clinic/batches
+ * List recent activation batches for admin usability.
+ *
+ * Query:
+ * - limit (default 25, max 200)
+ * - clinicTag (optional filter)
+ */
+clinicRouter.get("/batches", async (req, res) => {
+  const userId = req.user!.id;
+
+  const ok = await requireClinicRole(userId);
+  if (!ok) return res.status(403).json({ code: "FORBIDDEN" });
+
+  const limitRaw = String(req.query.limit ?? "");
+  const limitNum = limitRaw ? Number(limitRaw) : 25;
+  const limit = Number.isFinite(limitNum)
+    ? Math.max(1, Math.min(200, Math.floor(limitNum)))
+    : 25;
+
+  const clinicTag =
+    typeof req.query.clinicTag === "string" ? req.query.clinicTag.trim() : undefined;
+
+  const where = clinicTag ? { clinicTag } : {};
+
+  const batches = await prisma.activationBatch.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: {
+      id: true,
+      clinicTag: true,
+      quantity: true,
+      createdAt: true,
+      createdByUserId: true,
+    },
+  });
+
+  const batchIds = batches.map((b) => b.id);
+
+  // If no batches, return fast.
+  if (batchIds.length === 0) {
+    return res.status(200).json({ batches: [] });
+  }
+
+  // Total per batch
+  const totals = await prisma.activationCode.groupBy({
+    by: ["batchId"],
+    where: { batchId: { in: batchIds } },
+    _count: { _all: true },
+  });
+
+  // Status counts per batch
+  const byStatus = await prisma.activationCode.groupBy({
+    by: ["batchId", "status"],
+    where: { batchId: { in: batchIds } },
+    _count: { _all: true },
+  });
+
+  // Configured counts per batch (configJson set)
+  const configured = await prisma.activationCode.groupBy({
+    by: ["batchId"],
+    where: {
+      batchId: { in: batchIds },
+      // JSON fields require DbNull/JsonNull sentinel, not plain null
+      configJson: { not: Prisma.DbNull },
+    },
+    _count: { _all: true },
+  });
+
+  const readCountAll = (row: any): number => {
+    const v = row?._count?._all;
+    return typeof v === "number" ? v : 0;
+  };
+
+  const totalByBatchId = new Map<string, number>();
+  for (const row of totals as any[]) {
+    if (!row.batchId) continue;
+    totalByBatchId.set(row.batchId, readCountAll(row));
+  }
+
+  const unusedByBatchId = new Map<string, number>();
+  const claimedByBatchId = new Map<string, number>();
+  for (const row of byStatus as any[]) {
+    if (!row.batchId) continue;
+    if (row.status === "UNUSED") unusedByBatchId.set(row.batchId, readCountAll(row));
+    if (row.status === "CLAIMED") claimedByBatchId.set(row.batchId, readCountAll(row));
+  }
+
+  const configuredByBatchId = new Map<string, number>();
+  for (const row of configured as any[]) {
+    if (!row.batchId) continue;
+    configuredByBatchId.set(row.batchId, readCountAll(row));
+  }
+
+  const withCounts = batches.map((b) => {
+    const total = totalByBatchId.get(b.id) ?? 0;
+    const unused = unusedByBatchId.get(b.id) ?? 0;
+    const claimed = claimedByBatchId.get(b.id) ?? 0;
+    const configuredCount = configuredByBatchId.get(b.id) ?? 0;
+
+    return {
+      ...b,
+      codeCounts: {
+        total,
+        unused,
+        claimed,
+        configured: configuredCount,
+        // Ops sanity check (does not block)
+        quantityMismatch: total !== b.quantity,
+      },
+    };
+  });
+
+  return res.status(200).json({ batches: withCounts });
+});
+
 // -------------------------
 // Activation code generation
 // -------------------------
@@ -59,8 +176,19 @@ const PlanConfigSchema = z.object({
   recovery_region: z.enum(["leg_foot", "arm_hand", "torso", "face_neck", "general"]),
   recovery_duration: z.enum(["standard_0_7", "standard_8_14", "standard_15_21", "extended_22_plus"]),
   mobility_impact: z.enum(["none", "mild", "limited", "non_weight_bearing"]),
-  incision_status: z.enum(["intact_dressings", "sutures_staples", "drains_present", "open_wound", "none_visible"]),
-  discomfort_pattern: z.enum(["expected_soreness", "sharp_intermittent", "burning_tingling", "escalating"]),
+  incision_status: z.enum([
+    "intact_dressings",
+    "sutures_staples",
+    "drains_present",
+    "open_wound",
+    "none_visible",
+  ]),
+  discomfort_pattern: z.enum([
+    "expected_soreness",
+    "sharp_intermittent",
+    "burning_tingling",
+    "escalating",
+  ]),
   follow_up_expectation: z.enum(["within_7_days", "within_14_days", "within_30_days", "none_scheduled"]),
 });
 
@@ -126,8 +254,9 @@ clinicRouter.post("/batches", async (req, res) => {
 
         const remaining = quantity - insertedTotal;
 
-        // Generate a little extra to compensate for rare collisions
-        const genCount = Math.min(remaining + 5, 2000);
+        // Generate exactly what we still need.
+        // Collisions are handled by skipDuplicates + retry loop.
+        const genCount = Math.min(remaining, 2000);
 
         const data = Array.from({ length: genCount }).map(() => ({
           code: makeActivationCode(),
@@ -224,9 +353,7 @@ clinicRouter.get("/batches/:id/codes.csv", async (req, res) => {
   });
 
   const header = "code,clinicTag,status\n";
-  const lines = codes
-    .map((c) => `${c.code},${c.clinicTag ?? ""},${c.status}`)
-    .join("\n");
+  const lines = codes.map((c) => `${c.code},${c.clinicTag ?? ""},${c.status}`).join("\n");
 
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="activation-codes-${batchId}.csv"`);

@@ -1,4 +1,4 @@
-// app/backend/prisma/seed.ts
+// app/backend/src/prisma/seed.ts
 import { PrismaClient, RecoveryPlanCategory } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -14,8 +14,8 @@ async function main() {
     },
     update: {
       title: "General Outpatient Recovery Plan (Educational)",
-      // you can safely update planJson over time while keeping version fixed if you want,
-      // but long-term you'll likely bump version and keep old versions immutable.
+      // You can safely update planJson over time while keeping version fixed for dev,
+      // but for production clinics you’ll likely bump version and keep old versions immutable.
       planJson: defaultGeneralOutpatientPlanJson(),
       sourcesJson: defaultSourcesJson(),
     },
@@ -29,7 +29,6 @@ async function main() {
   });
 
   // 2) Optional: seed a few ActivationCodes for testing
-  // If you don't want this, delete this block.
   const testCodes = ["FR-DEMO-0001", "FR-DEMO-0002", "FR-DEMO-0003"];
 
   for (const code of testCodes) {
@@ -77,75 +76,59 @@ function defaultSourcesJson() {
 }
 
 function defaultGeneralOutpatientPlanJson() {
-  // Keep this schema stable for the frontend:
-  // - days: array of day objects
-  // - each day: title, goals, redFlags, checkInPrompt, boxItems, learnMore
+  // Template schemaVersion 2 (Brain-compatible)
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     title: "General Outpatient Recovery Plan",
     disclaimer:
-      "Educational information only. This is not medical advice, diagnosis, or treatment. Always follow your surgeon/clinician’s instructions.",
+      "Educational information only. This is not medical advice, diagnosis, or treatment. Always follow your clinician’s instructions.",
+
+    // Minimal vetted module library (expand over time; IDs must remain stable)
+    modules: {
+      checkin_overall: { id: "checkin_overall", kind: "track", title: "Daily check-in (overall)" },
+      track_pain: { id: "track_pain", kind: "track", title: "Track pain" },
+      track_swelling: { id: "track_swelling", kind: "track", title: "Track swelling" },
+      track_sleep: { id: "track_sleep", kind: "track", title: "Track sleep/rest" },
+
+      edu_wound: { id: "edu_wound", kind: "edu", title: "Wound care basics (education)" },
+      edu_mobility: { id: "edu_mobility", kind: "edu", title: "Mobility safety (education)" },
+      edu_followup: { id: "edu_followup", kind: "edu", title: "Follow-up reminders (education)" },
+      edu_longterm: { id: "edu_longterm", kind: "edu", title: "Longer-term recovery habits (education)" },
+
+      rf_emergency: { id: "rf_emergency", kind: "red_flag", title: "Emergency red flags" },
+      rf_worsening: { id: "rf_worsening", kind: "red_flag", title: "Symptoms getting worse" },
+      rf_infection: { id: "rf_infection", kind: "red_flag", title: "Possible infection warning signs" },
+    },
+
+    // Only a few base days are required; generator will fill to 21 days deterministically
     days: [
       {
         day: 0,
-        title: "Day 0: The day you activate your box",
-        goals: [
-          "Rest and focus on comfort",
-          "Review your recovery box items",
-          "Complete today’s check-in",
-        ],
-        redFlags: [
-          "Trouble breathing",
-          "Chest pain",
-          "Uncontrolled bleeding",
-          "Fever with worsening symptoms",
-        ],
-        checkInPrompt: "How are your pain, swelling, and overall comfort today?",
-        boxItems: ["gauze", "tape", "cold_pack"],
-        learnMore: ["wound_care", "pain_management"],
+        phase: "early",
+        title: "Day 0: Getting started",
+        moduleIds: ["checkin_overall", "track_pain", "rf_emergency", "rf_worsening"],
+        boxItems: ["box_gauze", "box_tape", "box_coldpack"],
       },
       {
         day: 1,
-        title: "Day 1: Support healing with basic routines",
-        goals: [
-          "Keep the area clean and dry as directed",
-          "Use cold packs if appropriate",
-          "Hydrate and prioritize sleep",
-        ],
-        redFlags: [
-          "Rapidly increasing redness",
-          "Pus-like drainage",
-          "Worsening pain despite rest",
-        ],
-        checkInPrompt: "Any new symptoms since yesterday?",
-        boxItems: ["gauze", "cold_pack"],
-        learnMore: ["wound_care", "infection_prevention"],
+        phase: "early",
+        title: "Day 1: Keep it simple",
+        moduleIds: ["checkin_overall", "track_pain", "rf_worsening"],
+        boxItems: ["box_gauze", "box_coldpack"],
       },
       {
         day: 2,
-        title: "Day 2: Monitor progress and reduce strain",
-        goals: [
-          "Continue gentle movement as tolerated",
-          "Avoid heavy lifting",
-          "Track pain and swelling trends",
-        ],
-        redFlags: ["New dizziness or fainting", "Severe nausea/vomiting"],
-        checkInPrompt: "Are you improving, stable, or worse than yesterday?",
-        boxItems: ["gauze", "tape"],
-        learnMore: ["pain_management"],
+        phase: "early",
+        title: "Day 2: Watch trends",
+        moduleIds: ["checkin_overall", "track_pain", "rf_worsening"],
+        boxItems: ["box_gauze", "box_tape"],
       },
       {
         day: 3,
-        title: "Day 3: Reassess and plan the week",
-        goals: [
-          "Stick to your routine",
-          "Confirm you understand your post-op instructions",
-          "Keep logs consistent",
-        ],
-        redFlags: ["Symptoms that are getting worse day-to-day"],
-        checkInPrompt: "What is one thing that improved since Day 0?",
-        boxItems: ["gauze", "tape"],
-        learnMore: ["wound_care"],
+        phase: "early",
+        title: "Day 3: Stay consistent",
+        moduleIds: ["checkin_overall", "track_pain", "rf_worsening"],
+        boxItems: ["box_gauze", "box_tape"],
       },
     ],
   };
