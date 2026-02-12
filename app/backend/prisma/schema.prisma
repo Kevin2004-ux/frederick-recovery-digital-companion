@@ -7,6 +7,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserRole {
+  PATIENT
+  CLINIC
+}
+
 enum ActivationCodeStatus {
   UNUSED
   CLAIMED
@@ -21,6 +26,9 @@ model User {
   id                    String   @id @default(uuid())
   email                 String   @unique
   passwordHash          String
+
+  // NEW: role-based auth (doctor/clinic users are CLINIC)
+  role                  UserRole @default(PATIENT)
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -40,9 +48,13 @@ model User {
 
   logEntries            LogEntry[]
 
-  // NEW: activation + plan
+  // activation + plan
   claimedActivationCodes ActivationCode[] @relation("ActivationCodeClaimedByUser")
   recoveryPlanInstances  RecoveryPlanInstance[]
+
+  // NEW: audit links (optional)
+  createdActivationBatches ActivationBatch[] @relation("ActivationBatchCreatedBy")
+  capturedActivationConfigs ActivationCode[] @relation("ActivationCodeConfigCapturedByUser")
 }
 
 model LogEntry {
@@ -66,74 +78,84 @@ model LogEntry {
   @@index([userId, date])
 }
 
-//
-// NEW MODELS — Recovery Plan Expansion
-//
-
 model ClinicPlanConfig {
-  // Non-PHI clinic identifier used to influence plan generation
-  clinicTag       String              @id
-
-  // Default template category for this clinic (can be overridden later)
-  defaultCategory RecoveryPlanCategory @default(general_outpatient)
-
-  // Non-PHI overrides to tweak templates (structured toggles / params)
-  // Example: { "noNSAIDs": true, "compressionDays": 7, "showDrainCare": true }
+  clinicTag       String               @id
+  defaultCategory RecoveryPlanCategory  @default(general_outpatient)
   overridesJson   Json?
-
-  // Optional non-PHI notes for internal operational use (avoid free-text if possible)
   notes           String?
 
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 
   activationCodes ActivationCode[]
 }
 
+//
+// NEW: Batch of activation codes for easy printing/export
+//
+model ActivationBatch {
+  id              String    @id @default(uuid())
+
+  clinicTag        String?
+  quantity         Int
+
+  createdByUserId  String?
+  createdByUser    User?     @relation("ActivationBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  codes            ActivationCode[]
+
+  createdAt        DateTime  @default(now())
+
+  @@index([clinicTag])
+  @@index([createdByUserId])
+}
+
 model ActivationCode {
-  id              String              @id @default(uuid())
-
-  // What patient enters
-  code            String              @unique
-
+  id              String               @id @default(uuid())
+  code            String               @unique
   status          ActivationCodeStatus @default(UNUSED)
 
-  // Non-PHI clinic identifier
   clinicTag       String?
-  clinicConfig    ClinicPlanConfig?   @relation(fields: [clinicTag], references: [clinicTag])
+  clinicConfig    ClinicPlanConfig?    @relation(fields: [clinicTag], references: [clinicTag])
+
+  // NEW: batch linkage
+  batchId         String?
+  batch           ActivationBatch?     @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  // NEW: doctor-first workflow (categorical, non-PHI)
+  configJson              Json?
+  configCapturedAt        DateTime?
+  configCapturedByUserId  String?
+  configCapturedByUser    User?        @relation("ActivationCodeConfigCapturedByUser", fields: [configCapturedByUserId], references: [id], onDelete: SetNull)
 
   // Claim linkage
   claimedByUserId String?
-  claimedByUser   User?               @relation("ActivationCodeClaimedByUser", fields: [claimedByUserId], references: [id], onDelete: SetNull)
+  claimedByUser   User?                @relation("ActivationCodeClaimedByUser", fields: [claimedByUserId], references: [id], onDelete: SetNull)
   claimedAt       DateTime?
 
-  // One activation code should map to at most one plan instance
   planInstance    RecoveryPlanInstance?
 
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 
   @@index([status])
   @@index([clinicTag])
   @@index([claimedByUserId])
+  @@index([batchId])
+  @@index([configCapturedByUserId])
 }
 
 model RecoveryPlanTemplate {
-  id           String              @id @default(uuid())
+  id           String               @id @default(uuid())
 
   category     RecoveryPlanCategory
   version      Int
-
   title        String
-
-  // Template content (educational day-by-day JSON)
   planJson     Json
-
-  // Source links (MedlinePlus, etc.)
   sourcesJson  Json?
 
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
 
   instances    RecoveryPlanInstance[]
 
@@ -142,28 +164,27 @@ model RecoveryPlanTemplate {
 }
 
 model RecoveryPlanInstance {
-  id               String              @id @default(uuid())
+  id               String               @id @default(uuid())
 
   userId           String
-  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  activationCodeId String              @unique
-  activationCode   ActivationCode      @relation(fields: [activationCodeId], references: [id], onDelete: Cascade)
+  activationCodeId String               @unique
+  activationCode   ActivationCode       @relation(fields: [activationCodeId], references: [id], onDelete: Cascade)
 
   templateId       String
-  template         RecoveryPlanTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  template         RecoveryPlanTemplate  @relation(fields: [templateId], references: [id], onDelete: Restrict)
 
-  // Lets us evolve generation logic without breaking old instances
   engineVersion    String
-
-  // Date-only string (YYYY-MM-DD) to align with LogEntry date style
   startDate        String
 
-  // Generated copy (template + clinic overrides resolved + any safe patient prefs)
+  // REQUIRED: categorical non-PHI config used to generate the plan
+  configJson       Json
+
   planJson         Json
 
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   @@index([userId])
   @@index([startDate])

@@ -1,5 +1,5 @@
 // app/backend/src/repositories/userRepo.ts
-import crypto from "crypto";
+import { prisma } from "../prisma/client.js";
 
 export type UserRecord = {
   id: string;
@@ -7,25 +7,18 @@ export type UserRecord = {
   passwordHash: string;
   createdAt: Date;
 
-  // consent + onboarding
-  consentAcceptedAt?: Date;
+  consentAcceptedAt?: Date | null;
 
-  // canonical going forward
-  procedureName?: string;
+  procedureName?: string | null;
+  procedureCode?: string | null;
+  recoveryStartDate?: string | null;
 
-  // legacy (keep for compatibility with older stored users / payloads)
-  procedureCode?: string;
+  emailVerifiedAt?: Date | null;
+  verificationCode?: string | null;
+  verificationExpiresAt?: Date | null;
 
-  recoveryStartDate?: string; // YYYY-MM-DD (ISO date-only)
-
-  // email verification
-  emailVerifiedAt?: Date;
-  verificationCode?: string; // 6-digit
-  verificationExpiresAt?: Date;
+  role?: "PATIENT" | "CLINIC";
 };
-
-const usersById = new Map<string, UserRecord>();
-const userIdByEmail = new Map<string, string>();
 
 export type UpdateUserProfileInput = {
   procedureName: string;
@@ -40,106 +33,195 @@ export type UserProfile = {
   recoveryStartDate?: string; // YYYY-MM-DD
   createdAt: string; // ISO string
   emailVerifiedAt?: string; // ISO string
+  role?: "PATIENT" | "CLINIC";
 };
 
-export function findUserByEmail(emailRaw: string): UserRecord | undefined {
-  const email = emailRaw.trim().toLowerCase();
-  const id = userIdByEmail.get(email);
-  if (!id) return undefined;
-  return usersById.get(id);
+function normalizeEmail(emailRaw: string) {
+  return emailRaw.trim().toLowerCase();
 }
 
-export function findUserById(id: string): UserRecord | undefined {
-  return usersById.get(id);
+export async function findUserByEmail(emailRaw: string): Promise<UserRecord | null> {
+  const email = normalizeEmail(emailRaw);
+  return prisma.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      email: true,
+      passwordHash: true,
+      createdAt: true,
+      consentAcceptedAt: true,
+      procedureName: true,
+      procedureCode: true,
+      recoveryStartDate: true,
+      emailVerifiedAt: true,
+      verificationCode: true,
+      verificationExpiresAt: true,
+      role: true,
+    },
+  });
 }
 
-export function createUser(params: { email: string; passwordHash: string }): UserRecord {
-  const email = params.email.trim().toLowerCase();
-  if (userIdByEmail.has(email)) {
-    throw new Error("EMAIL_TAKEN");
+export async function findUserById(id: string): Promise<UserRecord | null> {
+  return prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      email: true,
+      passwordHash: true,
+      createdAt: true,
+      consentAcceptedAt: true,
+      procedureName: true,
+      procedureCode: true,
+      recoveryStartDate: true,
+      emailVerifiedAt: true,
+      verificationCode: true,
+      verificationExpiresAt: true,
+      role: true,
+    },
+  });
+}
+
+export async function createUser(params: {
+  email: string;
+  passwordHash: string;
+  role?: "PATIENT" | "CLINIC";
+}): Promise<UserRecord> {
+  const email = normalizeEmail(params.email);
+
+  try {
+    return await prisma.user.create({
+      data: {
+        email,
+        passwordHash: params.passwordHash,
+        role: params.role ?? "PATIENT",
+      },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        createdAt: true,
+        consentAcceptedAt: true,
+        procedureName: true,
+        procedureCode: true,
+        recoveryStartDate: true,
+        emailVerifiedAt: true,
+        verificationCode: true,
+        verificationExpiresAt: true,
+        role: true,
+      },
+    });
+  } catch (e: any) {
+    // Prisma unique violation
+    if (e?.code === "P2002") throw new Error("EMAIL_TAKEN");
+    throw e;
   }
-
-  const user: UserRecord = {
-    id: crypto.randomUUID(),
-    email,
-    passwordHash: params.passwordHash,
-    createdAt: new Date(),
-  };
-
-  usersById.set(user.id, user);
-  userIdByEmail.set(email, user.id);
-  return user;
 }
 
-export function acceptConsent(userId: string) {
-  const user = usersById.get(userId);
-  if (!user) return;
-  user.consentAcceptedAt = new Date();
+export async function acceptConsent(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { consentAcceptedAt: new Date() },
+  });
 }
 
 /** Generate/overwrite verification code + expiration for a user */
-export function setVerificationCode(emailRaw: string, code: string, expiresAt: Date): void {
-  const user = findUserByEmail(emailRaw);
+export async function setVerificationCode(emailRaw: string, code: string, expiresAt: Date): Promise<void> {
+  const email = normalizeEmail(emailRaw);
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, emailVerifiedAt: true },
+  });
   if (!user) throw new Error("USER_NOT_FOUND");
   if (user.emailVerifiedAt) return; // already verified, no-op
 
-  user.verificationCode = code;
-  user.verificationExpiresAt = expiresAt;
-  usersById.set(user.id, user);
+  await prisma.user.update({
+    where: { email },
+    data: {
+      verificationCode: code,
+      verificationExpiresAt: expiresAt,
+    },
+  });
 }
 
 /** Verify a user’s email using the stored code */
-export function verifyEmailCode(emailRaw: string, codeRaw: string): void {
-  const user = findUserByEmail(emailRaw);
-  if (!user) throw new Error("USER_NOT_FOUND");
+export async function verifyEmailCode(emailRaw: string, codeRaw: string): Promise<void> {
+  const email = normalizeEmail(emailRaw);
 
-  if (user.emailVerifiedAt) return; // already verified, no-op
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      emailVerifiedAt: true,
+      verificationCode: true,
+      verificationExpiresAt: true,
+    },
+  });
+
+  if (!user) throw new Error("USER_NOT_FOUND");
+  if (user.emailVerifiedAt) return;
 
   const code = codeRaw.trim();
+
   if (!user.verificationCode || !user.verificationExpiresAt) throw new Error("NO_CODE");
   if (new Date() > user.verificationExpiresAt) throw new Error("CODE_EXPIRED");
   if (user.verificationCode !== code) throw new Error("INVALID_CODE");
 
-  user.emailVerifiedAt = new Date();
-  user.verificationCode = undefined;
-  user.verificationExpiresAt = undefined;
-  usersById.set(user.id, user);
+  await prisma.user.update({
+    where: { email },
+    data: {
+      emailVerifiedAt: new Date(),
+      verificationCode: null,
+      verificationExpiresAt: null,
+    },
+  });
 }
 
 /**
  * Stores canonical procedureName.
  * If older code previously stored procedureCode, we keep it but do not require it.
  */
-export function updateUserProfile(userId: string, input: UpdateUserProfileInput): UserProfile {
-  const user = usersById.get(userId);
-  if (!user) {
-    throw new Error("USER_NOT_FOUND");
-  }
+export async function updateUserProfile(userId: string, input: UpdateUserProfileInput): Promise<UserProfile> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      procedureName: input.procedureName,
+      recoveryStartDate: input.recoveryStartDate,
+    },
+  });
 
-  user.procedureName = input.procedureName;
-  user.recoveryStartDate = input.recoveryStartDate;
-
-  usersById.set(user.id, user);
-
-  return getUserProfile(user.id);
+  return getUserProfile(userId);
 }
 
-export function getUserProfile(userId: string): UserProfile {
-  const user = usersById.get(userId);
-  if (!user) {
-    throw new Error("USER_NOT_FOUND");
-  }
+export async function getUserProfile(userId: string): Promise<UserProfile> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      createdAt: true,
+      consentAcceptedAt: true,
+      procedureName: true,
+      procedureCode: true,
+      recoveryStartDate: true,
+      emailVerifiedAt: true,
+      role: true,
+    },
+  });
+
+  if (!user) throw new Error("USER_NOT_FOUND");
 
   // Compatibility: if procedureName missing but legacy procedureCode exists, present it as procedureName
-  const procedureName = user.procedureName ?? user.procedureCode;
+  const procedureName = user.procedureName ?? user.procedureCode ?? undefined;
 
   return {
     id: user.id,
     email: user.email,
     consentAcceptedAt: user.consentAcceptedAt ? user.consentAcceptedAt.toISOString() : undefined,
     procedureName,
-    recoveryStartDate: user.recoveryStartDate,
+    recoveryStartDate: user.recoveryStartDate ?? undefined,
     createdAt: user.createdAt.toISOString(),
     emailVerifiedAt: user.emailVerifiedAt ? user.emailVerifiedAt.toISOString() : undefined,
+    role: user.role ?? undefined,
   };
 }

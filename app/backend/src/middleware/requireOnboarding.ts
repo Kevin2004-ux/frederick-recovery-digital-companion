@@ -1,20 +1,15 @@
 // app/backend/src/middleware/requireOnboarding.ts
-import type { NextFunction, Request, Response } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { findUserById } from "../repositories/userRepo.js";
 
-export function requireOnboarding(req: Request, res: Response, next: NextFunction) {
+export async function requireOnboarding(req: Request, res: Response, next: NextFunction) {
   const userId = req.user?.id;
-  if (!userId) {
-    return res.status(401).json({ code: "UNAUTHORIZED" });
-  }
+  if (!userId) return res.status(401).json({ code: "UNAUTHORIZED" });
 
-  const user = findUserById(userId);
-  if (!user) {
-    // In-memory reset => token refers to a user that no longer exists
-    return res.status(401).json({ code: "UNAUTHORIZED" });
-  }
+  const user = await findUserById(userId);
+  if (!user) return res.status(401).json({ code: "UNAUTHORIZED" });
 
-  // Canonical: procedureName. Back-compat: procedureCode.
+  // Compatibility: procedureName preferred; fallback to legacy procedureCode
   const procedureName = user.procedureName ?? user.procedureCode;
 
   if (!procedureName || !user.recoveryStartDate) {

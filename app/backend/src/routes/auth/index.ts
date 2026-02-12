@@ -40,7 +40,7 @@ authRouter.post("/signup", async (req, res) => {
 
   try {
     const passwordHash = await hashPassword(password);
-    await createUser({ email, passwordHash });
+    await createUser({ email, passwordHash }); // PATIENT by default
 
     const code = make6DigitCode();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
@@ -146,7 +146,7 @@ authRouter.post("/login", async (req, res) => {
   const token = signAccessToken({ sub: user.id, email: user.email });
   return res.json({
     token,
-    user: { id: user.id, email: user.email },
+    user: { id: user.id, email: user.email, role: user.role ?? "PATIENT" },
   });
 });
 

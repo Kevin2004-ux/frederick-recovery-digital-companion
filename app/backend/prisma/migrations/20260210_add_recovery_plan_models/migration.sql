@@ -3,43 +3,11 @@ CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateEnum
 CREATE TYPE "ActivationCodeStatus" AS ENUM ('UNUSED', 'CLAIMED');
-
 -- CreateEnum
 CREATE TYPE "RecoveryPlanCategory" AS ENUM ('general_outpatient', 'cosmetic_recovery');
 
--- CreateTable
-CREATE TABLE "User" (
-    "id" TEXT NOT NULL,
-    "email" TEXT NOT NULL,
-    "passwordHash" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-    "consentAcceptedAt" TIMESTAMP(3),
-    "procedureName" TEXT,
-    "procedureCode" TEXT,
-    "recoveryStartDate" TEXT,
-    "emailVerifiedAt" TIMESTAMP(3),
-    "verificationCode" TEXT,
-    "verificationExpiresAt" TIMESTAMP(3),
 
-    CONSTRAINT "User_pkey" PRIMARY KEY ("id")
-);
 
--- CreateTable
-CREATE TABLE "LogEntry" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
-    "date" TEXT NOT NULL,
-    "painLevel" INTEGER NOT NULL,
-    "swellingLevel" INTEGER NOT NULL,
-    "notes" TEXT,
-    "schemaVersion" INTEGER NOT NULL DEFAULT 1,
-    "details" JSONB,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "LogEntry_pkey" PRIMARY KEY ("id")
-);
 
 -- CreateTable
 CREATE TABLE "ClinicPlanConfig" (
@@ -96,14 +64,7 @@ CREATE TABLE "RecoveryPlanInstance" (
     CONSTRAINT "RecoveryPlanInstance_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
-CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
--- CreateIndex
-CREATE INDEX "LogEntry_userId_date_idx" ON "LogEntry"("userId", "date");
-
--- CreateIndex
-CREATE UNIQUE INDEX "LogEntry_userId_date_key" ON "LogEntry"("userId", "date");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ActivationCode_code_key" ON "ActivationCode"("code");
@@ -131,9 +92,6 @@ CREATE INDEX "RecoveryPlanInstance_userId_idx" ON "RecoveryPlanInstance"("userId
 
 -- CreateIndex
 CREATE INDEX "RecoveryPlanInstance_startDate_idx" ON "RecoveryPlanInstance"("startDate");
-
--- AddForeignKey
-ALTER TABLE "LogEntry" ADD CONSTRAINT "LogEntry_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ActivationCode" ADD CONSTRAINT "ActivationCode_clinicTag_fkey" FOREIGN KEY ("clinicTag") REFERENCES "ClinicPlanConfig"("clinicTag") ON DELETE SET NULL ON UPDATE CASCADE;

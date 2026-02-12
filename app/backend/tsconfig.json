@@ -10,7 +10,12 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "typeRoots": ["./src/types", "./node_modules/@types"]
+
+    // ✅ helps VS Code + pnpm monorepo type resolution
+    "types": ["node"],
+
+    // optional but helpful in monorepos
+    "resolveJsonModule": true
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"]
 }

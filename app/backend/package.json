@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "prisma": { "seed": "tsx src/prisma/seed.ts" },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
