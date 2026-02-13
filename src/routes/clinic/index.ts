@@ -11,7 +11,8 @@ import { prisma } from "../../prisma/client.js";
 import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";
-import { generateRecoveryPlan } from "../../services/plan/generatePlan.js";
+// ✅ FIX: Import matches the renamed export in generatePlan.ts
+import { generatePlan } from "../../services/plan/generatePlan.js";
 
 export const clinicRouter = Router();
 
@@ -414,7 +415,7 @@ clinicRouter.get("/activation/:code/preview", async (req, res) => {
   // For now we use the generatePlan default logic which handles the fallback internally
   // or we can pass an explicit template if we implemented the Template Builder fully.
 
-  const { planJson } = generateRecoveryPlan({
+  const { planJson } = generatePlan({
     templatePlanJson: undefined, // Let generator use default rules
     clinicOverridesJson: clinicConfig?.overridesJson,
     config: activation.configJson,
@@ -472,7 +473,7 @@ clinicRouter.post("/activation/:code/approve", async (req, res) => {
     where: { clinicTag: requesterTag }
   });
 
-  const { planJson } = generateRecoveryPlan({
+  const { planJson } = generatePlan({
     clinicOverridesJson: clinicConfig?.overridesJson,
     config: activation.configJson,
     category: "general"
@@ -517,14 +518,17 @@ clinicRouter.get("/patients", async (req, res) => {
       select: {
           code: true,
           claimedAt: true,
-          claimedByUser: {
+          claimedByUser: { // Relation Name: claimedByUser
               select: {
                   id: true,
                   email: true,
-                  recoveryPlan: {
+                  // ✅ FIX: Use plural 'recoveryPlans' (list) and take the latest
+                  recoveryPlans: {
+                      take: 1,
+                      orderBy: { createdAt: 'desc' },
                       select: {
                           startDate: true,
-                          currentDay: true
+                          createdAt: true 
                       }
                   }
               }
@@ -534,14 +538,18 @@ clinicRouter.get("/patients", async (req, res) => {
     });
   
     // Flatten the structure for the frontend table
-    const flatPatients = patients.map(p => ({
-        id: p.claimedByUser?.id,
-        email: p.claimedByUser?.email,
-        code: p.code,
-        joinedAt: p.claimedAt,
-        currentDay: p.claimedByUser?.recoveryPlan?.currentDay ?? 0,
-        startDate: p.claimedByUser?.recoveryPlan?.startDate
-    }));
+    const flatPatients = patients.map(p => {
+        // ✅ FIX: Extract the first (latest) plan from the array
+        const latestPlan = p.claimedByUser?.recoveryPlans?.[0];
+
+        return {
+            id: p.claimedByUser?.id,
+            email: p.claimedByUser?.email,
+            code: p.code,
+            joinedAt: p.claimedAt,
+            startDate: latestPlan?.startDate
+        };
+    });
   
     return res.status(200).json({ patients: flatPatients });
-  });
+});

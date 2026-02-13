@@ -7,6 +7,7 @@ import { RecoveryPlanCategory as RecoveryPlanCategoryEnum } from "@prisma/client
 import { prisma } from "../../prisma/client.js";
 import { hashPassword, verifyPassword } from "../../utils/password.js";
 import { signAccessToken } from "../../utils/jwt.js";
+// ✅ IMPORT CHECK: generatePlan is now correctly exported from generatePlan.ts
 import { generatePlan } from "../../services/plan/generatePlan.js";
 import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";
 
@@ -64,7 +65,7 @@ activationRouter.post("/claim", async (req, res) => {
         email,
         passwordHash,
         role: UserRole.PATIENT,
-        emailVerifiedAt: new Date(), // MVP bypass, standard flow should verify email first
+        emailVerifiedAt: new Date(), 
       },
     });
   } else {
@@ -86,7 +87,7 @@ activationRouter.post("/claim", async (req, res) => {
   const token = signAccessToken({ sub: user.id, email: user.email, role: user.role });
 
   // 4. Resolve Config
-  let effectiveConfig: unknown | undefined = parsed.data.config;
+  let effectiveConfig: any = parsed.data.config;
   if (!effectiveConfig && activation.configJson) {
     const reParsed = PlanConfigSchema.safeParse(activation.configJson);
     if (reParsed.success) effectiveConfig = reParsed.data;
@@ -130,21 +131,24 @@ activationRouter.post("/claim", async (req, res) => {
   if (existingInstance) {
     return res.status(200).json({
       token, planStatus: "READY",
-      plan: { id: existingInstance.id, title: existingInstance.template.title, startDate: existingInstance.startDate, category: existingInstance.template.category },
+      plan: { 
+        id: existingInstance.id, 
+        title: existingInstance.template.title, 
+        startDate: existingInstance.startDate, 
+        category: existingInstance.template.category 
+      },
     });
   }
 
-  // 8. Generate Immutable Plan Snapshot (Priority: Custom Clinic Template -> Global Template)
+  // 8. Generate Immutable Plan Snapshot
   const category = activation.clinicConfig?.defaultCategory ?? profile?.recoveryCategory ?? RecoveryPlanCategoryEnum.general_outpatient;
   
-  // FETCH LOGIC: Try to find the Clinic's custom template first.
   let template = await prisma.recoveryPlanTemplate.findFirst({ 
     where: { category, clinicTag: activation.clinicTag }, 
     orderBy: { version: "desc" } 
   });
 
   if (!template) {
-    // Fallback to Global Frederick Template
     template = await prisma.recoveryPlanTemplate.findFirst({ 
       where: { category, clinicTag: null }, 
       orderBy: { version: "desc" } 
@@ -153,14 +157,16 @@ activationRouter.post("/claim", async (req, res) => {
 
   if (!template) return res.status(500).json({ code: "NO_PLAN_TEMPLATE" });
 
+  // ✅ GENERATOR CALL: Now correctly utilizes the renamed function
   const { planJson, configJson } = generatePlan({
     templatePlanJson: template.planJson,
-    clinicOverridesJson: null, // Patient self-generating gets no clinic overrides per rules
+    clinicOverridesJson: null, 
     config: effectiveConfig,
     engineVersion: "v1",
     category,
   });
 
+  // 9. Persist the plan instance
   const planInstance = await prisma.recoveryPlanInstance.create({
     data: {
       userId: user.id,
@@ -180,6 +186,11 @@ activationRouter.post("/claim", async (req, res) => {
 
   return res.status(201).json({
     token, planStatus: "READY",
-    plan: { id: planInstance.id, title: template.title, startDate: planInstance.startDate, category: template.category },
+    plan: { 
+      id: planInstance.id, 
+      title: template.title, 
+      startDate: planInstance.startDate, 
+      category: template.category 
+    },
   });
 });

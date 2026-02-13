@@ -31,32 +31,36 @@ enum RecoveryPlanCategory {
 // --- MODELS ---
 
 model User {
-  id                    String    @id @default(uuid())
-  email                 String    @unique
-  passwordHash          String
-  role                  UserRole  @default(PATIENT)
-  clinicTag             String?   // For CLINIC users to enforce tenant boundaries
+  id                     String                 @id @default(uuid())
+  email                  String                 @unique
+  passwordHash           String
+  role                   UserRole               @default(PATIENT)
+  clinicTag              String?                // For CLINIC users
   
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
 
   // Onboarding
-  consentAcceptedAt     DateTime?
-  procedureName         String?
-  procedureCode         String?   // legacy compatibility
-  recoveryStartDate     String?   // YYYY-MM-DD
+  consentAcceptedAt      DateTime?
+  procedureName          String?
+  procedureCode          String?                // legacy compatibility
+  recoveryStartDate      String?                // YYYY-MM-DD
 
   // Verification
-  emailVerifiedAt       DateTime?
-  verificationCode      String?
-  verificationExpiresAt DateTime?
+  emailVerifiedAt        DateTime?
+  verificationCode       String?
+  verificationExpiresAt  DateTime?
 
   // Relations
-  logEntries             LogEntry[]
-  claimedActivationCodes ActivationCode[]       @relation("ActivationCodeClaimedByUser")
-  recoveryPlanInstances  RecoveryPlanInstance[]
-  createdActivationBatches ActivationBatch[]    @relation("ActivationBatchCreatedBy")
-  capturedActivationConfigs ActivationCode[]    @relation("ActivationCodeConfigCapturedByUser")
+  logEntries              LogEntry[]
+  claimedActivationCodes  ActivationCode[]       @relation("ActivationCodeClaimedByUser")
+  
+  // ✅ FIX: Standard 1-to-Many relation. 
+  // This resolves the "Ambiguous relation" error.
+  recoveryPlans           RecoveryPlanInstance[] 
+  
+  createdActivationBatches ActivationBatch[]     @relation("ActivationBatchCreatedBy")
+  capturedActivationConfigs ActivationCode[]     @relation("ActivationCodeConfigCapturedByUser")
 
   @@index([clinicTag])
 }
@@ -91,19 +95,19 @@ model ClinicPlanConfig {
   updatedAt       DateTime             @updatedAt
 
   activationCodes ActivationCode[]
-  templates       RecoveryPlanTemplate[] // Links back to custom clinic templates
+  templates       RecoveryPlanTemplate[]
 }
 
 model ActivationBatch {
-  id              String   @id @default(uuid())
+  id              String           @id @default(uuid())
   clinicTag       String?
   quantity        Int
   
   createdByUserId String?
-  createdByUser   User?    @relation("ActivationBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdByUser   User?            @relation("ActivationBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   
   codes           ActivationCode[]
-  createdAt       DateTime @default(now())
+  createdAt       DateTime         @default(now())
 
   @@index([clinicTag])
   @@index([createdByUserId])
@@ -122,6 +126,8 @@ model ActivationCode {
 
   // Clinic flow
   configJson             Json?
+  // ✅ FIX: Added planSnapshot to support clinical approval logic
+  planSnapshot           Json?
   configCapturedAt       DateTime?
   configCapturedByUserId String?
   configCapturedByUser   User?                @relation("ActivationCodeConfigCapturedByUser", fields: [configCapturedByUserId], references: [id], onDelete: SetNull)
@@ -146,7 +152,6 @@ model ActivationCode {
 model RecoveryPlanTemplate {
   id          String               @id @default(uuid())
   
-  // Ownership. If null, it's a global template. If set, it's a custom clinic template.
   clinicTag   String?              
   clinic      ClinicPlanConfig?    @relation(fields: [clinicTag], references: [clinicTag], onDelete: Cascade)
 
@@ -161,7 +166,6 @@ model RecoveryPlanTemplate {
 
   instances   RecoveryPlanInstance[]
 
-  // Updated constraint: Allows Global and individual Clinics to have their own version tracking
   @@unique([clinicTag, category, version])
   @@index([category])
   @@index([clinicTag])
@@ -170,6 +174,8 @@ model RecoveryPlanTemplate {
 model RecoveryPlanInstance {
   id               String               @id @default(uuid())
   userId           String
+  
+  // ✅ FIX: Standard relation to User. No duplicates.
   user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   activationCodeId String               @unique
@@ -192,24 +198,24 @@ model RecoveryPlanInstance {
 }
 
 model SecurityAudit {
-  id               String   @id @default(uuid())
-  actorUserId      String?  // The user who performed the action
-  actorRole        String   // Role at time of action
-  eventCategory    String   // e.g., auth, access, plan, log, admin
-  eventType        String   // e.g., LOGIN_SUCCESS, PHI_EXPORT, CODE_CLAIMED
+  id                String   @id @default(uuid())
+  actorUserId       String?
+  actorRole         String
+  eventCategory     String
+  eventType         String
   
-  clinicTag        String?  // Tenant context
-  patientUserId    String?  // Affected patient context
+  clinicTag         String?
+  patientUserId     String?
   
-  targetObjectType String?  // e.g., LogEntry
-  targetObjectId   String?  
+  targetObjectType  String?
+  targetObjectId    String?  
   
-  ipAddress        String
-  userAgent        String
-  status           String   // SUCCESS, FAILURE, FORBIDDEN
-  metadata         Json?    // Redacted additional context
+  ipAddress         String
+  userAgent         String
+  status            String
+  metadata          Json?
   
-  timestamp        DateTime @default(now())
+  timestamp         DateTime @default(now())
 
   @@index([timestamp])
   @@index([actorUserId])
