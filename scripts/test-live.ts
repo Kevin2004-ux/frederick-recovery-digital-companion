@@ -1,7 +1,7 @@
 // app/backend/scripts/test-live.ts
 // No import needed for Node 18+!
 
-const API_URL = "http://localhost:4000";
+const API_URL = "https://frederick-backend.onrender.com";
 const EMAIL = `test_${Date.now()}@example.com`;
 const PASSWORD = "Password123!";
 

@@ -1,16 +1,29 @@
 // app/backend/src/utils/jwt.ts
 import jwt from "jsonwebtoken";
 import { getEnv } from "../config/env.js";
-// Update the params to include role
-export function signAccessToken(params) {
+// Force a shared secret for local dev to prevent "Split Brain" issues
+const getSecret = () => {
     const env = getEnv();
-    return jwt.sign({ sub: params.sub, email: params.email, role: params.role }, env.JWT_SECRET, {
-        expiresIn: "7d", // 7 days expiration
+    const secret = env.JWT_SECRET || "dev-secret-change-me-12345";
+    return secret;
+};
+export function signAccessToken(params) {
+    const secret = getSecret();
+    // We log this once to the server console to verify it's active
+    console.log(`[JWT] Signing token for ${params.email} using secret: ${secret.substring(0, 5)}...`);
+    return jwt.sign({ sub: params.sub, email: params.email, role: params.role }, secret, {
+        expiresIn: "7d",
     });
 }
-// Verify and include the role in the payload
 export function verifyAccessToken(token) {
-    const env = getEnv();
-    const payload = jwt.verify(token, env.JWT_SECRET);
-    return { sub: payload.sub, email: payload.email, role: payload.role }; // Now includes role
+    const secret = getSecret();
+    try {
+        const payload = jwt.verify(token, secret);
+        return { sub: payload.sub, email: payload.email, role: payload.role };
+    }
+    catch (err) {
+        // THIS LOG IS CRITICAL: Check your server terminal (pnpm dev) for this output
+        console.error(`[JWT] Verify Error: ${err.message} | Secret used: ${secret.substring(0, 5)}...`);
+        throw err;
+    }
 }

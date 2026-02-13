@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { apiRouter } from "./routes/index.js";
+import { errorHandler } from "./middleware/errorHandler.js"; // <--- Import the error handler
 function parseOrigins(v) {
     return (v ?? "")
         .split(",")
@@ -39,6 +40,9 @@ export function createApp() {
     }));
     // API routes
     app.use("/", apiRouter);
+    // Global Error Handler
+    // (Must be defined AFTER all routes but BEFORE the 404 fallback if you want 404s to be JSON too)
+    app.use(errorHandler);
     // Fallback for unknown routes
     app.use((_req, res) => {
         res.status(404).json({ error: "Not Found" });

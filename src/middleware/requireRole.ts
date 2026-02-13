@@ -1,25 +1,30 @@
 // app/backend/src/middleware/requireRole.ts
 import { Request, Response, NextFunction } from "express";
 import { UserRole } from "@prisma/client";
-import { AuditService, AuditCategory, AuditStatus } from "../services/AuditService.js";
+import { AuditService, AuditCategory, AuditStatus, AuditSeverity } from "../services/AuditService.js";
 
 export function requireRole(allowedRoles: UserRole[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const userRole = req.user?.role as UserRole;
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const userRole = req.user?.role;
 
     if (!userRole || !allowedRoles.includes(userRole)) {
-      // SECURITY EVENT: Role violation attempt
-      AuditService.log({
+      
+      // ✅ SECURITY FIX: Await the log write.
+      // We block the response until we are sure we recorded this violation.
+      await AuditService.log({
         req,
         category: AuditCategory.ACCESS,
-        type: "UNAUTHORIZED_ROLE_ATTEMPT",
+        action: "UNAUTHORIZED_ROLE_ATTEMPT", // specific action name
         userId: req.user?.id,
-        role: userRole || "GUEST",
         status: AuditStatus.FORBIDDEN,
-        metadata: { requiredRoles: allowedRoles, path: req.originalUrl }
+        severity: AuditSeverity.WARN,
+        details: { 
+          requiredRoles: allowedRoles, 
+          path: req.originalUrl 
+        }
       });
       
-      return res.status(403).json({ code: "FORBIDDEN" });
+      return res.status(403).json({ code: "FORBIDDEN", message: "Insufficient permissions" });
     }
 
     next();

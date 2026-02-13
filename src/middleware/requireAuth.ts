@@ -1,56 +1,81 @@
+// app/backend/src/middleware/requireAuth.ts
 import { Request, Response, NextFunction } from "express";
-import { verifyAccessToken } from "../utils/jwt.js";
-import { prisma } from "../db/prisma.js";
-import { UserRole } from "@prisma/client"; // <--- Import real Enum
+import jwt from "jsonwebtoken";
+import { prisma } from "../db/prisma.js"; // Ensure this matches your actual prisma export path
+import { UserRole } from "@prisma/client";
 
-// Extend Express Request type to include our User with strict typing
+// 1. Type Extension
 declare global {
   namespace Express {
     interface Request {
       user?: {
         id: string;
         email: string;
-        role: UserRole; // <--- Uses real Enum now
-        clinicTag?: string | null;
+        role: UserRole;
+        clinicTag: string | null;
       };
     }
   }
 }
 
+// 2. The Strict Middleware
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader) {
-    return res.status(401).json({ code: "UNAUTHORIZED" });
+  // Check format "Bearer <token>"
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ code: "UNAUTHORIZED", message: "Missing or invalid token format" });
   }
 
   const token = authHeader.split(" ")[1];
-  if (!token) {
-    return res.status(401).json({ code: "UNAUTHORIZED" });
-  }
 
   try {
-    const payload = verifyAccessToken(token);
+    // A. Verify Signature
+    // We use standard jwt.verify to ensure we catch expiration/tampering
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { sub: string; userId?: string };
+    
+    // Support both 'sub' (standard) and 'userId' (custom) claim formats
+    const targetId = decoded.sub || decoded.userId;
 
-    // Optional: Check DB to ensure user wasn't banned/deleted since token issue
+    // B. DATABASE CHECK (The Security Fix)
+    // We look up the user FRESH from the database every time.
     const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: { id: true, email: true, role: true, clinicTag: true }
+      where: { id: targetId },
+      select: { 
+        id: true, 
+        email: true, 
+        role: true, 
+        clinicTag: true,
+        // Security fields
+        isBanned: true,
+        lockedUntil: true 
+      }
     });
 
+    // C. Security Gates
     if (!user) {
-      return res.status(401).json({ code: "UNAUTHORIZED" });
+      return res.status(401).json({ code: "UNAUTHORIZED", message: "User no longer exists" });
     }
 
+    if (user.isBanned) {
+      return res.status(403).json({ code: "ACCOUNT_TERMINATED", message: "This account has been permanently banned." });
+    }
+
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      return res.status(403).json({ code: "ACCOUNT_LOCKED", message: "Account is temporarily locked. Try again later." });
+    }
+
+    // D. Attach User to Request
     req.user = {
       id: user.id,
       email: user.email,
-      role: user.role, // <--- Now matches strict UserRole type
+      role: user.role,
       clinicTag: user.clinicTag
     };
 
     next();
   } catch (err) {
-    return res.status(401).json({ code: "UNAUTHORIZED" });
+    // Token is expired or invalid
+    return res.status(401).json({ code: "UNAUTHORIZED", message: "Invalid or expired token" });
   }
 }

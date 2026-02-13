@@ -1,5 +1,6 @@
 // app/backend/src/repositories/userRepo.ts
 import { prisma } from "../prisma/client.js";
+import { UserRole } from "@prisma/client";
 function normalizeEmail(emailRaw) {
     return emailRaw.trim().toLowerCase();
 }
@@ -7,39 +8,11 @@ export async function findUserByEmail(emailRaw) {
     const email = normalizeEmail(emailRaw);
     return prisma.user.findUnique({
         where: { email },
-        select: {
-            id: true,
-            email: true,
-            passwordHash: true,
-            createdAt: true,
-            consentAcceptedAt: true,
-            procedureName: true,
-            procedureCode: true,
-            recoveryStartDate: true,
-            emailVerifiedAt: true,
-            verificationCode: true,
-            verificationExpiresAt: true,
-            role: true,
-        },
     });
 }
 export async function findUserById(id) {
     return prisma.user.findUnique({
         where: { id },
-        select: {
-            id: true,
-            email: true,
-            passwordHash: true,
-            createdAt: true,
-            consentAcceptedAt: true,
-            procedureName: true,
-            procedureCode: true,
-            recoveryStartDate: true,
-            emailVerifiedAt: true,
-            verificationCode: true,
-            verificationExpiresAt: true,
-            role: true,
-        },
     });
 }
 export async function createUser(params) {
@@ -49,21 +22,7 @@ export async function createUser(params) {
             data: {
                 email,
                 passwordHash: params.passwordHash,
-                role: params.role ?? "PATIENT",
-            },
-            select: {
-                id: true,
-                email: true,
-                passwordHash: true,
-                createdAt: true,
-                consentAcceptedAt: true,
-                procedureName: true,
-                procedureCode: true,
-                recoveryStartDate: true,
-                emailVerifiedAt: true,
-                verificationCode: true,
-                verificationExpiresAt: true,
-                role: true,
+                role: params.role ?? UserRole.PATIENT,
             },
         });
     }
@@ -148,17 +107,6 @@ export async function updateUserProfile(userId, input) {
 export async function getUserProfile(userId) {
     const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: {
-            id: true,
-            email: true,
-            createdAt: true,
-            consentAcceptedAt: true,
-            procedureName: true,
-            procedureCode: true,
-            recoveryStartDate: true,
-            emailVerifiedAt: true,
-            role: true,
-        },
     });
     if (!user)
         throw new Error("USER_NOT_FOUND");
@@ -172,6 +120,17 @@ export async function getUserProfile(userId) {
         recoveryStartDate: user.recoveryStartDate ?? undefined,
         createdAt: user.createdAt.toISOString(),
         emailVerifiedAt: user.emailVerifiedAt ? user.emailVerifiedAt.toISOString() : undefined,
-        role: user.role ?? undefined,
+        role: user.role,
     };
+}
+/** Mark a user's email as verified and clear verification code fields */
+export async function markEmailVerified(userId) {
+    return prisma.user.update({
+        where: { id: userId },
+        data: {
+            emailVerifiedAt: new Date(),
+            verificationCode: null,
+            verificationExpiresAt: null,
+        },
+    });
 }

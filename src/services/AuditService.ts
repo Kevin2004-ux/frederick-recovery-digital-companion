@@ -1,12 +1,12 @@
 // app/backend/src/services/AuditService.ts
-import { prisma } from "../db/prisma.js";
+import { prisma } from "../db/prisma.js"; // Adjust path if your prisma export is in ../index.js
+import { Request } from "express";
 
 export enum AuditCategory {
-  AUTH = "auth",
-  ACCESS = "access",
-  PLAN = "plan",
-  LOG = "log",
-  ADMIN = "admin"
+  ACCESS = "ACCESS",
+  CLINICAL = "CLINICAL",
+  ADMIN = "ADMIN",
+  SYSTEM = "SYSTEM"
 }
 
 export enum AuditStatus {
@@ -15,46 +15,65 @@ export enum AuditStatus {
   FORBIDDEN = "FORBIDDEN"
 }
 
-interface AuditParams {
-  req: any;          // Express Request to extract IP and User-Agent
-  category: AuditCategory;
-  type: string;      // e.g., "LOGIN_SUCCESS", "UNAUTHORIZED_ACCESS_ATTEMPT"
+export enum AuditSeverity {
+  INFO = "INFO",
+  WARN = "WARN",
+  CRITICAL = "CRITICAL"
+}
+
+interface AuditLogParams {
+  req?: Request; // Optional: If provided, we extract IP/UserAgent automatically
   userId?: string;
-  role?: string;
-  clinicTag?: string | null;
-  patientUserId?: string;
-  targetId?: string;
-  targetType?: string;
+  action: string; // e.g., "LOGIN_FAILED", "VIEWED_PLAN"
+  category: AuditCategory;
   status: AuditStatus;
-  metadata?: any;    // Redacted context (No PHI here!)
+  severity?: AuditSeverity;
+  details?: Record<string, any>;
 }
 
 export const AuditService = {
   /**
-   * Logs security events to the database.
-   * This is fire-and-forget (not awaited) to maintain API performance.
+   * Log an event to the database.
+   * MUST be awaited for critical actions (HIPAA requirement).
    */
-  log(params: AuditParams) {
-    const { req, ...data } = params;
+  log: async (params: AuditLogParams) => {
+    const { req, userId, action, category, status, severity, details } = params;
 
-    prisma.securityAudit.create({
-      data: {
-        actorUserId: data.userId,
-        actorRole: data.role || "GUEST",
-        eventCategory: data.category,
-        eventType: data.type,
-        clinicTag: data.clinicTag,
-        patientUserId: data.patientUserId,
-        targetObjectId: data.targetId,
-        targetObjectType: data.targetType,
-        ipAddress: req.ip || req.headers['x-forwarded-for'] || "unknown",
-        userAgent: req.headers["user-agent"] || "unknown",
-        status: data.status,
-        metadata: data.metadata || {},
-      }
-    }).catch(err => {
-      // If audit logging fails, we must at least log it to the server console
-      console.error("[CRITICAL] AuditService failed to write to DB:", err);
-    });
+    // 1. Extract context from Request if available
+    const ipAddress = req?.ip || req?.socket.remoteAddress || "unknown";
+    const userAgent = req?.headers["user-agent"] || "unknown";
+    
+    // 2. Determine Actor (User)
+    // If no userId passed, try to get it from req.user
+    const actorId = userId || req?.user?.id;
+
+    if (!actorId) {
+      console.warn(`[Audit] Skipping log for ${action} - No User ID found.`);
+      return;
+    }
+
+    try {
+      // 3. Write to Database (The critical part)
+      await prisma.auditLog.create({
+        data: {
+          userId: actorId,
+          action: action,
+          // Map our Enums to the DB Strings we added
+          severity: severity || AuditSeverity.INFO,
+          outcome: status,
+          ipAddress: ipAddress,
+          userAgent: userAgent,
+          details: {
+            category, // Store category inside JSON details if not a direct column
+            ...details
+          }
+        }
+      });
+    } catch (error) {
+      // 4. Fail-Safe Logging
+      // If DB fails, we MUST log to console so standard output captures it.
+      console.error(`[AUDIT FAILURE] Could not save audit log: ${action}`, error);
+      // In a strict environment, you might throw here to stop the request entirely.
+    }
   }
 };
