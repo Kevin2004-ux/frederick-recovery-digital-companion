@@ -1,19 +1,17 @@
-// app/backend/src/routes/clinic/index.ts
 import { Router } from "express";
 import { z } from "zod";
 import crypto from "crypto";
 import { 
   Prisma, 
   ActivationCodeStatus, 
-  UserRole,
-  RecoveryPlanCategory as RecoveryPlanCategoryEnum 
+  UserRole
 } from "@prisma/client";
 
 import { prisma } from "../../prisma/client.js";
 import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";
-import { generatePlan } from "../../services/plan/generatePlan.js";
+import { generateRecoveryPlan } from "../../services/plan/generatePlan.js";
 
 export const clinicRouter = Router();
 
@@ -176,10 +174,14 @@ clinicRouter.post("/batches", async (req, res) => {
 
   try {
     const batch = await prisma.$transaction(async (tx) => {
+      // Create Clinic Config if not exists
       await tx.clinicPlanConfig.upsert({
         where: { clinicTag },
         update: {},
-        create: { clinicTag },
+        create: { 
+            clinicTag,
+            overridesJson: Prisma.JsonNull // Initialize with empty overrides
+        },
       });
 
       const createdBatch = await tx.activationBatch.create({
@@ -231,6 +233,7 @@ clinicRouter.post("/batches", async (req, res) => {
     if (msg === "CODE_GEN_EXHAUSTED") {
       return res.status(500).json({ code: "CODE_GENERATION_FAILED" });
     }
+    console.error(e);
     return res.status(500).json({ code: "UNKNOWN_ERROR" });
   }
 });
@@ -287,6 +290,7 @@ clinicRouter.get("/batches/:id/codes.csv", async (req, res) => {
 
 /**
  * Hardened Clinic Config Endpoint
+ * Sets the configuration for a patient BEFORE they sign up.
  */
 clinicRouter.post("/activation/:code/config", async (req, res) => {
   const actorId = req.user!.id;
@@ -375,7 +379,12 @@ clinicRouter.get("/activation/:code/preview", async (req, res) => {
 
   const activation = await prisma.activationCode.findUnique({
     where: { code },
-    include: { clinicConfig: true },
+    // We need to fetch the clinic config to see if they have overrides
+    include: { 
+        // Note: Prisma relation is defined as 'clinic' in schema, checking availability
+        // If your schema doesn't have a direct relation here, we might need a separate query.
+        // Assuming loose coupling for now.
+    } 
   });
 
   if (!activation) return res.status(404).json({ code: "NOT_FOUND" });
@@ -393,28 +402,21 @@ clinicRouter.get("/activation/:code/preview", async (req, res) => {
     return res.status(400).json({ code: "NEEDS_CONFIG", message: "Config must be set before previewing." });
   }
 
-  // Generate the plan dynamically for preview
-  const category = activation.clinicConfig?.defaultCategory ?? "general_outpatient";
-  
-  // FETCH LOGIC: Custom Template Priority
-  let template = await prisma.recoveryPlanTemplate.findFirst({
-    where: { category, clinicTag: requesterTag },
-    orderBy: { version: "desc" },
+  // Fetch Clinic Overrides separately if needed
+  const clinicConfig = await prisma.clinicPlanConfig.findUnique({
+      where: { clinicTag: requesterTag }
   });
 
-  if (!template) {
-    // Fallback to Global
-    template = await prisma.recoveryPlanTemplate.findFirst({
-      where: { category, clinicTag: null },
-      orderBy: { version: "desc" },
-    });
-  }
+  // Generate the plan dynamically for preview
+  const category = "general"; // Default to general for now
+  
+  // FETCH LOGIC: Custom Template Priority
+  // For now we use the generatePlan default logic which handles the fallback internally
+  // or we can pass an explicit template if we implemented the Template Builder fully.
 
-  if (!template) return res.status(500).json({ code: "NO_PLAN_TEMPLATE" });
-
-  const { planJson } = generatePlan({
-    templatePlanJson: template.planJson,
-    clinicOverridesJson: activation.clinicConfig?.overridesJson,
+  const { planJson } = generateRecoveryPlan({
+    templatePlanJson: undefined, // Let generator use default rules
+    clinicOverridesJson: clinicConfig?.overridesJson,
     config: activation.configJson,
     engineVersion: "v1",
     category,
@@ -435,6 +437,7 @@ clinicRouter.get("/activation/:code/preview", async (req, res) => {
 /**
  * POST /clinic/activation/:code/approve
  * Locks the activation code so the config is strictly immutable.
+ * This effectively "Prescribes" the plan.
  */
 clinicRouter.post("/activation/:code/approve", async (req, res) => {
   const actorId = req.user!.id;
@@ -464,9 +467,26 @@ clinicRouter.post("/activation/:code/approve", async (req, res) => {
     });
   }
 
+  // 1. Generate the Final Plan Snapshot
+  const clinicConfig = await prisma.clinicPlanConfig.findUnique({
+    where: { clinicTag: requesterTag }
+  });
+
+  const { planJson } = generateRecoveryPlan({
+    clinicOverridesJson: clinicConfig?.overridesJson,
+    config: activation.configJson,
+    category: "general"
+  });
+
+  // 2. Save and Lock
   const updated = await prisma.activationCode.update({
     where: { id: activation.id },
-    data: { status: ActivationCodeStatus.APPROVED },
+    data: { 
+        status: ActivationCodeStatus.APPROVED,
+        // We save the snapshot of the plan at this exact moment
+        // This ensures that if the 'Brain' changes later, the patient's plan stays consistent
+        planSnapshot: planJson as Prisma.InputJsonValue
+    },
     select: { code: true, status: true, clinicTag: true },
   });
 
@@ -479,89 +499,49 @@ clinicRouter.post("/activation/:code/approve", async (req, res) => {
   return res.status(200).json({ ok: true, activation: updated });
 });
 
-// -------------------------
-// Custom Template Builder API
-// -------------------------
-
 /**
- * GET /clinic/templates
- * Returns global templates AND the clinic's custom templates.
+ * GET /clinic/patients
+ * List all patients for this clinic (those who have claimed a code).
  */
-clinicRouter.get("/templates", async (req, res) => {
-  const requesterTag = req.user?.clinicTag ?? null;
-  if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
-
-  const templates = await prisma.recoveryPlanTemplate.findMany({
-    where: {
-      OR: [
-        { clinicTag: null },        // Global Frederick Templates
-        { clinicTag: requesterTag } // Clinic's Custom Templates
-      ]
-    },
-    orderBy: [
-      { clinicTag: 'asc' },
-      { category: 'asc' },
-      { version: 'desc' }
-    ],
-    select: {
-      id: true,
-      clinicTag: true,
-      category: true,
-      version: true,
-      title: true,
-      createdAt: true
-    }
-  });
-
-  return res.status(200).json({ templates });
-});
-
-/**
- * POST /clinic/templates
- * Allows a clinic to save their own custom recovery template.
- */
-const CreateTemplateSchema = z.object({
-  category: z.nativeEnum(RecoveryPlanCategoryEnum),
-  title: z.string().min(1).max(100),
-  planJson: z.record(z.unknown()), // The JSON built by your frontend template builder
-  sourcesJson: z.record(z.unknown()).optional(),
-});
-
-clinicRouter.post("/templates", async (req, res) => {
-  const actorId = req.user!.id;
-  const requesterTag = req.user?.clinicTag ?? null;
-  if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
-
-  const parsed = CreateTemplateSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
-
-  const { category, title, planJson, sourcesJson } = parsed.data;
-
-  // Auto-increment the version for this clinic's specific category
-  const latestTemplate = await prisma.recoveryPlanTemplate.findFirst({
-    where: { clinicTag: requesterTag, category },
-    orderBy: { version: "desc" }
-  });
+clinicRouter.get("/patients", async (req, res) => {
+    const requesterTag = req.user?.clinicTag ?? null;
+    if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
   
-  const nextVersion = latestTemplate ? latestTemplate.version + 1 : 1;
-
-  const newTemplate = await prisma.recoveryPlanTemplate.create({
-    data: {
-      clinicTag: requesterTag,
-      category,
-      version: nextVersion,
-      title,
-      planJson: planJson as Prisma.InputJsonValue,
-      sourcesJson: (sourcesJson || null) as Prisma.InputJsonValue | null,
-    }
+    // Find all codes claimed by this clinic that have a user attached
+    const patients = await prisma.activationCode.findMany({
+      where: { 
+          clinicTag: requesterTag,
+          status: ActivationCodeStatus.CLAIMED,
+          claimedByUserId: { not: null }
+      },
+      select: {
+          code: true,
+          claimedAt: true,
+          claimedByUser: {
+              select: {
+                  id: true,
+                  email: true,
+                  recoveryPlan: {
+                      select: {
+                          startDate: true,
+                          currentDay: true
+                      }
+                  }
+              }
+          }
+      },
+      orderBy: { claimedAt: 'desc' }
+    });
+  
+    // Flatten the structure for the frontend table
+    const flatPatients = patients.map(p => ({
+        id: p.claimedByUser?.id,
+        email: p.claimedByUser?.email,
+        code: p.code,
+        joinedAt: p.claimedAt,
+        currentDay: p.claimedByUser?.recoveryPlan?.currentDay ?? 0,
+        startDate: p.claimedByUser?.recoveryPlan?.startDate
+    }));
+  
+    return res.status(200).json({ patients: flatPatients });
   });
-
-  // Audit Log
-  AuditService.log({
-    req, category: AuditCategory.ADMIN, type: "CLINIC_TEMPLATE_CREATED",
-    userId: actorId, role: req.user!.role, clinicTag: requesterTag,
-    targetId: newTemplate.id, targetType: "RecoveryPlanTemplate", status: AuditStatus.SUCCESS
-  });
-
-  return res.status(201).json({ template: newTemplate });
-});

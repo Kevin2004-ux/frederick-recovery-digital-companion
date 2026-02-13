@@ -1,77 +1,61 @@
-// app/backend/src/middleware/authMiddleware.ts
-import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
-import { UserRole } from "@prisma/client";
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { z } from 'zod';
 
-const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
+const envSchema = z.object({
+  JWT_SECRET: z.string().min(1),
+});
 
-// 1. Define the shape of the decoded token
-interface DecodedToken {
-  userId: string;
-  role: UserRole;
-  iat: number;
-  exp: number;
-}
+const env = envSchema.parse(process.env);
 
-// 2. Extend Express Request to include user
-// This prevents us from having to use (req as any) everywhere
+// Define the User Role type
+export type UserRole = 'PATIENT' | 'CLINIC_ADMIN' | 'SURGEON';
+
+// Augment the Express Request type
 declare global {
   namespace Express {
     interface Request {
       user?: {
-        userId: string;
+        id: string;
+        email: string;
         role: UserRole;
+        clinicTag?: string | null;
       };
     }
   }
 }
 
-/**
- * Validates the JWT in the Authorization header.
- * Attaches user data (id, role) to req.user.
- */
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
+export const authenticateToken = (req: Request, res: Response, next: NextFunction) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
 
-  if (!authHeader) {
-    return res.status(401).json({ error: "No token provided" });
-  }
-
-  // Format: "Bearer <token>"
-  const token = authHeader.split(" ")[1];
   if (!token) {
-    return res.status(401).json({ error: "Malformed token" });
+    return res.status(401).json({ error: 'Access token required' });
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as DecodedToken;
+    const user = jwt.verify(token, env.JWT_SECRET) as any;
     
+    // Normalize the user object to match strict TS expectations
+    // If the token has 'userId', we map it to 'id'
     req.user = {
-      userId: decoded.userId,
-      role: decoded.role
+      id: user.id || user.userId,
+      email: user.email,
+      role: user.role as UserRole,
+      clinicTag: user.clinicTag
     };
-
-    next(); // Pass control to the next handler
-  } catch (err) {
-    console.error("Auth Middleware Error:", err);
-    return res.status(403).json({ error: "Invalid or expired token" });
+    
+    next();
+  } catch (error) {
+    return res.status(403).json({ error: 'Invalid or expired token' });
   }
-}
+};
 
-/**
- * Optional: Middleware to restrict access to specific roles.
- * Usage: router.get("/admin", requireAuth, requireRole("ADMIN"), adminController);
- */
-export function requireRole(requiredRole: UserRole) {
+export const requireRole = (allowedRoles: UserRole[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.user) {
-      return res.status(401).json({ error: "Unauthorized" });
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
     }
-
-    if (req.user.role !== requiredRole) {
-      return res.status(403).json({ error: "Forbidden: Insufficient permissions" });
-    }
-
     next();
   };
-}
+};
