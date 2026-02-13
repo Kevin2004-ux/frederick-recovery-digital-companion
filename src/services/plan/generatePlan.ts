@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 // logic imports must have .js extension for NodeNext
 import { resolvePlanModules, type PlanConfiguration } from "./rules.js"; 
 import { CONTENT_LIBRARY } from "./contentLibrary.js"; 
+import { enforceClinicOverrides } from "./enforceClinicOverrides.js"; // ✅ Import this!
 
 // --- 1. Helper Functions ---
 
@@ -121,7 +122,7 @@ export type GeneratePlanOutput = {
 };
 
 /**
- * ✅ FIX: Rename to generatePlan to match route imports
+ * Main Generator Function
  */
 export const generatePlan = (input: GeneratePlanInput): GeneratePlanOutput => {
   // A. Setup the Skeleton (21 Days)
@@ -131,14 +132,7 @@ export const generatePlan = (input: GeneratePlanInput): GeneratePlanOutput => {
   const days = ensure21Days(baseDays);
 
   // B. Run The Brain (Rules)
-  /**
-   * ✅ FIX: Use a forced cast to avoid TS2352. 
-   * Since this comes from a validated Zod schema in the routes, 
-   * we can safely assume it matches PlanConfiguration.
-   */
   const config = input.config as any as PlanConfiguration;
-
-  // This calls the imported rule engine
   const activeModuleIds = resolvePlanModules(config);
   
   const debugRulesApplied: string[] = [];
@@ -197,14 +191,22 @@ export const generatePlan = (input: GeneratePlanInput): GeneratePlanOutput => {
       appliedRules: debugRulesApplied,
     },
   };
+
+  // E. ✅ FIX: ENFORCE CLINIC OVERRIDES
+  // This step was missing/bypassed in the previous version.
+  const enforcedPlanJson = enforceClinicOverrides({
+    plan: planJson,
+    overridesJson: input.clinicOverridesJson,
+    // Optional: could log to a variable if we wanted to save the audit trail inside the JSON meta
+    auditPush: (evt) => { 
+        // We could push these to planJson.meta.clinicAuditEvents if desired
+    }
+  });
   
   return { 
-    planJson: planJson as Prisma.InputJsonValue, 
+    planJson: enforcedPlanJson as Prisma.InputJsonValue, 
     configJson: input.config as Prisma.InputJsonValue 
   };
 };
 
-/**
- * ✅ FIX: Export an alias so older code doesn't break
- */
 export const generateRecoveryPlan = generatePlan;
