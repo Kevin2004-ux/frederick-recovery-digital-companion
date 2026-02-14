@@ -16,6 +16,8 @@ function parseOrigins(v: string | undefined): string[] {
 
 export function createApp() {
   const app = express();
+  app.set("trust proxy", 1);
+
 
   // Security & parsing
   app.use(helmet());
