@@ -1,19 +1,24 @@
 import { AuditService, AuditCategory, AuditStatus } from "../services/AuditService.js";
 export function requireRole(allowedRoles) {
     return (req, res, next) => {
-        const userRole = req.user?.role;
-        if (!userRole || !allowedRoles.includes(userRole)) {
-            // SECURITY EVENT: Role violation attempt
+        if (!req.user) {
+            return res.status(401).json({ error: "Unauthorized" });
+        }
+        if (!allowedRoles.includes(req.user.role)) {
+            // FIX: Use 'type', 'category', and 'status' instead of just 'action'
             AuditService.log({
                 req,
                 category: AuditCategory.ACCESS,
                 type: "UNAUTHORIZED_ROLE_ATTEMPT",
-                userId: req.user?.id,
-                role: userRole || "GUEST",
+                userId: req.user.id,
+                role: req.user.role,
                 status: AuditStatus.FORBIDDEN,
-                metadata: { requiredRoles: allowedRoles, path: req.originalUrl }
+                metadata: {
+                    required: allowedRoles,
+                    actual: req.user.role
+                }
             });
-            return res.status(403).json({ code: "FORBIDDEN" });
+            return res.status(403).json({ error: "Forbidden" });
         }
         next();
     };

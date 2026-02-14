@@ -1,5 +1,4 @@
 // app/backend/src/routes/log/index.ts
-import { PdfService } from "../../services/export/PdfService.js";
 import { Router } from "express";
 import { z } from "zod";
 import { UserRole } from "@prisma/client";
@@ -9,7 +8,9 @@ import { requireOnboarding } from "../../middleware/requireOnboarding.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { createEntry, listEntries, updateEntry, listEntriesInRange } from "../../repositories/logRepo.js";
 import { getUserIdOrRespond } from "../../utils/requireUser.js";
-import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";
+// Update import to include AuditSeverity
+import { AuditService, AuditCategory, AuditStatus, AuditSeverity } from "../../services/AuditService.js";
+import { PdfService } from "../../services/export/PdfService.js";
 export const logRouter = Router();
 // SECURITY: Guard everything under /log. Clinics are strictly forbidden here!
 logRouter.use(requireAuth);
@@ -52,6 +53,7 @@ logRouter.post("/entries", async (req, res) => {
     try {
         const created = await createEntry(userId, parsed.data);
         // HIPAA AUDIT: Log creation
+        // We don't await this strictly because failing to log creation isn't a data leak
         AuditService.log({
             req, category: AuditCategory.LOG, type: "PHI_CREATED",
             userId, role: req.user.role, patientUserId: userId,
@@ -60,8 +62,7 @@ logRouter.post("/entries", async (req, res) => {
         return res.status(201).json(created);
     }
     catch (err) {
-        const e = err;
-        if (e?.code === "ENTRY_ALREADY_EXISTS") {
+        if (err?.code === "ENTRY_ALREADY_EXISTS") {
             return res.status(409).json({ code: "ENTRY_ALREADY_EXISTS", message: "An entry already exists for this date" });
         }
         return res.status(500).json({ code: "INTERNAL_ERROR", message: "Failed to create log entry" });
@@ -91,9 +92,9 @@ logRouter.put("/entries/:date", async (req, res) => {
         return res.status(200).json(updated);
     }
     catch (err) {
-        const e = err;
-        if (e?.code === "NOT_FOUND")
+        if (err?.code === "NOT_FOUND") {
             return res.status(404).json({ code: "NOT_FOUND", message: "No entry exists for this date" });
+        }
         return res.status(500).json({ code: "INTERNAL_ERROR", message: "Failed to update log entry" });
     }
 });
@@ -124,16 +125,25 @@ logRouter.get("/entries/export", async (req, res) => {
     const userId = getUserIdOrRespond(req, res);
     if (!userId)
         return;
-    const entries = await listEntries(userId);
-    AuditService.log({
-        req, category: AuditCategory.LOG, type: "PHI_EXPORTED",
-        userId, role: req.user.role, patientUserId: userId, status: AuditStatus.SUCCESS,
-        metadata: { format: "JSON", count: entries.length }
-    });
-    const payload = { exportedAt: new Date().toISOString(), userId, entries };
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.setHeader("Content-Disposition", 'attachment; filename="recovery-log.json"');
-    return res.status(200).send(JSON.stringify(payload, null, 2));
+    try {
+        const entries = await listEntries(userId);
+        // CRITICAL AUDIT: Fail-Closed
+        // We await this. If it fails (throws), we jump to catch and DO NOT send data.
+        await AuditService.log({
+            req, category: AuditCategory.LOG, type: "PHI_EXPORTED",
+            userId, role: req.user.role, patientUserId: userId, status: AuditStatus.SUCCESS,
+            metadata: { format: "JSON", count: entries.length },
+            severity: AuditSeverity.CRITICAL
+        });
+        const payload = { exportedAt: new Date().toISOString(), userId, entries };
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Content-Disposition", 'attachment; filename="recovery-log.json"');
+        return res.status(200).send(JSON.stringify(payload, null, 2));
+    }
+    catch (error) {
+        console.error("Export blocked due to audit failure", error);
+        return res.status(500).json({ code: "AUDIT_FAILURE", message: "Security audit failed. Export blocked." });
+    }
 });
 /**
  * GET /log/entries/export.csv
@@ -142,24 +152,32 @@ logRouter.get("/entries/export.csv", async (req, res) => {
     const userId = getUserIdOrRespond(req, res);
     if (!userId)
         return;
-    const entries = await listEntries(userId);
-    AuditService.log({
-        req, category: AuditCategory.LOG, type: "PHI_EXPORTED",
-        userId, role: req.user.role, patientUserId: userId, status: AuditStatus.SUCCESS,
-        metadata: { format: "CSV", count: entries.length }
-    });
-    const escapeCsv = (value) => {
-        const s = String(value ?? "");
-        if (/[",\n\r]/.test(s))
-            return `"${s.replace(/"/g, '""')}"`;
-        return s;
-    };
-    const header = ["date", "painLevel", "swellingLevel", "notes", "schemaVersion"].join(",");
-    const rows = entries.map((e) => [e.date, e.painLevel, e.swellingLevel, e.notes ?? "", e.schemaVersion].map(escapeCsv).join(","));
-    const csv = [header, ...rows].join("\n");
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", 'attachment; filename="recovery-log.csv"');
-    return res.status(200).send(csv);
+    try {
+        const entries = await listEntries(userId);
+        // CRITICAL AUDIT: Fail-Closed
+        await AuditService.log({
+            req, category: AuditCategory.LOG, type: "PHI_EXPORTED",
+            userId, role: req.user.role, patientUserId: userId, status: AuditStatus.SUCCESS,
+            metadata: { format: "CSV", count: entries.length },
+            severity: AuditSeverity.CRITICAL
+        });
+        const escapeCsv = (value) => {
+            const s = String(value ?? "");
+            if (/[",\n\r]/.test(s))
+                return `"${s.replace(/"/g, '""')}"`;
+            return s;
+        };
+        const header = ["date", "painLevel", "swellingLevel", "notes", "schemaVersion"].join(",");
+        const rows = entries.map((e) => [e.date, e.painLevel, e.swellingLevel, e.notes ?? "", e.schemaVersion].map(escapeCsv).join(","));
+        const csv = [header, ...rows].join("\n");
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", 'attachment; filename="recovery-log.csv"');
+        return res.status(200).send(csv);
+    }
+    catch (error) {
+        console.error("Export blocked due to audit failure", error);
+        return res.status(500).json({ code: "AUDIT_FAILURE", message: "Security audit failed. Export blocked." });
+    }
 });
 /**
  * GET /log/entries/export.pdf
@@ -169,21 +187,24 @@ logRouter.get("/entries/export.pdf", async (req, res) => {
     if (!userId)
         return;
     const userEmail = req.user.email; // Safe because requireAuth is active
-    const entries = await listEntries(userId);
-    // HIPAA AUDIT: Export Event
-    AuditService.log({
-        req,
-        category: AuditCategory.LOG,
-        type: "PHI_EXPORTED",
-        userId,
-        role: req.user.role,
-        patientUserId: userId,
-        status: AuditStatus.SUCCESS,
-        metadata: { format: "PDF", count: entries.length },
-    });
-    // Set Headers for File Download
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", 'attachment; filename="recovery-log.pdf"');
-    // Generate and Stream
-    await PdfService.streamLogReport(entries, res, userEmail);
+    try {
+        const entries = await listEntries(userId);
+        // CRITICAL AUDIT: Fail-Closed
+        await AuditService.log({
+            req, category: AuditCategory.LOG, type: "PHI_EXPORTED",
+            userId, role: req.user.role, patientUserId: userId, status: AuditStatus.SUCCESS,
+            metadata: { format: "PDF", count: entries.length },
+            severity: AuditSeverity.CRITICAL
+        });
+        // Set Headers only after audit succeeds
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", 'attachment; filename="recovery-log.pdf"');
+        await PdfService.streamLogReport(entries, res, userEmail);
+    }
+    catch (error) {
+        console.error("Export blocked due to audit failure", error);
+        if (!res.headersSent) {
+            return res.status(500).json({ code: "AUDIT_FAILURE", message: "Security audit failed. Export blocked." });
+        }
+    }
 });

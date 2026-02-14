@@ -1,19 +1,24 @@
 import { prisma } from "../prisma/client.js";
+// Import the new encryption utilities
+import { encryptPHI, decryptPHI } from "../utils/encryption.js";
 export async function createEntry(userId, entry) {
     try {
+        // ENCRYPTION: Protect notes before DB insertion
+        const secureNotes = encryptPHI(entry.notes);
         const stored = await prisma.logEntry.create({
             data: {
                 userId,
                 date: entry.date,
                 painLevel: entry.painLevel,
                 swellingLevel: entry.swellingLevel,
-                notes: entry.notes,
-                // ✅ Fix: Cast Record to InputJsonValue for Prisma
+                notes: secureNotes, // <--- Encrypted
+                // Fix: Cast Record to InputJsonValue for Prisma
                 details: (entry.details || {}),
                 schemaVersion: entry.schemaVersion ?? 2,
             },
         });
-        return stored;
+        // DECRYPTION: Return readable data to the caller (so the UI updates immediately)
+        return { ...stored, notes: decryptPHI(stored.notes) };
     }
     catch (e) {
         if (e?.code === "P2002") {
@@ -33,26 +38,35 @@ export async function updateEntry(userId, date, patch) {
         err.code = "NOT_FOUND";
         throw err;
     }
+    // ENCRYPTION: Only encrypt if notes are being updated
+    // We use a ternary to strictly preserve 'undefined' (do not update) vs 'null' (clear field)
+    const secureNotes = patch.notes !== undefined ? encryptPHI(patch.notes) : undefined;
     const updated = await prisma.logEntry.update({
         where: { id: existing.id },
         data: {
             painLevel: patch.painLevel,
             swellingLevel: patch.swellingLevel,
-            notes: patch.notes,
-            // ✅ Fix: Cast Record to InputJsonValue for Prisma
+            notes: secureNotes, // <--- Encrypted (or undefined to skip)
+            // Fix: Cast Record to InputJsonValue for Prisma
             details: (patch.details ?? existing.details ?? {}),
         },
     });
-    return updated;
+    // DECRYPTION: Return cleartext
+    return { ...updated, notes: decryptPHI(updated.notes) };
 }
 export async function listEntries(userId) {
-    return prisma.logEntry.findMany({
+    const rawEntries = await prisma.logEntry.findMany({
         where: { userId },
         orderBy: { date: "asc" },
     });
+    // DECRYPTION: Decrypt all notes before returning list
+    return rawEntries.map(entry => ({
+        ...entry,
+        notes: decryptPHI(entry.notes)
+    }));
 }
 export async function listEntriesInRange(userId, from, to) {
-    return prisma.logEntry.findMany({
+    const rawEntries = await prisma.logEntry.findMany({
         where: {
             userId,
             date: {
@@ -62,4 +76,9 @@ export async function listEntriesInRange(userId, from, to) {
         },
         orderBy: { date: "asc" },
     });
+    // DECRYPTION: Decrypt all notes
+    return rawEntries.map(entry => ({
+        ...entry,
+        notes: decryptPHI(entry.notes)
+    }));
 }

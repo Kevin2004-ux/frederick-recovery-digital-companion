@@ -1,6 +1,7 @@
 // logic imports must have .js extension for NodeNext
 import { resolvePlanModules } from "./rules.js";
 import { CONTENT_LIBRARY } from "./contentLibrary.js";
+import { enforceClinicOverrides } from "./enforceClinicOverrides.js"; // ✅ Import this!
 // --- 1. Helper Functions ---
 function isPlainObject(v) {
     return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -81,7 +82,7 @@ function addModuleEvery(days, id) {
         addModule(d, id);
 }
 /**
- * ✅ FIX: Rename to generatePlan to match route imports
+ * Main Generator Function
  */
 export const generatePlan = (input) => {
     // A. Setup the Skeleton (21 Days)
@@ -90,13 +91,7 @@ export const generatePlan = (input) => {
     const baseDays = baseDaysRaw.map((d, idx) => normalizeDayV2(d, idx));
     const days = ensure21Days(baseDays);
     // B. Run The Brain (Rules)
-    /**
-     * ✅ FIX: Use a forced cast to avoid TS2352.
-     * Since this comes from a validated Zod schema in the routes,
-     * we can safely assume it matches PlanConfiguration.
-     */
     const config = input.config;
-    // This calls the imported rule engine
     const activeModuleIds = resolvePlanModules(config);
     const debugRulesApplied = [];
     for (const moduleId of activeModuleIds) {
@@ -149,12 +144,19 @@ export const generatePlan = (input) => {
             appliedRules: debugRulesApplied,
         },
     };
+    // E. ✅ FIX: ENFORCE CLINIC OVERRIDES
+    // This step was missing/bypassed in the previous version.
+    const enforcedPlanJson = enforceClinicOverrides({
+        plan: planJson,
+        overridesJson: input.clinicOverridesJson,
+        // Optional: could log to a variable if we wanted to save the audit trail inside the JSON meta
+        auditPush: (evt) => {
+            // We could push these to planJson.meta.clinicAuditEvents if desired
+        }
+    });
     return {
-        planJson: planJson,
+        planJson: enforcedPlanJson,
         configJson: input.config
     };
 };
-/**
- * ✅ FIX: Export an alias so older code doesn't break
- */
 export const generateRecoveryPlan = generatePlan;

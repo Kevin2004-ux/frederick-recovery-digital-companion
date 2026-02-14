@@ -1,12 +1,15 @@
 import bcrypt from "bcryptjs";
+import crypto from "crypto"; // <--- Needed for secure token generation
 import { z } from "zod";
+import { zxcvbn } from "zxcvbn-typescript";
 import { UserRole } from "@prisma/client";
+import { prisma } from "../db/prisma.js";
 import * as userRepo from "../repositories/userRepo.js";
-import { AuditService, AuditCategory, AuditStatus } from "../services/AuditService.js";
-import { signAccessToken } from "../utils/jwt.js"; // <--- IMPORT THIS
+import { AuditService, AuditCategory, AuditStatus, AuditSeverity } from "../services/AuditService.js";
+import { signAccessToken } from "../utils/jwt.js";
+import { sendPasswordResetEmail } from "../utils/mailer.js"; // <--- Import Mailer
 /**
  * POST /auth/register
- * Body: { email, password, role? }
  */
 export async function register(req, res) {
     try {
@@ -14,10 +17,18 @@ export async function register(req, res) {
         if (!email || !password) {
             return res.status(400).json({ error: "Email and password are required" });
         }
-        if (password.length < 8) {
-            return res.status(400).json({ error: "Password must be at least 8 characters" });
+        // 1. Password Strength Check
+        if (password.length < 12) {
+            return res.status(400).json({ code: "WEAK_PASSWORD", error: "Password must be at least 12 characters long." });
         }
-        // validate role if provided
+        const strength = zxcvbn(password);
+        if (strength.score < 3) {
+            return res.status(400).json({
+                code: "WEAK_PASSWORD",
+                error: "Password is too easy to guess.",
+                suggestions: strength.feedback.suggestions
+            });
+        }
         let userRole = undefined;
         if (role) {
             if (!Object.values(UserRole).includes(role)) {
@@ -32,12 +43,8 @@ export async function register(req, res) {
             role: userRole,
         });
         AuditService.log({
-            req,
-            category: AuditCategory.AUTH,
-            type: "SIGNUP_SUCCESS",
-            userId: user.id,
-            role: user.role,
-            status: AuditStatus.SUCCESS
+            req, category: AuditCategory.AUTH, type: "SIGNUP_SUCCESS",
+            userId: user.id, role: user.role, status: AuditStatus.SUCCESS
         });
         res.status(201).json({
             id: user.id,
@@ -51,13 +58,11 @@ export async function register(req, res) {
         if (err.message === "EMAIL_TAKEN") {
             return res.status(409).json({ error: "Email already in use" });
         }
-        // Pass to global error handler in a real scenario, but for now return 500
         res.status(500).json({ error: "Internal Server Error" });
     }
 }
 /**
  * POST /auth/login
- * Body: { email, password }
  */
 export async function login(req, res) {
     try {
@@ -65,43 +70,63 @@ export async function login(req, res) {
         if (!email || !password) {
             return res.status(400).json({ error: "Email and password required" });
         }
-        const user = await userRepo.findUserByEmail(email);
+        const user = await prisma.user.findUnique({
+            where: { email },
+            select: {
+                id: true, email: true, passwordHash: true, role: true,
+                tokenVersion: true, isBanned: true, lockedUntil: true, failedLoginAttempts: true
+            }
+        });
         if (!user) {
             return res.status(401).json({ error: "Invalid credentials" });
         }
+        if (user.isBanned) {
+            AuditService.log({
+                req, category: AuditCategory.AUTH, type: "BANNED_LOGIN_ATTEMPT",
+                userId: user.id, status: AuditStatus.FORBIDDEN, severity: AuditSeverity.WARN
+            });
+            return res.status(403).json({ code: "ACCOUNT_TERMINATED", message: "Account is permanently disabled." });
+        }
+        if (user.lockedUntil && user.lockedUntil > new Date()) {
+            AuditService.log({
+                req, category: AuditCategory.AUTH, type: "LOCKED_LOGIN_ATTEMPT",
+                userId: user.id, status: AuditStatus.FAILURE
+            });
+            return res.status(403).json({ code: "ACCOUNT_LOCKED", message: "Account locked. Try again later." });
+        }
         const match = await bcrypt.compare(password, user.passwordHash);
         if (!match) {
+            const newFailCount = user.failedLoginAttempts + 1;
+            let updateData = { failedLoginAttempts: newFailCount };
+            if (newFailCount >= 5) {
+                updateData.lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+                AuditService.log({
+                    req, category: AuditCategory.AUTH, type: "ACCOUNT_LOCKED_OUT",
+                    userId: user.id, status: AuditStatus.FAILURE, severity: AuditSeverity.WARN
+                });
+            }
+            await prisma.user.update({ where: { id: user.id }, data: updateData });
             AuditService.log({
-                req,
-                category: AuditCategory.AUTH,
-                type: "LOGIN_FAILED",
-                status: AuditStatus.FAILURE,
-                metadata: { email }
+                req, category: AuditCategory.AUTH, type: "LOGIN_FAILED",
+                status: AuditStatus.FAILURE, metadata: { email }
             });
             return res.status(401).json({ error: "Invalid credentials" });
         }
-        // FIXED: Use centralized signer
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() }
+        });
         const token = signAccessToken({
             sub: user.id,
             email: user.email,
-            role: user.role
+            role: user.role,
+            tokenVersion: user.tokenVersion
         });
         AuditService.log({
-            req,
-            category: AuditCategory.AUTH,
-            type: "LOGIN_SUCCESS",
-            userId: user.id,
-            role: user.role,
-            status: AuditStatus.SUCCESS
+            req, category: AuditCategory.AUTH, type: "LOGIN_SUCCESS",
+            userId: user.id, role: user.role, status: AuditStatus.SUCCESS
         });
-        res.json({
-            token,
-            user: {
-                id: user.id,
-                email: user.email,
-                role: user.role
-            }
-        });
+        res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
     }
     catch (err) {
         console.error("Login Error:", err);
@@ -110,7 +135,6 @@ export async function login(req, res) {
 }
 /**
  * POST /auth/verify
- * Body: { email, code }
  */
 export async function verify(req, res) {
     const VerifySchema = z.object({
@@ -123,37 +147,30 @@ export async function verify(req, res) {
     }
     const { email, code } = parsed.data;
     try {
-        // 1. Verify the code in the DB
         await userRepo.verifyEmailCode(email, code);
-        // 2. Fetch the user to sign the token
-        const user = await userRepo.findUserByEmail(email);
+        const user = await prisma.user.findUnique({
+            where: { email },
+            select: { id: true, email: true, role: true, tokenVersion: true }
+        });
         if (!user)
             return res.status(404).json({ code: "USER_NOT_FOUND" });
-        // 3. FIXED: Use centralized signer
         const token = signAccessToken({
             sub: user.id,
             email: user.email,
-            role: user.role
-        });
-        // 4. Audit Log
-        AuditService.log({
-            req,
-            category: AuditCategory.AUTH,
-            type: "VERIFY_SUCCESS",
-            userId: user.id,
             role: user.role,
-            status: AuditStatus.SUCCESS
+            tokenVersion: user.tokenVersion
+        });
+        AuditService.log({
+            req, category: AuditCategory.AUTH, type: "VERIFY_SUCCESS",
+            userId: user.id, role: user.role, status: AuditStatus.SUCCESS
         });
         return res.status(200).json({ token, user: { id: user.id, email: user.email, role: user.role } });
     }
     catch (e) {
         if (e.message === "INVALID_CODE" || e.message === "CODE_EXPIRED" || e.message === "NO_CODE") {
             AuditService.log({
-                req,
-                category: AuditCategory.AUTH,
-                type: "VERIFY_FAILED",
-                status: AuditStatus.FAILURE,
-                metadata: { reason: e.message, email }
+                req, category: AuditCategory.AUTH, type: "VERIFY_FAILED",
+                status: AuditStatus.FAILURE, metadata: { reason: e.message, email }
             });
             return res.status(400).json({ code: e.message });
         }
@@ -162,12 +179,107 @@ export async function verify(req, res) {
     }
 }
 /**
+ * POST /auth/forgot-password
+ * Initializes password reset flow.
+ */
+export async function forgotPassword(req, res) {
+    const email = req.body.email;
+    if (!email || typeof email !== "string") {
+        return res.status(400).json({ code: "VALIDATION_ERROR", message: "Email required" });
+    }
+    try {
+        const user = await prisma.user.findUnique({ where: { email } });
+        // SECURITY: Always return success to prevent email enumeration
+        if (!user) {
+            return res.status(200).json({ ok: true, message: "If account exists, email sent." });
+        }
+        // 1. Generate Token
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const tokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
+        // 2. Save Hash + Expiry (1 hour)
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                passwordResetTokenHash: tokenHash,
+                passwordResetExpiresAt: new Date(Date.now() + 60 * 60 * 1000)
+            }
+        });
+        // 3. Send Email (with PLAIN token)
+        await sendPasswordResetEmail({ to: user.email, token: resetToken });
+        AuditService.log({
+            req, category: AuditCategory.AUTH, type: "PASSWORD_RESET_REQUESTED",
+            userId: user.id, role: user.role, status: AuditStatus.SUCCESS
+        });
+        return res.status(200).json({ ok: true, message: "If account exists, email sent." });
+    }
+    catch (err) {
+        console.error("Forgot Password Error:", err);
+        return res.status(500).json({ code: "INTERNAL_ERROR" });
+    }
+}
+/**
+ * POST /auth/reset-password
+ * Completes the reset.
+ */
+export async function resetPassword(req, res) {
+    const Schema = z.object({
+        token: z.string(),
+        password: z.string().min(12, "Password must be 12+ characters")
+    });
+    const parsed = Schema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
+    }
+    const { token, password } = parsed.data;
+    try {
+        // 1. Hash the incoming token to match DB
+        const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+        // 2. Find User with valid, non-expired token
+        const user = await prisma.user.findFirst({
+            where: {
+                passwordResetTokenHash: tokenHash,
+                passwordResetExpiresAt: { gt: new Date() }
+            }
+        });
+        if (!user) {
+            // Generic error to avoid revealing why (invalid vs expired)
+            return res.status(400).json({ code: "INVALID_RESET_TOKEN", message: "Token is invalid or expired." });
+        }
+        // 3. Password Strength Check
+        const strength = zxcvbn(password);
+        if (strength.score < 3) {
+            return res.status(400).json({ code: "WEAK_PASSWORD", error: "Password is too weak." });
+        }
+        // 4. Update Password & Security Fields
+        const passwordHash = await bcrypt.hash(password, 10);
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                passwordHash,
+                tokenVersion: { increment: 1 }, // <--- INVALIDATES ALL OLD SESSIONS
+                passwordResetTokenHash: null,
+                passwordResetExpiresAt: null,
+                lockedUntil: null, // Optional: unlock account if they successfully reset
+                failedLoginAttempts: 0
+            }
+        });
+        AuditService.log({
+            req, category: AuditCategory.AUTH, type: "PASSWORD_RESET_SUCCESS",
+            userId: user.id, role: user.role, status: AuditStatus.SUCCESS
+        });
+        return res.status(200).json({ ok: true, message: "Password updated successfully." });
+    }
+    catch (err) {
+        console.error("Reset Password Error:", err);
+        return res.status(500).json({ code: "INTERNAL_ERROR" });
+    }
+}
+/**
  * GET /auth/me
- * Requires Auth Middleware
  */
 export async function getProfile(req, res) {
     try {
-        const userId = req.user?.id; // <--- Changed from userId to id to match middleware payload
+        const userId = req.user?.id;
         if (!userId)
             return res.status(401).json({ error: "Unauthorized" });
         const profile = await userRepo.getUserProfile(userId);
