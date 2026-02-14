@@ -1,3 +1,4 @@
+// backend/src/config/env.ts
 import { z } from "zod";
 
 const EnvSchema = z
@@ -8,7 +9,12 @@ const EnvSchema = z
     PORT: z.coerce.number().int().positive().optional(),
     API_PORT: z.coerce.number().int().positive().optional(),
 
-    JWT_SECRET: z.string().min(20),
+    // --- SECURITY KEYS ---
+    // Updated minimum length to 32 to match your new military-grade keys
+    JWT_SECRET: z.string().min(32),
+    // Added ENCRYPTION_KEY support (optional in schema to prevent crash if missing, but code prefers it)
+    ENCRYPTION_KEY: z.string().min(32).optional(),
+    // ---------------------
 
     DATABASE_URL: z.string().optional(),
 
@@ -36,6 +42,7 @@ export function getEnv() {
     PORT: process.env.PORT,
     API_PORT: process.env.API_PORT,
     JWT_SECRET: process.env.JWT_SECRET,
+    ENCRYPTION_KEY: process.env.ENCRYPTION_KEY, // <--- Critical Addition
     DATABASE_URL: process.env.DATABASE_URL,
     FRONTEND_ORIGINS: process.env.FRONTEND_ORIGINS,
   });

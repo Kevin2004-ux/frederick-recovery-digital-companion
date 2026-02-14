@@ -1,11 +1,12 @@
-// app/backend/src/prisma/seed.ts
-import { PrismaClient, RecoveryPlanCategory } from "@prisma/client";
+// backend/src/prisma/seed.ts
+import { PrismaClient, RecoveryPlanCategory, ActivationCodeStatus, Prisma } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 const CATEGORY = RecoveryPlanCategory.general_outpatient;
 const VERSION = 2;
 const DEMO_CODES = ["FR-DEMO-0001", "FR-DEMO-0002", "FR-DEMO-0003"] as const;
+const TEST_CLINIC_TAG = "local-test"; 
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -21,14 +22,11 @@ function isValidPlanJsonV2(planJson: unknown): boolean {
 async function main() {
   console.log(`🌱 Seeding Template: ${CATEGORY} v${VERSION}...`);
 
+  // --- STEP 1: CREATE RECOVERY TEMPLATE ---
   const canonicalPlanJson = getCanonicalPlanJsonV2();
   const canonicalSourcesJson = defaultSourcesJson();
   const canonicalTitle = "General Outpatient Recovery Plan (Educational)";
 
-  /**
-   * ✅ FIX: Use findFirst instead of findUnique
-   * Prisma compound unique indexes do not allow 'null' in findUnique calls.
-   */
   const existing = await prisma.recoveryPlanTemplate.findFirst({
     where: {
       clinicTag: null,
@@ -63,15 +61,31 @@ async function main() {
     });
   }
 
-  // Deterministic demo activation codes
+  // --- STEP 2: CREATE THE TEST CLINIC CONFIG ---
+  // Note: Based on your migrations, the table is "clinicPlanConfig" and the key is "clinicTag"
+  console.log(`🏥 Ensuring Clinic Config '${TEST_CLINIC_TAG}' exists...`);
+
+  await prisma.clinicPlanConfig.upsert({
+    where: { clinicTag: TEST_CLINIC_TAG },
+    update: {}, 
+    create: {
+      clinicTag: TEST_CLINIC_TAG,
+      defaultCategory: CATEGORY,
+      overridesJson: Prisma.JsonNull, // Using Prisma-specific Null for JSON fields
+    }
+  });
+
+  // --- STEP 3: CREATE ACTIVATION CODES ---
+  console.log(`🔑 Generating Demo Codes linked to '${TEST_CLINIC_TAG}'...`);
+  
   for (const code of DEMO_CODES) {
     await prisma.activationCode.upsert({
       where: { code },
       update: {},
       create: { 
         code, 
-        clinicTag: "local-test", 
-        status: "ISSUED" 
+        clinicTag: TEST_CLINIC_TAG, 
+        status: ActivationCodeStatus.ISSUED 
       },
     });
   }
