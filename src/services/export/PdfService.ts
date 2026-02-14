@@ -13,7 +13,9 @@ export const PdfService = {
    * Generates a PDF stream of patient logs and pipes it to the response.
    */
   async streamLogReport(entries: LogEntryData[], res: Response, userEmail: string) {
-    const doc = new PDFDocument({ margin: 40, size: "A4" });
+    // Cast to 'any' to bypass strict type checking for this specific library
+    // which has known issues with its type definitions.
+    const doc = new PDFDocument({ margin: 40, size: "A4" }) as any;
 
     // Pipe directly to the response so the user downloads it immediately
     doc.pipe(res);
@@ -49,7 +51,6 @@ export const PdfService = {
     };
 
     // Draw Table
-    // @ts-ignore
     await doc.table(table, {
       prepareHeader: () => doc.font("Helvetica-Bold").fontSize(10),
       prepareRow: () => doc.font("Helvetica").fontSize(10),
