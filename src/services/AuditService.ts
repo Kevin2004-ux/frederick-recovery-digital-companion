@@ -1,79 +1,93 @@
 // app/backend/src/services/AuditService.ts
-import { prisma } from "../db/prisma.js"; // Adjust path if your prisma export is in ../index.js
+import { prisma } from "../db/prisma.js";
 import { Request } from "express";
 
 export enum AuditCategory {
-  ACCESS = "ACCESS",
-  CLINICAL = "CLINICAL",
-  ADMIN = "ADMIN",
-  SYSTEM = "SYSTEM"
+  AUTH = "auth",
+  ACCESS = "access",
+  PLAN = "plan",
+  LOG = "log",
+  ADMIN = "admin",
 }
 
 export enum AuditStatus {
   SUCCESS = "SUCCESS",
   FAILURE = "FAILURE",
-  FORBIDDEN = "FORBIDDEN"
+  FORBIDDEN = "FORBIDDEN",
 }
 
 export enum AuditSeverity {
   INFO = "INFO",
   WARN = "WARN",
-  CRITICAL = "CRITICAL"
+  CRITICAL = "CRITICAL",
 }
 
 interface AuditLogParams {
-  req?: Request; // Optional: If provided, we extract IP/UserAgent automatically
-  userId?: string;
-  action: string; // e.g., "LOGIN_FAILED", "VIEWED_PLAN"
+  req?: Request;
   category: AuditCategory;
+  type: string; // Event type (e.g., "LOGIN_FAILED")
   status: AuditStatus;
+  userId?: string;
+  role?: string;
+  clinicTag?: string | null;
+  patientUserId?: string;
+  targetId?: string;
+  targetType?: string;
+  metadata?: Record<string, any>;
   severity?: AuditSeverity;
-  details?: Record<string, any>;
+}
+
+// Helper to remove sensitive keys from metadata before logging
+function redactMetadata(meta: Record<string, any>): Record<string, any> {
+  if (!meta) return {};
+  const sensitiveKeys = ["password", "token", "code", "secret", "authorization"];
+  const clean = { ...meta };
+  
+  for (const key of Object.keys(clean)) {
+    if (sensitiveKeys.some(s => key.toLowerCase().includes(s))) {
+      clean[key] = "[REDACTED]";
+    }
+  }
+  return clean;
 }
 
 export const AuditService = {
   /**
-   * Log an event to the database.
-   * MUST be awaited for critical actions (HIPAA requirement).
+   * Logs security events to the database.
+   * Returns a Promise so critical events can be awaited (fail-closed).
    */
-  log: async (params: AuditLogParams) => {
-    const { req, userId, action, category, status, severity, details } = params;
+  async log(params: AuditLogParams) {
+    const { req, metadata, ...data } = params;
 
-    // 1. Extract context from Request if available
-    const ipAddress = req?.ip || req?.socket.remoteAddress || "unknown";
-    const userAgent = req?.headers["user-agent"] || "unknown";
-    
-    // 2. Determine Actor (User)
-    // If no userId passed, try to get it from req.user
-    const actorId = userId || req?.user?.id;
-
-    if (!actorId) {
-      console.warn(`[Audit] Skipping log for ${action} - No User ID found.`);
-      return;
-    }
+    // scrub sensitive data
+    const safeMetadata = metadata ? redactMetadata(metadata) : {};
 
     try {
-      // 3. Write to Database (The critical part)
-      await prisma.auditLog.create({
+      await prisma.securityAudit.create({
         data: {
-          userId: actorId,
-          action: action,
-          // Map our Enums to the DB Strings we added
-          severity: severity || AuditSeverity.INFO,
-          outcome: status,
-          ipAddress: ipAddress,
-          userAgent: userAgent,
-          details: {
-            category, // Store category inside JSON details if not a direct column
-            ...details
-          }
-        }
+          actorUserId: data.userId,
+          actorRole: data.role || "GUEST",
+          eventCategory: data.category,
+          eventType: data.type,
+          clinicTag: data.clinicTag,
+          patientUserId: data.patientUserId,
+          targetObjectId: data.targetId,
+          targetObjectType: data.targetType,
+          ipAddress: req?.ip || req?.headers['x-forwarded-for']?.toString() || "unknown",
+          userAgent: req?.headers["user-agent"] || "unknown",
+          status: data.status,
+          metadata: safeMetadata,
+        },
       });
-    } catch (error) {
-      // 4. Fail-Safe Logging
-      // If DB fails, we MUST log to console so standard output captures it.
-      console.error(`[AUDIT FAILURE] Could not save audit log: ${action}`, error);
-      // In a strict environment, you might throw here to stop the request entirely.
+    } catch (err) {
+      // If the DB audit fails, we MUST log to the server console as a fallback.
+      // In a high-security environment, we might throw here to stop the request.
+      console.error("[CRITICAL] AuditService failed to write to DB:", err);
+      
+      // If this was a CRITICAL severity event, re-throw to block the action
+      if (params.severity === AuditSeverity.CRITICAL) {
+        throw new Error("Audit Failure: Critical action blocked due to logging error.");
+      }
     }
-  }
+  },
 };

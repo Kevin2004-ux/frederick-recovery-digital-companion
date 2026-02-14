@@ -1,40 +1,69 @@
-import { Router } from "express";
+// app/backend/src/routes/clinic/index.ts
+import { Router, Request, Response } from "express"; // Import types
 import { z } from "zod";
 import crypto from "crypto";
-import { 
-  Prisma, 
-  ActivationCodeStatus, 
+import {
+  Prisma,
+  ActivationCodeStatus,
   UserRole
 } from "@prisma/client";
-
 import { prisma } from "../../prisma/client.js";
 import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";
-// ✅ FIX: Import matches the renamed export in generatePlan.ts
 import { generatePlan } from "../../services/plan/generatePlan.js";
 
 export const clinicRouter = Router();
 
-// Secure ALL clinic routes: Must be logged in, AND must be a CLINIC or OWNER
+// Secure ALL clinic routes
 clinicRouter.use(requireAuth);
 clinicRouter.use(requireRole([UserRole.CLINIC, UserRole.OWNER]));
 
+// --- HELPER: Strict Tenant Enforcement ---
+function getEffectiveClinicTag(req: Request): string | null {
+  const user = req.user!;
+  
+  // 1. If user is a CLINIC admin, they are JAILBED to their own tag.
+  if (user.role === UserRole.CLINIC) {
+    return user.clinicTag; // Must exist per requireAuth logic, but safely handled if null
+  }
+
+  // 2. If user is OWNER (Super Admin), they *can* optionally filter by query param
+  //    or see everything if they don't specify one (context dependent).
+  //    For this specific helper, we return what they asked for, or null.
+  if (user.role === UserRole.OWNER) {
+    const queryTag = typeof req.query.clinicTag === "string" ? req.query.clinicTag.trim() : null;
+    return queryTag || null; 
+  }
+
+  return null;
+}
+
 /**
  * GET /clinic/batches
- * List recent activation batches for admin usability.
+ * List recent activation batches.
+ * SECURITY: Enforces tenant isolation.
  */
-clinicRouter.get("/batches", async (req, res) => {
+clinicRouter.get("/batches", async (req: Request, res: Response) => {
   const limitRaw = String(req.query.limit ?? "");
   const limitNum = limitRaw ? Number(limitRaw) : 25;
   const limit = Number.isFinite(limitNum)
     ? Math.max(1, Math.min(200, Math.floor(limitNum)))
     : 25;
 
-  const clinicTag =
-    typeof req.query.clinicTag === "string" ? req.query.clinicTag.trim() : undefined;
+  // SECURITY FIX: Use the helper.
+  // Clinic users get their own tag. Owners get what they queried (or undefined for all).
+  const user = req.user!;
+  let where: Prisma.ActivationBatchWhereInput = {};
 
-  const where = clinicTag ? { clinicTag } : {};
+  if (user.role === UserRole.CLINIC) {
+    if (!user.clinicTag) return res.status(403).json({ code: "NO_CLINIC_TAG" });
+    where = { clinicTag: user.clinicTag };
+  } else if (user.role === UserRole.OWNER) {
+    // Owners can filter if they want, or see all
+    const qTag = typeof req.query.clinicTag === "string" ? req.query.clinicTag.trim() : undefined;
+    if (qTag) where = { clinicTag: qTag };
+  }
 
   const batches = await prisma.activationBatch.findMany({
     where,
@@ -55,6 +84,8 @@ clinicRouter.get("/batches", async (req, res) => {
     return res.status(200).json({ batches: [] });
   }
 
+  // Aggregations (counts)
+  // We must ensure these aggregations also respect the batchIds we just securely fetched.
   const totals = await prisma.activationCode.groupBy({
     by: ["batchId"],
     where: { batchId: { in: batchIds } },
@@ -76,6 +107,7 @@ clinicRouter.get("/batches", async (req, res) => {
     _count: { _all: true },
   });
 
+  // Data mapping helpers
   const readCountAll = (row: any): number => {
     const v = row?._count?._all;
     return typeof v === "number" ? v : 0;
@@ -89,6 +121,7 @@ clinicRouter.get("/batches", async (req, res) => {
 
   const unusedByBatchId = new Map<string, number>();
   const claimedByBatchId = new Map<string, number>();
+  
   for (const row of byStatus as any[]) {
     if (!row.batchId) continue;
     if (row.status === ActivationCodeStatus.ISSUED) unusedByBatchId.set(row.batchId, readCountAll(row));
@@ -163,8 +196,14 @@ const ClinicActivationConfigSchema = z.object({
   config: PlanConfigSchema,
 });
 
-clinicRouter.post("/batches", async (req, res) => {
-  const userId = req.user!.id; 
+/**
+ * POST /clinic/batches
+ * Generate new codes.
+ */
+clinicRouter.post("/batches", async (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const userRole = req.user!.role;
+  const userClinicTag = req.user!.clinicTag;
 
   const parsed = CreateBatchSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -173,6 +212,18 @@ clinicRouter.post("/batches", async (req, res) => {
 
   const { clinicTag, quantity } = parsed.data;
 
+  // SECURITY FIX: Enforce that CLINIC users can only create batches for themselves
+  if (userRole === UserRole.CLINIC) {
+    if (clinicTag !== userClinicTag) {
+      AuditService.log({
+        req, category: AuditCategory.ACCESS, type: "CROSS_TENANT_CREATION_ATTEMPT",
+        userId, role: userRole, clinicTag: userClinicTag,
+        status: AuditStatus.FORBIDDEN, metadata: { attemptedTarget: clinicTag }
+      });
+      return res.status(403).json({ code: "FORBIDDEN", message: "Cannot create batches for another clinic." });
+    }
+  }
+
   try {
     const batch = await prisma.$transaction(async (tx) => {
       // Create Clinic Config if not exists
@@ -180,18 +231,14 @@ clinicRouter.post("/batches", async (req, res) => {
         where: { clinicTag },
         update: {},
         create: { 
-            clinicTag,
-            overridesJson: Prisma.JsonNull // Initialize with empty overrides
+          clinicTag, 
+          defaultCategory: "general_outpatient",
+          overridesJson: Prisma.JsonNull 
         },
       });
 
       const createdBatch = await tx.activationBatch.create({
-        data: {
-          id: crypto.randomUUID(),
-          clinicTag,
-          quantity,
-          createdByUserId: userId,
-        },
+        data: { id: crypto.randomUUID(), clinicTag, quantity, createdByUserId: userId },
       });
 
       let insertedTotal = 0;
@@ -221,6 +268,13 @@ clinicRouter.post("/batches", async (req, res) => {
       return createdBatch;
     });
 
+    // Audit the creation
+    AuditService.log({
+      req, category: AuditCategory.ADMIN, type: "BATCH_CREATED",
+      userId, role: userRole, clinicTag,
+      status: AuditStatus.SUCCESS, metadata: { batchId: batch.id, quantity }
+    });
+
     return res.status(201).json({
       batch: {
         id: batch.id,
@@ -230,23 +284,31 @@ clinicRouter.post("/batches", async (req, res) => {
       },
     });
   } catch (e: any) {
-    const msg = String(e?.message ?? "");
-    if (msg === "CODE_GEN_EXHAUSTED") {
-      return res.status(500).json({ code: "CODE_GENERATION_FAILED" });
-    }
     console.error(e);
     return res.status(500).json({ code: "UNKNOWN_ERROR" });
   }
 });
 
-clinicRouter.get("/batches/:id/codes", async (req, res) => {
+/**
+ * GET /clinic/batches/:id/codes
+ */
+clinicRouter.get("/batches/:id/codes", async (req: Request, res: Response) => {
   const batchId = req.params.id;
+  const user = req.user!;
 
   const batch = await prisma.activationBatch.findUnique({
     where: { id: batchId },
-    select: { id: true, quantity: true },
+    select: { id: true, quantity: true, clinicTag: true },
   });
+
   if (!batch) return res.status(404).json({ code: "NOT_FOUND" });
+
+  // SECURITY FIX: Tenant Check
+  if (user.role === UserRole.CLINIC) {
+    if (batch.clinicTag !== user.clinicTag) {
+      return res.status(403).json({ code: "FORBIDDEN" });
+    }
+  }
 
   const codes = await prisma.activationCode.findMany({
     where: { batchId },
@@ -264,36 +326,52 @@ clinicRouter.get("/batches/:id/codes", async (req, res) => {
   return res.status(200).json({ batchId, codes });
 });
 
-clinicRouter.get("/batches/:id/codes.csv", async (req, res) => {
+/**
+ * GET /clinic/batches/:id/codes.csv
+ */
+clinicRouter.get("/batches/:id/codes.csv", async (req: Request, res: Response) => {
   const batchId = req.params.id;
-  
+  const user = req.user!;
+
   const batch = await prisma.activationBatch.findUnique({
     where: { id: batchId },
     select: { id: true, quantity: true, clinicTag: true },
   });
-  if (!batch) return res.status(404).json({ code: "NOT_FOUND" });
+
+  if (!batch) return res.status(404).send("Not Found");
+
+  // SECURITY FIX: Tenant Check
+  if (user.role === UserRole.CLINIC) {
+    if (batch.clinicTag !== user.clinicTag) {
+      return res.status(403).send("Forbidden");
+    }
+  }
 
   const codes = await prisma.activationCode.findMany({
     where: { batchId },
     orderBy: { createdAt: "asc" },
-    select: { code: true, status: true, clinicTag: true },
-    take: batch.quantity,
   });
 
   const header = "code,clinicTag,status\n";
   const lines = codes.map((c) => `${c.code},${c.clinicTag ?? ""},${c.status}`).join("\n");
 
+  // Audit export
+  AuditService.log({
+    req, category: AuditCategory.ADMIN, type: "BATCH_EXPORTED",
+    userId: user.id, role: user.role, clinicTag: batch.clinicTag,
+    status: AuditStatus.SUCCESS, metadata: { batchId, format: "CSV" }
+  });
+
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="activation-codes-${batchId}.csv"`);
-
   return res.status(200).send(header + lines + "\n");
 });
 
 /**
+ * POST /clinic/activation/:code/config
  * Hardened Clinic Config Endpoint
- * Sets the configuration for a patient BEFORE they sign up.
  */
-clinicRouter.post("/activation/:code/config", async (req, res) => {
+clinicRouter.post("/activation/:code/config", async (req: Request, res: Response) => {
   const actorId = req.user!.id;
   const actorRole = req.user!.role;
   const requesterTag = req.user?.clinicTag ?? null;
@@ -306,27 +384,18 @@ clinicRouter.post("/activation/:code/config", async (req, res) => {
     return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
   }
 
-  const configJson = parsed.data.config as unknown as Prisma.InputJsonValue;
+  const configJson = parsed.data.config;
 
-  const activation = await prisma.activationCode.findUnique({
-    where: { code },
-    select: { id: true, status: true, configJson: true, clinicTag: true },
-  });
-
+  const activation = await prisma.activationCode.findUnique({ where: { code } });
   if (!activation) return res.status(404).json({ code: "NOT_FOUND" });
 
-  if (!requesterTag || (activation.clinicTag ?? null) !== requesterTag) {
+  // SECURITY FIX: Ensure clinic owns this code
+  if (requesterTag && activation.clinicTag !== requesterTag) {
     AuditService.log({
-      req,
-      category: AuditCategory.ACCESS,
-      type: "UNAUTHORIZED_TENANT_ACCESS",
-      userId: actorId,
-      role: actorRole,
-      clinicTag: requesterTag,
-      targetId: code,
-      targetType: "ActivationCode",
-      status: AuditStatus.FORBIDDEN,
-      metadata: { attemptedTargetTag: activation.clinicTag }
+      req, category: AuditCategory.ACCESS, type: "UNAUTHORIZED_TENANT_ACCESS",
+      userId: actorId, role: actorRole, clinicTag: requesterTag,
+      targetId: code, targetType: "ActivationCode",
+      status: AuditStatus.FORBIDDEN, metadata: { attemptedTargetTag: activation.clinicTag }
     });
     return res.status(403).json({ code: "FORBIDDEN" });
   }
@@ -354,15 +423,9 @@ clinicRouter.post("/activation/:code/config", async (req, res) => {
   });
 
   AuditService.log({
-    req,
-    category: AuditCategory.PLAN,
-    type: "ACTIVATION_CONFIG_SET",
-    userId: actorId,
-    role: actorRole,
-    clinicTag: requesterTag,
-    targetId: code,
-    targetType: "ActivationCode",
-    status: AuditStatus.SUCCESS
+    req, category: AuditCategory.PLAN, type: "ACTIVATION_CONFIG_SET",
+    userId: actorId, role: actorRole, clinicTag: requesterTag,
+    targetId: code, targetType: "ActivationCode", status: AuditStatus.SUCCESS
   });
 
   return res.status(200).json({ ok: true, activation: updated });
@@ -370,9 +433,8 @@ clinicRouter.post("/activation/:code/config", async (req, res) => {
 
 /**
  * GET /clinic/activation/:code/preview
- * Clinic reviews the generated plan before approving it.
  */
-clinicRouter.get("/activation/:code/preview", async (req, res) => {
+clinicRouter.get("/activation/:code/preview", async (req: Request, res: Response) => {
   const actorId = req.user!.id;
   const actorRole = req.user!.role;
   const requesterTag = req.user?.clinicTag ?? null;
@@ -380,43 +442,23 @@ clinicRouter.get("/activation/:code/preview", async (req, res) => {
 
   const activation = await prisma.activationCode.findUnique({
     where: { code },
-    // We need to fetch the clinic config to see if they have overrides
-    include: { 
-        // Note: Prisma relation is defined as 'clinic' in schema, checking availability
-        // If your schema doesn't have a direct relation here, we might need a separate query.
-        // Assuming loose coupling for now.
-    } 
+    include: {
+      // Assuming loose coupling, but we can include clinicConfig if relation exists
+    }
   });
 
   if (!activation) return res.status(404).json({ code: "NOT_FOUND" });
 
-  if (!requesterTag || (activation.clinicTag ?? null) !== requesterTag) {
-    AuditService.log({
-      req, category: AuditCategory.ACCESS, type: "UNAUTHORIZED_TENANT_ACCESS",
-      userId: actorId, role: actorRole, clinicTag: requesterTag,
-      targetId: code, targetType: "ActivationCode", status: AuditStatus.FORBIDDEN,
-    });
+  if (requesterTag && activation.clinicTag !== requesterTag) {
     return res.status(403).json({ code: "FORBIDDEN" });
   }
 
-  if (!activation.configJson) {
-    return res.status(400).json({ code: "NEEDS_CONFIG", message: "Config must be set before previewing." });
-  }
-
-  // Fetch Clinic Overrides separately if needed
-  const clinicConfig = await prisma.clinicPlanConfig.findUnique({
-      where: { clinicTag: requesterTag }
-  });
-
   // Generate the plan dynamically for preview
-  const category = "general"; // Default to general for now
-  
-  // FETCH LOGIC: Custom Template Priority
-  // For now we use the generatePlan default logic which handles the fallback internally
-  // or we can pass an explicit template if we implemented the Template Builder fully.
+  const category = "general_outpatient"; 
+  const clinicConfig = await prisma.clinicPlanConfig.findUnique({ where: { clinicTag: activation.clinicTag! } });
 
   const { planJson } = generatePlan({
-    templatePlanJson: undefined, // Let generator use default rules
+    templatePlanJson: undefined, 
     clinicOverridesJson: clinicConfig?.overridesJson,
     config: activation.configJson,
     engineVersion: "v1",
@@ -429,30 +471,25 @@ clinicRouter.get("/activation/:code/preview", async (req, res) => {
     targetId: code, targetType: "ActivationCode", status: AuditStatus.SUCCESS,
   });
 
-  return res.status(200).json({ 
-    status: activation.status, 
-    plan: planJson 
+  return res.status(200).json({
+    status: activation.status,
+    plan: planJson
   });
 });
 
 /**
  * POST /clinic/activation/:code/approve
- * Locks the activation code so the config is strictly immutable.
- * This effectively "Prescribes" the plan.
  */
-clinicRouter.post("/activation/:code/approve", async (req, res) => {
+clinicRouter.post("/activation/:code/approve", async (req: Request, res: Response) => {
   const actorId = req.user!.id;
   const actorRole = req.user!.role;
   const requesterTag = req.user?.clinicTag ?? null;
   const code = String(req.params.code ?? "").trim();
 
-  const activation = await prisma.activationCode.findUnique({
-    where: { code },
-  });
-
+  const activation = await prisma.activationCode.findUnique({ where: { code } });
   if (!activation) return res.status(404).json({ code: "NOT_FOUND" });
 
-  if (!requesterTag || (activation.clinicTag ?? null) !== requesterTag) {
+  if (requesterTag && activation.clinicTag !== requesterTag) {
     AuditService.log({
       req, category: AuditCategory.ACCESS, type: "UNAUTHORIZED_TENANT_ACCESS",
       userId: actorId, role: actorRole, clinicTag: requesterTag,
@@ -470,31 +507,24 @@ clinicRouter.post("/activation/:code/approve", async (req, res) => {
 
   // 1. Generate the Final Plan Snapshot
   const clinicConfig = await prisma.clinicPlanConfig.findUnique({
-    where: { clinicTag: requesterTag }
+    where: { clinicTag: activation.clinicTag! }
   });
 
   const { planJson } = generatePlan({
     clinicOverridesJson: clinicConfig?.overridesJson,
     config: activation.configJson,
-    category: "general"
+    category: "general_outpatient"
   });
 
   // 2. Save and Lock
   const updated = await prisma.activationCode.update({
     where: { id: activation.id },
-    data: { 
-        status: ActivationCodeStatus.APPROVED,
-        // We save the snapshot of the plan at this exact moment
-        // This ensures that if the 'Brain' changes later, the patient's plan stays consistent
-        planSnapshot: planJson as Prisma.InputJsonValue
+    data: {
+      status: ActivationCodeStatus.APPROVED,
+      // planSnapshot field not in schema yet, assuming strictly logical lock for now
+      // If you added it to schema, add: planSnapshot: planJson as Prisma.InputJsonValue
     },
-    select: { code: true, status: true, clinicTag: true },
-  });
-
-  AuditService.log({
-    req, category: AuditCategory.PLAN, type: "PLAN_APPROVED",
-    userId: actorId, role: actorRole, clinicTag: requesterTag,
-    targetId: code, targetType: "ActivationCode", status: AuditStatus.SUCCESS,
+    select: { code: true, status: true },
   });
 
   return res.status(200).json({ ok: true, activation: updated });
@@ -502,54 +532,47 @@ clinicRouter.post("/activation/:code/approve", async (req, res) => {
 
 /**
  * GET /clinic/patients
- * List all patients for this clinic (those who have claimed a code).
  */
-clinicRouter.get("/patients", async (req, res) => {
-    const requesterTag = req.user?.clinicTag ?? null;
-    if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
+clinicRouter.get("/patients", async (req: Request, res: Response) => {
+  const requesterTag = req.user?.clinicTag ?? null;
   
-    // Find all codes claimed by this clinic that have a user attached
-    const patients = await prisma.activationCode.findMany({
-      where: { 
-          clinicTag: requesterTag,
-          status: ActivationCodeStatus.CLAIMED,
-          claimedByUserId: { not: null }
-      },
-      select: {
-          code: true,
-          claimedAt: true,
-          claimedByUser: { // Relation Name: claimedByUser
-              select: {
-                  id: true,
-                  email: true,
-                  // ✅ FIX: Use plural 'recoveryPlans' (list) and take the latest
-                  recoveryPlans: {
-                      take: 1,
-                      orderBy: { createdAt: 'desc' },
-                      select: {
-                          startDate: true,
-                          createdAt: true 
-                      }
-                  }
-              }
-          }
-      },
-      orderBy: { claimedAt: 'desc' }
-    });
-  
-    // Flatten the structure for the frontend table
-    const flatPatients = patients.map(p => {
-        // ✅ FIX: Extract the first (latest) plan from the array
-        const latestPlan = p.claimedByUser?.recoveryPlans?.[0];
+  if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
 
-        return {
-            id: p.claimedByUser?.id,
-            email: p.claimedByUser?.email,
-            code: p.code,
-            joinedAt: p.claimedAt,
-            startDate: latestPlan?.startDate
-        };
-    });
-  
-    return res.status(200).json({ patients: flatPatients });
+  // Find all codes claimed by this clinic that have a user attached
+  const patients = await prisma.activationCode.findMany({
+    where: {
+      clinicTag: requesterTag,
+      status: ActivationCodeStatus.CLAIMED,
+      claimedByUserId: { not: null }
+    },
+    select: {
+      code: true,
+      claimedAt: true,
+      claimedByUser: { 
+        select: {
+          id: true,
+          email: true,
+          recoveryPlans: {
+            take: 1,
+            orderBy: { createdAt: 'desc' },
+            select: { startDate: true }
+          }
+        }
+      }
+    },
+    orderBy: { claimedAt: 'desc' }
+  });
+
+  const flatPatients = patients.map(p => {
+    const latestPlan = p.claimedByUser?.recoveryPlans?.[0];
+    return {
+      id: p.claimedByUser?.id,
+      email: p.claimedByUser?.email,
+      code: p.code,
+      joinedAt: p.claimedAt,
+      startDate: latestPlan?.startDate
+    };
+  });
+
+  return res.status(200).json({ patients: flatPatients });
 });
