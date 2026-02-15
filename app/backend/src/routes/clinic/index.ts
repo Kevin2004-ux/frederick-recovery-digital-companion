@@ -7,7 +7,7 @@ import {
   ActivationCodeStatus,
   UserRole
 } from "@prisma/client";
-import { prisma } from "../../prisma/client.js";
+import { prisma } from "../../db/prisma.js";
 import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";

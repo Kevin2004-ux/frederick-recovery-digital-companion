@@ -98,7 +98,9 @@ model LogEntry {
 
 model ClinicPlanConfig {
   clinicTag        String                @id
+  name             String?               // display name for admin UI (nullable for safe migration)
   defaultCategory  RecoveryPlanCategory  @default(general_outpatient)
+
   overridesJson    Json?
   notes            String?
 
