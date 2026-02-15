@@ -1,107 +1,116 @@
 // app/backend/src/repositories/logRepo.ts
-// In-memory Recovery Log repository (no DB yet)
+import { Prisma } from "@prisma/client";
+import { prisma } from "../prisma/client.js";
+// Import the new encryption utilities
+import { encryptPHI, decryptPHI } from "../utils/encryption.js";
 
 export type RecoveryLogEntry = {
   date: string; // YYYY-MM-DD
-
-  // Core metrics (always present, even in v2)
-  painLevel: number; // 1–10
-  swellingLevel: number; // 1–10
-  notes?: string;
-
-  // Questionnaire version
+  painLevel: number;
+  swellingLevel: number;
+  notes?: string | null;
   schemaVersion: number;
-
-  // NEW — extended questionnaire data (schemaVersion >= 2)
-  details?: Record<string, unknown>;
+  details?: Record<string, unknown> | null;
 };
 
-type EntryKey = `${string}:${string}`; // `${userId}:${date}`
-
-const entriesByUserAndDate = new Map<EntryKey, RecoveryLogEntry>();
-
-function keyFor(userId: string, date: string): EntryKey {
-  return `${userId}:${date}`;
-}
-
-/**
- * Create a log entry for a user on a date.
- * One per date per user.
- *
- * schemaVersion defaults to 1 unless explicitly provided.
- */
-export function createEntry(
+export async function createEntry(
   userId: string,
   entry: Omit<RecoveryLogEntry, "schemaVersion"> & { schemaVersion?: number }
-): RecoveryLogEntry {
-  const key = keyFor(userId, entry.date);
-  if (entriesByUserAndDate.has(key)) {
-    const err = new Error("Entry already exists for this date");
-    // @ts-expect-error lightweight error code
-    err.code = "ENTRY_ALREADY_EXISTS";
-    throw err;
+) {
+  try {
+    // ENCRYPTION: Protect notes before DB insertion
+    const secureNotes = encryptPHI(entry.notes);
+
+    const stored = await prisma.logEntry.create({
+      data: {
+        userId,
+        date: entry.date,
+        painLevel: entry.painLevel,
+        swellingLevel: entry.swellingLevel,
+        notes: secureNotes, // <--- Encrypted
+        // Fix: Cast Record to InputJsonValue for Prisma
+        details: (entry.details || {}) as Prisma.InputJsonValue,
+        schemaVersion: entry.schemaVersion ?? 2,
+      },
+    });
+    
+    // DECRYPTION: Return readable data to the caller (so the UI updates immediately)
+    return { ...stored, notes: decryptPHI(stored.notes) };
+
+  } catch (e: any) {
+    if (e?.code === "P2002") {
+      const err = new Error("Entry already exists for this date");
+      (err as any).code = "ENTRY_ALREADY_EXISTS";
+      throw err;
+    }
+    throw e;
   }
-
-  const stored: RecoveryLogEntry = {
-    ...entry,
-    schemaVersion: entry.schemaVersion ?? 1,
-  };
-
-  entriesByUserAndDate.set(key, stored);
-  return { ...stored };
 }
 
-/**
- * Update-only: update an existing entry for a user/date.
- * schemaVersion is preserved.
- */
-export function updateEntry(
+export async function updateEntry(
   userId: string,
   date: string,
   patch: Pick<RecoveryLogEntry, "painLevel" | "swellingLevel" | "details"> & {
     notes?: string;
   }
-): RecoveryLogEntry {
-  const key = keyFor(userId, date);
-  const existing = entriesByUserAndDate.get(key);
+) {
+  const existing = await prisma.logEntry.findUnique({
+    where: { userId_date: { userId, date } },
+  });
 
   if (!existing) {
     const err = new Error("No entry exists for this date");
-    // @ts-expect-error lightweight error code
-    err.code = "NOT_FOUND";
+    (err as any).code = "NOT_FOUND";
     throw err;
   }
 
-  const updated: RecoveryLogEntry = {
-    ...existing,
-    painLevel: patch.painLevel,
-    swellingLevel: patch.swellingLevel,
-    notes: patch.notes,
-    details: patch.details ?? existing.details,
-    schemaVersion: existing.schemaVersion,
-  };
+  // ENCRYPTION: Only encrypt if notes are being updated
+  // We use a ternary to strictly preserve 'undefined' (do not update) vs 'null' (clear field)
+  const secureNotes = patch.notes !== undefined ? encryptPHI(patch.notes) : undefined;
 
-  entriesByUserAndDate.set(key, updated);
-  return { ...updated };
+  const updated = await prisma.logEntry.update({
+    where: { id: existing.id },
+    data: {
+      painLevel: patch.painLevel,
+      swellingLevel: patch.swellingLevel,
+      notes: secureNotes, // <--- Encrypted (or undefined to skip)
+      // Fix: Cast Record to InputJsonValue for Prisma
+      details: (patch.details ?? existing.details ?? {}) as Prisma.InputJsonValue,
+    },
+  });
+
+  // DECRYPTION: Return cleartext
+  return { ...updated, notes: decryptPHI(updated.notes) };
 }
 
-/**
- * List all entries for a user, sorted by date ascending.
- */
-export function listEntries(userId: string): RecoveryLogEntry[] {
-  const out: RecoveryLogEntry[] = [];
+export async function listEntries(userId: string) {
+  const rawEntries = await prisma.logEntry.findMany({
+    where: { userId },
+    orderBy: { date: "asc" },
+  });
 
-  for (const [k, v] of entriesByUserAndDate.entries()) {
-    if (k.startsWith(`${userId}:`)) out.push({ ...v });
-  }
-
-  out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  return out;
+  // DECRYPTION: Decrypt all notes before returning list
+  return rawEntries.map(entry => ({
+    ...entry,
+    notes: decryptPHI(entry.notes)
+  }));
 }
 
-/**
- * Clear all entries (dev/testing only).
- */
-export function _dangerouslyClearAll(): void {
-  entriesByUserAndDate.clear();
+export async function listEntriesInRange(userId: string, from?: string, to?: string) {
+  const rawEntries = await prisma.logEntry.findMany({
+    where: {
+      userId,
+      date: {
+        ...(from ? { gte: from } : {}),
+        ...(to ? { lte: to } : {}),
+      },
+    },
+    orderBy: { date: "asc" },
+  });
+
+  // DECRYPTION: Decrypt all notes
+  return rawEntries.map(entry => ({
+    ...entry,
+    notes: decryptPHI(entry.notes)
+  }));
 }
