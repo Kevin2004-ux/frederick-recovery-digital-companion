@@ -102,6 +102,63 @@ adminRouter.get("/clinics", async (req: Request, res: Response) => {
 });
 
 /**
+ * DELETE /admin/clinics/:clinicTag
+ * Hard-delete a clinic + its unclaimed codes/admin users.
+ * Safety: blocks delete if any activation codes are CLAIMED.
+ */
+adminRouter.delete("/clinics/:clinicTag", async (req: Request, res: Response) => {
+  const clinicTag = String(req.params.clinicTag || "").trim();
+
+  // Basic validation (same rules as creation)
+  if (!clinicTag || clinicTag.length < 3 || !/^[A-Za-z0-9-]+$/.test(clinicTag)) {
+    return res.status(400).json({ code: "VALIDATION_ERROR" });
+  }
+
+  const clinic = await prisma.clinicPlanConfig.findUnique({ where: { clinicTag } });
+  if (!clinic) return res.status(404).json({ code: "NOT_FOUND" });
+
+  // Block if any codes are claimed (patient linkage exists)
+  const claimedCount = await prisma.activationCode.count({
+    where: { clinicTag, status: ActivationCodeStatus.CLAIMED },
+  });
+
+  if (claimedCount > 0) {
+    return res.status(409).json({ code: "CLINIC_HAS_CLAIMED_CODES" });
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // delete dependents first
+      await tx.activationCode.deleteMany({ where: { clinicTag } });
+
+      // delete clinic users (admin accounts created during provisioning)
+      await tx.user.deleteMany({ where: { clinicTag, role: UserRole.CLINIC } });
+
+      // delete clinic record
+      await tx.clinicPlanConfig.delete({ where: { clinicTag } });
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "CLINIC_DELETED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag,
+      targetId: clinicTag,
+      targetType: "Clinic",
+      severity: AuditSeverity.WARN,
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+/**
  * GET /admin/codes/:code
  * Global activation code lookup.
  */
