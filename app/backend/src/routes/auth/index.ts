@@ -25,7 +25,11 @@ authRouter.post("/forgot-password", authController.forgotPassword);
 // POST /auth/reset-password 
 authRouter.post("/reset-password", authController.resetPassword);
 
-// --- Protected Routes ---
+
+// --- Protected Routes (Requires a valid token) ---
 
 // GET /auth/me
 authRouter.get("/me", requireAuth, authController.getProfile);
+
+// POST /auth/consent/accept (NEW)
+authRouter.post("/consent/accept", requireAuth, authController.acceptConsent);

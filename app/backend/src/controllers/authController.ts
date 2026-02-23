@@ -391,4 +391,26 @@ export async function getProfile(req: Request, res: Response): Promise<any> {
     }
     return res.status(500).json({ error: "Internal Server Error" });
   }
+} // <--- THIS BRACE WAS MISSING!
+
+/**
+ * POST /auth/consent/accept
+ */
+export async function acceptConsent(req: Request, res: Response): Promise<any> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    await userRepo.acceptConsent(userId);
+
+    AuditService.log({
+      req, category: AuditCategory.AUTH, type: "CONSENT_ACCEPTED",
+      userId, role: req.user?.role, status: AuditStatus.SUCCESS
+    });
+
+    return res.json({ success: true, message: "Consent accepted" });
+  } catch (err) {
+    console.error("Accept Consent Error:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
 }
