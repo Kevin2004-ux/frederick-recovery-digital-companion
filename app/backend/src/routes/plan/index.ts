@@ -13,6 +13,45 @@ import { prisma } from "../../prisma/client.js";
 import { generatePlan } from "../../services/plan/generatePlan.js";
 
 export const planRouter = Router();
+// --- TEMPORARY SEED ENDPOINT ---
+planRouter.get("/admin/seed", async (req, res): Promise<any> => {
+  try {
+    const existing = await prisma.recoveryPlanTemplate.findFirst({
+      where: { category: "general_outpatient" },
+    });
+
+    if (existing) {
+      return res.json({ message: "Template already exists!", template: existing });
+    }
+
+    const template = await prisma.recoveryPlanTemplate.create({
+      data: {
+        title: "Standard Outpatient Protocol",
+        category: "general_outpatient",
+        version: 1,
+        planJson: {
+          schemaVersion: 2,
+          meta: { description: "Base recovery template" },
+          modules: {
+            "mod_rest": { id: "mod_rest", type: "education", title: "Rest & Elevate", body: "Keep the area elevated above your heart to reduce swelling." },
+            "mod_ice": { id: "mod_ice", type: "tracking", title: "Ice Therapy", body: "Apply ice for 15 minutes." },
+            "mod_meds": { id: "mod_meds", type: "tracking", title: "Pain Medication", body: "Take prescribed medication as directed." }
+          },
+          days: Array.from({ length: 21 }).map((_, i) => ({
+            dayIndex: i,
+            phase: i < 7 ? "early" : i < 14 ? "mid" : "late",
+            moduleIds: i < 3 ? ["mod_rest", "mod_ice", "mod_meds"] : ["mod_rest", "mod_ice"] // Meds for first 3 days, rest/ice for all 21
+          }))
+        }
+      }
+    });
+
+    return res.json({ success: true, message: "Database Seeded Successfully!", template });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+// -------------------------------
 
 // Auth required for all /plan endpoints
 planRouter.use(requireAuth);
