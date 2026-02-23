@@ -9,12 +9,12 @@ import { prisma } from "../db/prisma.js";
 import * as userRepo from "../repositories/userRepo.js";
 import { AuditService, AuditCategory, AuditStatus, AuditSeverity } from "../services/AuditService.js";
 import { signAccessToken } from "../utils/jwt.js";
-import { sendPasswordResetEmail } from "../utils/mailer.js"; // <--- Import Mailer
+import { sendPasswordResetEmail, sendVerificationEmail } from "../utils/mailer.js"; // <--- Import Mailers
 
 /**
  * POST /auth/register
  */
-export async function register(req: Request, res: Response) {
+export async function register(req: Request, res: Response): Promise<any> {
   try {
     const { email, password, role } = req.body;
 
@@ -36,12 +36,12 @@ export async function register(req: Request, res: Response) {
     }
 
    // ✅ Public signup is PATIENT-only.
-// OWNER and CLINIC accounts must be created via an admin/owner-only path (we’ll do that next).
-let userRole: UserRole = UserRole.PATIENT;
+   // OWNER and CLINIC accounts must be created via an admin/owner-only path.
+    let userRole: UserRole = UserRole.PATIENT;
 
-if (role && role !== UserRole.PATIENT) {
-  return res.status(400).json({ code: "ROLE_NOT_ALLOWED" });
-}
+    if (role && role !== UserRole.PATIENT) {
+      return res.status(400).json({ code: "ROLE_NOT_ALLOWED" });
+    }
 
     const passwordHash = await bcrypt.hash(password, 10);
 
@@ -56,7 +56,7 @@ if (role && role !== UserRole.PATIENT) {
       userId: user.id, role: user.role, status: AuditStatus.SUCCESS
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       id: user.id,
       email: user.email,
       role: user.role,
@@ -68,14 +68,14 @@ if (role && role !== UserRole.PATIENT) {
     if (err.message === "EMAIL_TAKEN") {
       return res.status(409).json({ error: "Email already in use" });
     }
-    res.status(500).json({ error: "Internal Server Error" });
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 }
 
 /**
  * POST /auth/login
  */
-export async function login(req: Request, res: Response) {
+export async function login(req: Request, res: Response): Promise<any> {
   try {
     const { email, password } = req.body;
 
@@ -87,7 +87,8 @@ export async function login(req: Request, res: Response) {
       where: { email },
       select: {
         id: true, email: true, passwordHash: true, role: true,
-        tokenVersion: true, isBanned: true, lockedUntil: true, failedLoginAttempts: true
+        tokenVersion: true, isBanned: true, lockedUntil: true, failedLoginAttempts: true,
+        emailVerifiedAt: true // <--- NEW: Select this field to check verification status
       }
     });
 
@@ -135,6 +136,11 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
+    // --- NEW: Enforce Patient Email Verification ---
+    if (user.role === UserRole.PATIENT && !user.emailVerifiedAt) {
+      return res.status(403).json({ code: "EMAIL_NOT_VERIFIED", message: "Please verify your email before logging in." });
+    }
+
     await prisma.user.update({
       where: { id: user.id },
       data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() }
@@ -152,18 +158,18 @@ export async function login(req: Request, res: Response) {
       userId: user.id, role: user.role, status: AuditStatus.SUCCESS
     });
 
-    res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+    return res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
 
   } catch (err) {
     console.error("Login Error:", err);
-    res.status(500).json({ error: "Internal Server Error" });
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 }
 
 /**
  * POST /auth/verify
  */
-export async function verify(req: Request, res: Response) {
+export async function verify(req: Request, res: Response): Promise<any> {
   const VerifySchema = z.object({
     email: z.string().email(),
     code: z.string(),
@@ -186,19 +192,16 @@ export async function verify(req: Request, res: Response) {
     
     if (!user) return res.status(404).json({ code: "USER_NOT_FOUND" });
 
-    const token = signAccessToken({
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-      tokenVersion: user.tokenVersion 
-    });
-
+    // Note: The spec says do NOT issue a token upon verify so they are forced to use the login page.
+    // However, if you want the UX to be smooth, you can issue it here. For strict compliance, 
+    // we return success and force them to /SignIn.
+    
     AuditService.log({
       req, category: AuditCategory.AUTH, type: "VERIFY_SUCCESS",
       userId: user.id, role: user.role, status: AuditStatus.SUCCESS
     });
 
-    return res.status(200).json({ token, user: { id: user.id, email: user.email, role: user.role } });
+    return res.status(200).json({ success: true, message: "Email verified successfully." });
 
   } catch (e: any) {
     if (e.message === "INVALID_CODE" || e.message === "CODE_EXPIRED" || e.message === "NO_CODE") {
@@ -214,10 +217,53 @@ export async function verify(req: Request, res: Response) {
 }
 
 /**
+ * POST /auth/verify/resend (NEW)
+ * Generates a new code and triggers the mailer (which prints to console for now)
+ */
+export async function resendVerification(req: Request, res: Response): Promise<any> {
+  const email = req.body.email;
+  if (!email || typeof email !== "string") {
+    return res.status(400).json({ code: "VALIDATION_ERROR", message: "Email required" });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      // Return success to prevent email enumeration
+      return res.status(200).json({ ok: true, message: "If account exists, code sent." });
+    }
+
+    if (user.emailVerifiedAt) {
+      return res.status(400).json({ code: "ALREADY_VERIFIED", message: "Account is already verified." });
+    }
+
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { verificationCode, verificationExpiresAt: expiresAt }
+    });
+
+    await sendVerificationEmail({
+      to: user.email,
+      code: verificationCode,
+      expiresMinutes: 15
+    });
+
+    return res.status(200).json({ ok: true, message: "Verification code resent." });
+  } catch (err) {
+    console.error("Resend Verification Error:", err);
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+}
+
+/**
  * POST /auth/forgot-password
  * Initializes password reset flow.
  */
-export async function forgotPassword(req: Request, res: Response) {
+export async function forgotPassword(req: Request, res: Response): Promise<any> {
   const email = req.body.email;
   if (!email || typeof email !== "string") {
     return res.status(400).json({ code: "VALIDATION_ERROR", message: "Email required" });
@@ -264,7 +310,7 @@ export async function forgotPassword(req: Request, res: Response) {
  * POST /auth/reset-password
  * Completes the reset.
  */
-export async function resetPassword(req: Request, res: Response) {
+export async function resetPassword(req: Request, res: Response): Promise<any> {
   const Schema = z.object({
     token: z.string(),
     password: z.string().min(12, "Password must be 12+ characters")
@@ -331,18 +377,18 @@ export async function resetPassword(req: Request, res: Response) {
 /**
  * GET /auth/me
  */
-export async function getProfile(req: Request, res: Response) {
+export async function getProfile(req: Request, res: Response): Promise<any> {
   try {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     const profile = await userRepo.getUserProfile(userId);
-    res.json(profile);
+    return res.json(profile);
   } catch (err: any) {
     console.error("GetProfile Error:", err);
     if (err.message === "USER_NOT_FOUND") {
       return res.status(404).json({ error: "User not found" });
     }
-    res.status(500).json({ error: "Internal Server Error" });
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 }
