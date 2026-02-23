@@ -27,13 +27,11 @@ export async function sendVerificationEmail(params: {
 
   // 1. SAFETY CHECK: Missing Config
   if (!resend || !from) {
-    if (isDev) {
-      // ALLOWED: Only in local development
-      console.log(`[FRDC-DEV] Code for ${to}: ${params.code}`);
-    } else {
-      // PRODUCTION SAFE: Redacted log
-      console.warn(`[FRDC-PROD] Mailer not configured. Verification email suppressed for user.`);
-    }
+    // 🚨 MODIFIED FOR TESTING: Always log the code to Render console so the UI can be tested
+    console.log(`\n=================================================`);
+    console.log(`[FRDC-TESTING] Mailer bypassed.`);
+    console.log(`[FRDC-TESTING] VERIFICATION CODE FOR ${to}: ${params.code}`);
+    console.log(`=================================================\n`);
     return;
   }
 
@@ -57,13 +55,11 @@ export async function sendPasswordResetEmail(params: { to: string; token: string
   const resetLink = `http://localhost:5173/reset-password?token=${params.token}`;
 
   if (!resend || !from) {
-    if (isDev) {
-       // ALLOWED: Only in local development
-      console.log(`[FRDC-DEV] Reset Link for ${to}: ${resetLink}`);
-    } else {
-      // PRODUCTION SAFE: Redacted log
-      console.warn(`[FRDC-PROD] Mailer not configured. Reset email suppressed.`);
-    }
+    // 🚨 MODIFIED FOR TESTING: Always log the link to Render console
+    console.log(`\n=================================================`);
+    console.log(`[FRDC-TESTING] Mailer bypassed.`);
+    console.log(`[FRDC-TESTING] Reset Link for ${to}: ${resetLink}`);
+    console.log(`=================================================\n`);
     return;
   }
 

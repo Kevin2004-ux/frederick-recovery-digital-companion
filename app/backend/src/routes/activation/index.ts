@@ -3,7 +3,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "../../db/prisma.js";
-import { signAccessToken } from "../../utils/jwt.js";
+import { sendVerificationEmail } from "../../utils/mailer.js"; // <--- ADDED: Import mailer
 import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";
 import { ActivationCodeStatus, UserRole } from "@prisma/client";
 
@@ -11,7 +11,7 @@ export const activationRouter = Router();
 
 // POST /activation/claim
 // Patient enters code + email + password to create account
-activationRouter.post("/claim", async (req: Request, res: Response) => {
+activationRouter.post("/claim", async (req: Request, res: Response): Promise<any> => {
   const Schema = z.object({
     code: z.string().min(5),
     email: z.string().email(),
@@ -46,6 +46,10 @@ activationRouter.post("/claim", async (req: Request, res: Response) => {
     // 3. Create User & Claim Code (Transaction)
     const passwordHash = await bcrypt.hash(password, 10);
 
+    // --- NEW: Generate Verification Code ---
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins expiry
+
     const result = await prisma.$transaction(async (tx) => {
       // A. Create User
       const newUser = await tx.user.create({
@@ -55,6 +59,8 @@ activationRouter.post("/claim", async (req: Request, res: Response) => {
           role: UserRole.PATIENT,
           tokenVersion: 1, // Initialize security version
           clinicTag: activation.clinicTag, // Link patient to clinic automatically
+          verificationCode: verificationCode,       // <--- ADDED: Store code
+          verificationExpiresAt: expiresAt          // <--- ADDED: Store expiry
         }
       });
 
@@ -76,12 +82,11 @@ activationRouter.post("/claim", async (req: Request, res: Response) => {
       return newUser;
     });
 
-    // 4. Issue Token (With Security Version!)
-    const token = signAccessToken({
-      sub: result.id,
-      email: result.email,
-      role: result.role,
-      tokenVersion: result.tokenVersion // <--- THE FIX
+    // 4. Send Verification Email (DO NOT ISSUE JWT TOKEN HERE)
+    await sendVerificationEmail({
+      to: result.email,
+      code: verificationCode,
+      expiresMinutes: 15
     });
 
     // 5. Audit
@@ -96,13 +101,15 @@ activationRouter.post("/claim", async (req: Request, res: Response) => {
       metadata: { clinicTag: activation.clinicTag }
     });
 
+    // Return success without a token. Frontend will route to /VerifyEmail
     return res.status(201).json({ 
-      token, 
+      success: true,
+      message: "Account created successfully. Please verify your email.",
       user: { id: result.id, email: result.email, role: result.role } 
     });
 
   } catch (err) {
     console.error("Activation Claim Error:", err);
-    res.status(500).json({ error: "Internal Server Error" });
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
