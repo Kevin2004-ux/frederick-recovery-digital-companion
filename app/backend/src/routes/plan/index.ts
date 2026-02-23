@@ -1,5 +1,5 @@
 // app/backend/src/routes/plan/index.ts
-import { Router } from "express";
+import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import {
@@ -200,88 +200,93 @@ function resolveDayBlock(planJson: any, dayBlock: any) {
 /**
  * POST /plan/generate
  * Patient submits the 6-field categorical config AFTER claiming activation code
- * (used when /activation/claim returned planStatus="NEEDS_CONFIG").
  */
-planRouter.post("/generate", async (req, res) => {
-  const userId = getUserIdOrRespond(req, res);
-  if (!userId) return;
+planRouter.post("/generate", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const userId = getUserIdOrRespond(req, res);
+    if (!userId) return;
 
-  const parsed = GeneratePlanSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
-  }
+    const parsed = GeneratePlanSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
+    }
 
-  // Find the user's claimed activation code (most recent)
-  const activation = await prisma.activationCode.findFirst({
-    where: {
-      claimedByUserId: userId,
-      status: "CLAIMED",
-    },
-    orderBy: { claimedAt: "desc" },
-    include: { clinicConfig: true },
-  });
+    // Find the user's claimed activation code (most recent)
+    const activation = await prisma.activationCode.findFirst({
+      where: {
+        claimedByUserId: userId,
+        status: "CLAIMED",
+      },
+      orderBy: { claimedAt: "desc" },
+      include: { clinicConfig: true },
+    });
 
-  if (!activation) {
-    return res.status(400).json({ code: "NO_CLAIMED_ACTIVATION_CODE" });
-  }
+    if (!activation) {
+      return res.status(400).json({ code: "NO_CLAIMED_ACTIVATION_CODE", message: "No activation code found for this user." });
+    }
 
-  // Enforce one instance per activation code
-  const existing = await prisma.recoveryPlanInstance.findFirst({
-    where: { activationCodeId: activation.id },
-    select: { id: true },
-  });
+    // Enforce one instance per activation code
+    const existing = await prisma.recoveryPlanInstance.findFirst({
+      where: { activationCodeId: activation.id },
+      select: { id: true },
+    });
 
-  if (existing) {
-    return res.status(409).json({ code: "PLAN_ALREADY_EXISTS" });
-  }
+    if (existing) {
+      return res.status(409).json({ code: "PLAN_ALREADY_EXISTS", message: "A plan has already been generated." });
+    }
 
-  const category: RecoveryPlanCategory =
-    activation.clinicConfig?.defaultCategory ?? RecoveryPlanCategoryEnum.general_outpatient;
+    const category: RecoveryPlanCategory =
+      activation.clinicConfig?.defaultCategory ?? RecoveryPlanCategoryEnum.general_outpatient;
 
-  const template = await prisma.recoveryPlanTemplate.findFirst({
-    where: { category },
-    orderBy: { version: "desc" },
-  });
+    const template = await prisma.recoveryPlanTemplate.findFirst({
+      where: { category },
+      orderBy: { version: "desc" },
+    });
 
-  if (!template) {
-    return res.status(500).json({ code: "NO_PLAN_TEMPLATE" });
-  }
+    if (!template) {
+      console.error(`[Plan Generate] NO_PLAN_TEMPLATE found for category: ${category}`);
+      return res.status(500).json({ code: "NO_PLAN_TEMPLATE", message: "No recovery plan template exists in the database for this category." });
+    }
 
-  const { planJson, configJson } = generatePlan({
-    templatePlanJson: template.planJson,
-    clinicOverridesJson: activation.clinicConfig?.overridesJson,
-    config: parsed.data.config,
-    engineVersion: "v1",
-    category,
-  });
-
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-
-  const instance = await prisma.recoveryPlanInstance.create({
-    data: {
-      userId,
-      activationCodeId: activation.id,
-      templateId: template.id,
+    const { planJson, configJson } = generatePlan({
+      templatePlanJson: template.planJson,
+      clinicOverridesJson: activation.clinicConfig?.overridesJson,
+      config: parsed.data.config,
       engineVersion: "v1",
-      startDate: today,
-      configJson: configJson as unknown as Prisma.InputJsonValue,
-      planJson: planJson as unknown as Prisma.InputJsonValue,
-    },
-    include: {
-      template: true,
-      activationCode: true,
-    },
-  });
+      category,
+    });
 
-  return res.status(201).json({
-    planStatus: "READY",
-    plan: {
-      id: instance.id,
-      title: instance.template.title,
-      startDate: instance.startDate,
-      category: instance.template.category,
-    },
-  });
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    const instance = await prisma.recoveryPlanInstance.create({
+      data: {
+        userId,
+        activationCodeId: activation.id,
+        templateId: template.id,
+        engineVersion: "v1",
+        startDate: today,
+        configJson: configJson as unknown as Prisma.InputJsonValue,
+        planJson: planJson as unknown as Prisma.InputJsonValue,
+      },
+      include: {
+        template: true,
+        activationCode: true,
+      },
+    });
+
+    return res.status(201).json({
+      planStatus: "READY",
+      plan: {
+        id: instance.id,
+        title: instance.template.title,
+        startDate: instance.startDate,
+        category: instance.template.category,
+      },
+    });
+  } catch (error) {
+    console.error("Plan Generation CRITICAL Error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
 });
 
 /**
