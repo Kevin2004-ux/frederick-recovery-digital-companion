@@ -1,7 +1,6 @@
 // app/backend/src/repositories/logRepo.ts
 import { Prisma } from "@prisma/client";
-import { prisma } from "../prisma/client.js";
-// Import the new encryption utilities
+import { prisma } from "../db/prisma.js";// Import the new encryption utilities
 import { encryptPHI, decryptPHI } from "../utils/encryption.js";
 
 export type RecoveryLogEntry = {
