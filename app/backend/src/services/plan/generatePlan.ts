@@ -1,8 +1,8 @@
 import { Prisma } from "@prisma/client";
 // logic imports must have .js extension for NodeNext
-import { resolvePlanModules, type PlanConfiguration } from "./rules.js"; 
-import { CONTENT_LIBRARY } from "./contentLibrary.js"; 
-import { enforceClinicOverrides } from "./enforceClinicOverrides.js"; // ✅ Import this!
+import { resolvePlanModules, type PlanConfiguration } from "./rules.js";
+import { CONTENT_LIBRARY } from "./contentLibrary.js";
+import { enforceClinicOverrides } from "./enforceClinicOverrides.js";
 
 // --- 1. Helper Functions ---
 
@@ -15,7 +15,7 @@ function asArray(v: unknown): unknown[] {
 }
 
 function dedupe(arr: string[]): string[] {
-  return Array.from(new Set(arr.filter(s => typeof s === "string" && s.trim().length > 0)));
+  return Array.from(new Set(arr.filter((s) => typeof s === "string" && s.trim().length > 0)));
 }
 
 function phaseForDay(day: number): "early" | "mid" | "late" {
@@ -42,11 +42,11 @@ function normalizeDayV2(raw: unknown, dayIndex: number): DayV2 {
       : dayIndex;
 
   const phase =
-    (obj.phase === "early" || obj.phase === "mid" || obj.phase === "late")
-      ? obj.phase as "early" | "mid" | "late"
+    obj.phase === "early" || obj.phase === "mid" || obj.phase === "late"
+      ? (obj.phase as "early" | "mid" | "late")
       : phaseForDay(day);
 
-  const title = typeof obj.title === "string" ? obj.title : `Day ${day + 1}`; 
+  const title = typeof obj.title === "string" ? obj.title : `Day ${day + 1}`;
 
   const moduleIds = asArray(obj.moduleIds).filter((x) => typeof x === "string") as string[];
   const boxItems = asArray(obj.boxItems).filter((x) => typeof x === "string") as string[];
@@ -79,7 +79,7 @@ function ensure21Days(days: DayV2[]): DayV2[] {
     } else {
       const phase = phaseForDay(day);
       let title = `Day ${day + 1}`;
-      
+
       if (day === 0) title = "Day 1: Welcome & Setup";
       else if (day === 20) title = "Day 21: Graduation";
 
@@ -95,14 +95,103 @@ function ensure21Days(days: DayV2[]): DayV2[] {
   return out;
 }
 
-// --- 2. Scheduling Helpers ---
+// --- 2. Scheduling Types + Helpers ---
 
-function addModule(day: DayV2, id: string) {
-  day.moduleIds.push(id);
+type ScheduleTarget = number[] | "early" | "mid" | "late" | "all";
+
+type ScheduledModuleLike = {
+  id: string;
+  schedule: ScheduleTarget;
+};
+
+type ContentModuleLike = {
+  id?: string;
+  type?: string;
+  requiredBoxItems?: unknown;
+};
+
+function isScheduleTarget(v: unknown): v is ScheduleTarget {
+  if (v === "all" || v === "early" || v === "mid" || v === "late") return true;
+  if (Array.isArray(v)) {
+    return v.every((n) => typeof n === "number" && Number.isFinite(n));
+  }
+  return false;
 }
 
-function addModuleEvery(days: DayV2[], id: string) {
-  for (const d of days) addModule(d, id);
+function isScheduledModuleLike(v: unknown): v is ScheduledModuleLike {
+  return (
+    isPlainObject(v) &&
+    typeof v.id === "string" &&
+    v.id.trim().length > 0 &&
+    isScheduleTarget(v.schedule)
+  );
+}
+
+function normalizeScheduledModule(raw: unknown): ScheduledModuleLike | null {
+  // Backward-compatible path: legacy rules.ts may still return plain string IDs
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    return { id: raw, schedule: "all" };
+  }
+
+  if (isScheduledModuleLike(raw)) {
+    const normalizedSchedule: ScheduleTarget = Array.isArray(raw.schedule)
+      ? raw.schedule
+          .filter((n) => typeof n === "number" && Number.isFinite(n))
+          .map((n) => Math.max(0, Math.min(20, Math.floor(n))))
+      : raw.schedule;
+
+    return {
+      id: raw.id,
+      schedule: normalizedSchedule,
+    };
+  }
+
+  return null;
+}
+
+function resolveTargetDays(days: DayV2[], schedule: ScheduleTarget): DayV2[] {
+  if (schedule === "all") return days;
+  if (schedule === "early" || schedule === "mid" || schedule === "late") {
+    return days.filter((d) => d.phase === schedule);
+  }
+  if (Array.isArray(schedule)) {
+    const wanted = new Set(
+      schedule
+        .filter((n) => typeof n === "number" && Number.isFinite(n))
+        .map((n) => Math.max(0, Math.min(20, Math.floor(n))))
+    );
+    return days.filter((d) => wanted.has(d.day));
+  }
+  return [];
+}
+
+function addModule(day: DayV2, id: string) {
+  if (typeof id === "string" && id.trim().length > 0) {
+    day.moduleIds.push(id);
+  }
+}
+
+function addBoxItems(day: DayV2, items: unknown) {
+  if (!Array.isArray(items)) return;
+  for (const item of items) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      day.boxItems.push(item);
+    }
+  }
+}
+
+function getLegacyScheduleForModuleType(moduleType: unknown): ScheduleTarget {
+  switch (moduleType) {
+    case "tracking":
+    case "task":
+      return "all";
+    case "education":
+      return [0];
+    case "milestone":
+      return [13]; // Day 14
+    default:
+      return [0];
+  }
 }
 
 // --- 3. The Main Generator ---
@@ -126,52 +215,53 @@ export type GeneratePlanOutput = {
  */
 export const generatePlan = (input: GeneratePlanInput): GeneratePlanOutput => {
   // A. Setup the Skeleton (21 Days)
-  const base = isPlainObject(input.templatePlanJson) ? (input.templatePlanJson as Record<string, unknown>) : {};
+  const base = isPlainObject(input.templatePlanJson)
+    ? (input.templatePlanJson as Record<string, unknown>)
+    : {};
   const baseDaysRaw = asArray(base.days);
   const baseDays = baseDaysRaw.map((d, idx) => normalizeDayV2(d, idx));
   const days = ensure21Days(baseDays);
 
   // B. Run The Brain (Rules)
   const config = input.config as any as PlanConfiguration;
-  const activeModuleIds = resolvePlanModules(config);
-  
+  const rawActiveModules = resolvePlanModules(config) as unknown[];
+
   const debugRulesApplied: string[] = [];
 
-  for (const moduleId of activeModuleIds) {
-    const moduleDef = (CONTENT_LIBRARY as Record<string, any>)[moduleId];
-    
+  for (const rawModule of rawActiveModules) {
+    const scheduled = normalizeScheduledModule(rawModule);
+    if (!scheduled) continue;
+
+    const moduleId = scheduled.id;
+    const moduleDef = (CONTENT_LIBRARY as Record<string, ContentModuleLike>)[moduleId];
+
     if (!moduleDef) {
       continue;
     }
 
     debugRulesApplied.push(moduleId);
 
-    // Simple scheduling logic
-    switch (moduleDef.type) {
-      case 'tracking':
-      case 'task':
-        addModuleEvery(days, moduleId);
-        break;
+    // Backward compatibility:
+    // If rules.ts still returns plain strings, those normalize to schedule: "all".
+    // Preserve previous behavior by remapping legacy strings using module type.
+    let effectiveSchedule: ScheduleTarget = scheduled.schedule;
 
-      case 'education':
-        if (days[0]) addModule(days[0], moduleId);
-        break;
+    if (typeof rawModule === "string") {
+      effectiveSchedule = getLegacyScheduleForModuleType(moduleDef.type);
+    }
 
-      case 'milestone':
-        // Default milestones to day 14 (index 13)
-        if (days[13]) addModule(days[13], moduleId);
-        else if (days[0]) addModule(days[0], moduleId);
-        break;
-        
-      default:
-        if (days[0]) addModule(days[0], moduleId);
-        break;
+    const targetDays = resolveTargetDays(days, effectiveSchedule);
+
+    for (const day of targetDays) {
+      addModule(day, moduleId);
+      addBoxItems(day, moduleDef.requiredBoxItems);
     }
   }
 
   // C. Cleanup & Deduplicate
   for (const d of days) {
     d.moduleIds = dedupe(d.moduleIds);
+    d.boxItems = dedupe(d.boxItems);
   }
 
   // D. Construct Final JSON
@@ -185,27 +275,25 @@ export const generatePlan = (input: GeneratePlanInput): GeneratePlanOutput => {
     },
     days,
     meta: {
-      engineVersion: input.engineVersion || "1.0.0",
+      engineVersion: input.engineVersion || "1.1.0",
       category: input.category || "general",
       generatedAt: new Date().toISOString(),
       appliedRules: debugRulesApplied,
     },
   };
 
-  // E. ✅ FIX: ENFORCE CLINIC OVERRIDES
-  // This step was missing/bypassed in the previous version.
+  // E. ENFORCE CLINIC OVERRIDES
   const enforcedPlanJson = enforceClinicOverrides({
     plan: planJson,
     overridesJson: input.clinicOverridesJson,
-    // Optional: could log to a variable if we wanted to save the audit trail inside the JSON meta
-    auditPush: (evt) => { 
-        // We could push these to planJson.meta.clinicAuditEvents if desired
-    }
+    auditPush: (_evt) => {
+      // Intentionally preserved hook for future audit trail support
+    },
   });
-  
-  return { 
-    planJson: enforcedPlanJson as Prisma.InputJsonValue, 
-    configJson: input.config as Prisma.InputJsonValue 
+
+  return {
+    planJson: enforcedPlanJson as Prisma.InputJsonValue,
+    configJson: input.config as Prisma.InputJsonValue,
   };
 };
 

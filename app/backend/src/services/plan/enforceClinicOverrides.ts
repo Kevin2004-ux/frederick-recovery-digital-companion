@@ -64,6 +64,10 @@ type AuditEvent =
       reason: string;
     };
 
+type ModuleMeta = {
+  requiredBoxItems?: unknown;
+};
+
 function uniqPreserveOrder(ids: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -81,7 +85,6 @@ function removeAll(ids: string[], toRemove: Set<string>): string[] {
 }
 
 function addAll(ids: string[], toAdd: string[]): string[] {
-  // required modules should appear (append order deterministic)
   return uniqPreserveOrder([...ids, ...toAdd]);
 }
 
@@ -97,12 +100,38 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 function normalizeDayNumber(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n)) return 0;
-  // Keep audit + requiredByDay stable even if out of range
   return Math.max(0, Math.min(1000, Math.floor(n)));
 }
 
 function normalizePhase(v: unknown): "early" | "mid" | "late" | "" {
   return v === "early" || v === "mid" || v === "late" ? v : "";
+}
+
+function normalizeStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return uniqPreserveOrder(v.filter((x): x is string => typeof x === "string" && x.trim().length > 0));
+}
+
+function deriveBoxItemsFromModules(
+  moduleIds: string[],
+  modulesDict: Record<string, unknown>,
+  existingBoxItems: unknown
+): string[] {
+  const fromExisting = normalizeStringArray(existingBoxItems);
+  const derived: string[] = [];
+
+  for (const moduleId of moduleIds) {
+    const moduleMeta = modulesDict[moduleId] as ModuleMeta | undefined;
+    if (!moduleMeta || !Array.isArray(moduleMeta.requiredBoxItems)) continue;
+
+    for (const item of moduleMeta.requiredBoxItems) {
+      if (typeof item === "string" && item.trim().length > 0) {
+        derived.push(item);
+      }
+    }
+  }
+
+  return uniqPreserveOrder([...fromExisting, ...derived]);
 }
 
 /**
@@ -137,7 +166,7 @@ export function enforceClinicOverrides(args: {
   const overrides = parsed.data;
 
   // Validate plan shape (fail closed -> return plan)
-  if (!isPlainObject(plan) || !Array.isArray((plan as any).days) || !isPlainObject((plan as any).modules)) {
+  if (!isPlainObject(plan) || !Array.isArray(plan.days) || !isPlainObject(plan.modules)) {
     auditPush?.({
       type: "clinic_overrides_invalid",
       message: "Plan shape is not compatible with enforcement; ignoring overrides.",
@@ -145,16 +174,15 @@ export function enforceClinicOverrides(args: {
     return plan;
   }
 
-  const modulesDict = (plan as any).modules as Record<string, unknown>;
-  const schemaVersion = (plan as any).schemaVersion;
+  const modulesDict = plan.modules as Record<string, unknown>;
+  const schemaVersion = plan.schemaVersion;
 
-  // Only enforce on schemaVersion 2 (your current contract)
+  // Only enforce on schemaVersion 2 (current contract)
   if (schemaVersion !== 2) return plan;
 
   const requiredGlobal = overrides.requiredModuleIds ?? [];
   const forbiddenGlobalSet = new Set(overrides.forbiddenModuleIds ?? []);
 
-  // Pre-filter required lists to only known modules (deterministic)
   const filterKnown = (list: string[], reason: string) => {
     const out: string[] = [];
     for (const id of list) {
@@ -179,7 +207,7 @@ export function enforceClinicOverrides(args: {
   }
 
   const maxModulesPerDay = overrides.maxModulesPerDay;
-  const days = (plan as any).days as any[];
+  const days = plan.days as any[];
 
   const newDays = days.map((dayObj) => {
     const dayNum = normalizeDayNumber(dayObj?.day);
@@ -224,10 +252,10 @@ export function enforceClinicOverrides(args: {
       phase === "early"
         ? requiredByPhaseKnown.early
         : phase === "mid"
-        ? requiredByPhaseKnown.mid
-        : phase === "late"
-        ? requiredByPhaseKnown.late
-        : [];
+          ? requiredByPhaseKnown.mid
+          : phase === "late"
+            ? requiredByPhaseKnown.late
+            : [];
 
     if (phaseReq.length > 0) {
       const beforeSet = new Set(moduleIds);
@@ -244,7 +272,7 @@ export function enforceClinicOverrides(args: {
       }
     }
 
-    // 4) Add required by day (keyed by "0","1",... or any string)
+    // 4) Add required by day
     const dayReq = requiredByDayKnown[String(dayNum)] ?? [];
     if (dayReq.length > 0) {
       const beforeSet = new Set(moduleIds);
@@ -264,7 +292,7 @@ export function enforceClinicOverrides(args: {
     // 5) Defensive: ensure only known module ids are output
     moduleIds = moduleIds.filter((id) => Boolean(modulesDict[id]));
 
-    // ✅ 5.5) Fail-closed: forbidden wins even if also listed as required
+    // 5.5) Fail-closed: forbidden wins even if also listed as required
     if (forbiddenGlobalSet.size > 0) {
       moduleIds = removeAll(moduleIds, forbiddenGlobalSet);
     }
@@ -284,20 +312,25 @@ export function enforceClinicOverrides(args: {
       moduleIds = capped.kept;
     }
 
+    // 7) Re-derive box items after final module list
+    const boxItems = deriveBoxItemsFromModules(moduleIds, modulesDict, dayObj?.boxItems);
+
     return {
       ...dayObj,
-      day: dayNum, // keep normalized day
-      phase: phase || dayObj?.phase, // keep original if it was non-standard, otherwise normalized
+      day: dayNum,
+      phase: phase || dayObj?.phase,
       moduleIds,
+      boxItems,
     };
   });
 
-  // attach metadata
+  const safeMeta = isPlainObject(plan.meta) ? plan.meta : {};
+
   const newPlan = {
     ...plan,
     days: newDays,
     meta: {
-      ...(plan as any).meta,
+      ...safeMeta,
       clinicOverrides: {
         version: overrides.version ?? null,
         note: overrides.note ?? null,

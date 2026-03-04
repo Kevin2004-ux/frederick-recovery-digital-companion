@@ -8,8 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "postinstall": "prisma generate",
     "migrate:deploy": "prisma migrate deploy",
-    "start": "node dist/server.js"
-  },
+    "start": "node dist/server.js",
+"test:plan": "tsx scripts/testPlanEngine.ts"  },
   "dependencies": {
     "@prisma/client": "^5.10.0",
     "@types/bcryptjs": "^2.4.6",
