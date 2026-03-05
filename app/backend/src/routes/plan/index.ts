@@ -13,6 +13,7 @@ import { prisma } from "../../prisma/client.js";
 import { generatePlan } from "../../services/plan/generatePlan.js";
 
 export const planRouter = Router();
+
 // --- TEMPORARY SEED ENDPOINT ---
 planRouter.get("/admin/seed", async (req, res): Promise<any> => {
   try {
@@ -33,17 +34,35 @@ planRouter.get("/admin/seed", async (req, res): Promise<any> => {
           schemaVersion: 2,
           meta: { description: "Base recovery template" },
           modules: {
-            "mod_rest": { id: "mod_rest", type: "education", title: "Rest & Elevate", body: "Keep the area elevated above your heart to reduce swelling." },
-            "mod_ice": { id: "mod_ice", type: "tracking", title: "Ice Therapy", body: "Apply ice for 15 minutes." },
-            "mod_meds": { id: "mod_meds", type: "tracking", title: "Pain Medication", body: "Take prescribed medication as directed." }
+            mod_rest: {
+              id: "mod_rest",
+              type: "education",
+              title: "Rest & Elevate",
+              body: "Keep the area elevated above your heart to reduce swelling.",
+            },
+            mod_ice: {
+              id: "mod_ice",
+              type: "tracking",
+              title: "Ice Therapy",
+              body: "Apply ice for 15 minutes.",
+            },
+            mod_meds: {
+              id: "mod_meds",
+              type: "tracking",
+              title: "Pain Medication",
+              body: "Take prescribed medication as directed.",
+            },
           },
           days: Array.from({ length: 21 }).map((_, i) => ({
             dayIndex: i,
             phase: i < 7 ? "early" : i < 14 ? "mid" : "late",
-            moduleIds: i < 3 ? ["mod_rest", "mod_ice", "mod_meds"] : ["mod_rest", "mod_ice"] // Meds for first 3 days, rest/ice for all 21
-          }))
-        }
-      }
+            moduleIds:
+              i < 3
+                ? ["mod_rest", "mod_ice", "mod_meds"]
+                : ["mod_rest", "mod_ice"], // Meds for first 3 days, rest/ice for all 21
+          })),
+        },
+      },
     });
 
     return res.json({ success: true, message: "Database Seeded Successfully!", template });
@@ -77,6 +96,7 @@ const PlanConfigSchema = z.object({
 
 const GeneratePlanSchema = z.object({
   config: PlanConfigSchema,
+  recoveryStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
 });
 
 function toUtcDateFromYmd(ymd: string): Date | null {
@@ -113,10 +133,7 @@ async function getLatestPlanInstanceForUser(userId: string) {
   });
 }
 
-async function regenInstanceIfRequested(args: {
-  instance: any;
-  regen: boolean;
-}) {
+async function regenInstanceIfRequested(args: { instance: any; regen: boolean }) {
   const { instance, regen } = args;
 
   // DEV-only regen (ignored in prod)
@@ -228,9 +245,7 @@ function resolveDayBlock(planJson: any, dayBlock: any) {
   if (!isPlainObject(modulesDict)) return dayBlock;
   if (!isPlainObject(dayBlock)) return dayBlock;
 
-  const moduleIds: string[] = Array.isArray((dayBlock as any).moduleIds)
-    ? (dayBlock as any).moduleIds
-    : [];
+  const moduleIds: string[] = Array.isArray((dayBlock as any).moduleIds) ? (dayBlock as any).moduleIds : [];
   const modulesResolved = moduleIds.map((id) => (modulesDict as any)[id]).filter(Boolean);
 
   return { ...dayBlock, modulesResolved };
@@ -261,17 +276,26 @@ planRouter.post("/generate", async (req: Request, res: Response): Promise<any> =
     });
 
     if (!activation) {
-      return res.status(400).json({ code: "NO_CLAIMED_ACTIVATION_CODE", message: "No activation code found for this user." });
+      return res.status(400).json({
+        code: "NO_CLAIMED_ACTIVATION_CODE",
+        message: "No activation code found for this user.",
+      });
     }
 
-    // Enforce one instance per activation code
-    const existing = await prisma.recoveryPlanInstance.findFirst({
+    // Idempotent: if plan already exists for this activation code, return it
+    const existingInstance = await prisma.recoveryPlanInstance.findFirst({
       where: { activationCodeId: activation.id },
-      select: { id: true },
+      include: {
+        template: true,
+        activationCode: true,
+      },
     });
 
-    if (existing) {
-      return res.status(409).json({ code: "PLAN_ALREADY_EXISTS", message: "A plan has already been generated." });
+    if (existingInstance) {
+      return res.status(200).json({
+        planStatus: "READY",
+        plan: resolvePlanForFrontend(shapePlanInstance(existingInstance)),
+      });
     }
 
     const category: RecoveryPlanCategory =
@@ -284,7 +308,10 @@ planRouter.post("/generate", async (req: Request, res: Response): Promise<any> =
 
     if (!template) {
       console.error(`[Plan Generate] NO_PLAN_TEMPLATE found for category: ${category}`);
-      return res.status(500).json({ code: "NO_PLAN_TEMPLATE", message: "No recovery plan template exists in the database for this category." });
+      return res.status(500).json({
+        code: "NO_PLAN_TEMPLATE",
+        message: "No recovery plan template exists in the database for this category.",
+      });
     }
 
     const { planJson, configJson } = generatePlan({
@@ -297,31 +324,49 @@ planRouter.post("/generate", async (req: Request, res: Response): Promise<any> =
 
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
-    const instance = await prisma.recoveryPlanInstance.create({
-      data: {
-        userId,
-        activationCodeId: activation.id,
-        templateId: template.id,
-        engineVersion: "v1",
-        startDate: today,
-        configJson: configJson as unknown as Prisma.InputJsonValue,
-        planJson: planJson as unknown as Prisma.InputJsonValue,
-      },
-      include: {
-        template: true,
-        activationCode: true,
-      },
-    });
+    try {
+      const instance = await prisma.recoveryPlanInstance.create({
+        data: {
+          userId,
+          activationCodeId: activation.id,
+          templateId: template.id,
+          engineVersion: "v1",
+          startDate: today,
+          configJson: configJson as unknown as Prisma.InputJsonValue,
+          planJson: planJson as unknown as Prisma.InputJsonValue,
+        },
+        include: {
+          template: true,
+          activationCode: true,
+        },
+      });
 
-    return res.status(201).json({
-      planStatus: "READY",
-      plan: {
-        id: instance.id,
-        title: instance.template.title,
-        startDate: instance.startDate,
-        category: instance.template.category,
-      },
-    });
+      return res.status(201).json({
+        planStatus: "READY",
+        plan: resolvePlanForFrontend(shapePlanInstance(instance)),
+      });
+    } catch (e: any) {
+      // If a concurrent request created the plan a millisecond ago:
+      // Prisma will throw unique constraint violation (P2002)
+      if (e?.code === "P2002") {
+        const winner = await prisma.recoveryPlanInstance.findFirst({
+          where: { activationCodeId: activation.id },
+          include: {
+            template: true,
+            activationCode: true,
+          },
+        });
+
+        if (winner) {
+          return res.status(200).json({
+            planStatus: "READY",
+            plan: resolvePlanForFrontend(shapePlanInstance(winner)),
+          });
+        }
+      }
+
+      throw e;
+    }
   } catch (error) {
     console.error("Plan Generation CRITICAL Error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -407,7 +452,8 @@ planRouter.get("/current/resolved", async (req, res) => {
 
 /**
  * GET /plan/today/resolved
- * Returns today's dayBlock + next 3 days, resolved with modulesResolved.
+ * Returns the full resolved plan. The frontend is responsible for calculating 
+ * local day offsets to prevent timezone/DST drift.
  * DEV: add ?regen=1 to rebuild plan (ignored in production).
  *
  * IMPORTANT: must be declared BEFORE "/:id" to avoid route shadowing.
@@ -418,7 +464,6 @@ planRouter.get("/today/resolved", async (req, res) => {
 
   const regen = String(req.query.regen ?? "") === "1";
 
-  // Need clinicConfig only for regen, but easiest is to always include it here
   const instance = await prisma.recoveryPlanInstance.findFirst({
     where: { userId },
     orderBy: { createdAt: "desc" },
@@ -432,46 +477,24 @@ planRouter.get("/today/resolved", async (req, res) => {
     return res.status(404).json({ code: "NO_PLAN" });
   }
 
-  let finalInstance = instance;
-
   try {
-    finalInstance = await regenInstanceIfRequested({ instance, regen });
+    const finalInstance = await regenInstanceIfRequested({ instance, regen });
+    const shaped = shapePlanInstance(finalInstance);
+    const resolved = resolvePlanForFrontend(shaped);
+
+    // Return the full resolved plan (which natively includes startDate).
+    // We drop dayIndex, dayBlock, and nextDays so the frontend computes them locally using date-fns.
+    return res.status(200).json({
+      ...resolved,
+      serverYmdUtc: ymdTodayUtc(), // Included for debugging/logging purposes only
+    });
   } catch (e: any) {
     if (e?.code === "NO_PLAN_TEMPLATE") {
       return res.status(500).json({ code: "NO_PLAN_TEMPLATE" });
     }
     throw e;
   }
-
-  const start = toUtcDateFromYmd(finalInstance.startDate);
-  if (!start) {
-    return res.status(500).json({ code: "INVALID_PLAN_START_DATE" });
-  }
-
-  const todayYmd = ymdTodayUtc();
-  const today = toUtcDateFromYmd(todayYmd)!;
-
-  const msPerDay = 24 * 60 * 60 * 1000;
-  let dayIndex = Math.floor((today.getTime() - start.getTime()) / msPerDay);
-  if (dayIndex < 0) dayIndex = 0;
-
-  const days = extractDays(finalInstance.planJson);
-  const dayBlockRaw = days ? days[dayIndex] ?? null : null;
-  const next3Raw = days ? days.slice(dayIndex + 1, dayIndex + 4) : [];
-
-  const planJson = finalInstance.planJson as any;
-  const dayBlock = dayBlockRaw ? resolveDayBlock(planJson, dayBlockRaw) : null;
-  const nextDays = next3Raw.map((d) => resolveDayBlock(planJson, d));
-
-  return res.status(200).json({
-    startDate: finalInstance.startDate,
-    today: todayYmd,
-    dayIndex,
-    dayBlock,
-    nextDays,
-  });
 });
-
 /**
  * GET /plan/:id
  * Returns a specific plan instance by id, must belong to user.

@@ -95,6 +95,40 @@ function ensure21Days(days: DayV2[]): DayV2[] {
   return out;
 }
 
+/**
+ * Trim embedded modules dictionary to only the moduleIds actually used in the final 21-day plan.
+ *
+ * Why: Avoid duplicating the entire CONTENT_LIBRARY in every plan instance record.
+ * Note: We trim AFTER clinic overrides are enforced (since overrides may add/remove modules).
+ */
+function trimPlanModulesV2(plan: any): any {
+  if (!isPlainObject(plan)) return plan;
+  if (plan.schemaVersion !== 2) return plan;
+  if (!Array.isArray(plan.days)) return plan;
+  if (!isPlainObject(plan.modules)) return plan;
+
+  const modulesDict = plan.modules as Record<string, unknown>;
+  const idsInOrder: string[] = [];
+
+  for (const day of plan.days as any[]) {
+    const ids = Array.isArray(day?.moduleIds) ? (day.moduleIds as unknown[]) : [];
+    for (const id of ids) {
+      if (typeof id === "string" && id.trim().length > 0) idsInOrder.push(id);
+    }
+  }
+
+  const usedIds = dedupe(idsInOrder);
+  const filtered: Record<string, unknown> = {};
+  for (const id of usedIds) {
+    if (modulesDict[id]) filtered[id] = modulesDict[id];
+  }
+
+  return {
+    ...plan,
+    modules: filtered,
+  };
+}
+
 // --- 2. Scheduling Types + Helpers ---
 
 type ScheduleTarget = number[] | "early" | "mid" | "late" | "all";
@@ -128,11 +162,6 @@ function isScheduledModuleLike(v: unknown): v is ScheduledModuleLike {
 }
 
 function normalizeScheduledModule(raw: unknown): ScheduledModuleLike | null {
-  // Backward-compatible path: legacy rules.ts may still return plain string IDs
-  if (typeof raw === "string" && raw.trim().length > 0) {
-    return { id: raw, schedule: "all" };
-  }
-
   if (isScheduledModuleLike(raw)) {
     const normalizedSchedule: ScheduleTarget = Array.isArray(raw.schedule)
       ? raw.schedule
@@ -180,19 +209,6 @@ function addBoxItems(day: DayV2, items: unknown) {
   }
 }
 
-function getLegacyScheduleForModuleType(moduleType: unknown): ScheduleTarget {
-  switch (moduleType) {
-    case "tracking":
-    case "task":
-      return "all";
-    case "education":
-      return [0];
-    case "milestone":
-      return [13]; // Day 14
-    default:
-      return [0];
-  }
-}
 
 // --- 3. The Main Generator ---
 
@@ -241,16 +257,7 @@ export const generatePlan = (input: GeneratePlanInput): GeneratePlanOutput => {
 
     debugRulesApplied.push(moduleId);
 
-    // Backward compatibility:
-    // If rules.ts still returns plain strings, those normalize to schedule: "all".
-    // Preserve previous behavior by remapping legacy strings using module type.
-    let effectiveSchedule: ScheduleTarget = scheduled.schedule;
-
-    if (typeof rawModule === "string") {
-      effectiveSchedule = getLegacyScheduleForModuleType(moduleDef.type);
-    }
-
-    const targetDays = resolveTargetDays(days, effectiveSchedule);
+    const targetDays = resolveTargetDays(days, scheduled.schedule);
 
     for (const day of targetDays) {
       addModule(day, moduleId);
@@ -264,12 +271,12 @@ export const generatePlan = (input: GeneratePlanInput): GeneratePlanOutput => {
     d.boxItems = dedupe(d.boxItems);
   }
 
-  // D. Construct Final JSON
+  // D. Construct Final JSON (keep full library here so clinic enforcement can validate/derive)
   const planJson: any = {
     title: typeof base.title === "string" ? base.title : "Recovery Plan",
     disclaimer: typeof base.disclaimer === "string" ? base.disclaimer : "Not medical advice.",
     schemaVersion: 2,
-    modules: CONTENT_LIBRARY, // Embed library for frontend
+    modules: CONTENT_LIBRARY, // kept for enforcement; trimmed before returning
     clinicPolicy: {
       present: Boolean(input.clinicOverridesJson),
     },
@@ -291,8 +298,10 @@ export const generatePlan = (input: GeneratePlanInput): GeneratePlanOutput => {
     },
   });
 
+  const trimmedPlanJson = trimPlanModulesV2(enforcedPlanJson);
+
   return {
-    planJson: enforcedPlanJson as Prisma.InputJsonValue,
+    planJson: trimmedPlanJson as Prisma.InputJsonValue,
     configJson: input.config as Prisma.InputJsonValue,
   };
 };
