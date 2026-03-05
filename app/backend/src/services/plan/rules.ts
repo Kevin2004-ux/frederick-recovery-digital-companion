@@ -136,7 +136,6 @@ export const getDiscomfortModules = (pattern: DiscomfortPattern): ScheduledModul
 
   return modules;
 };
-
 export const getFollowUpModules = (expectation: FollowUpExpectation): ScheduledModule[] => {
   switch (expectation) {
     case "within_7_days":

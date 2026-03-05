@@ -265,6 +265,12 @@ planRouter.post("/generate", async (req: Request, res: Response): Promise<any> =
       return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
     }
 
+    // Optional Safety: Reject impossible dates
+    const parsedStartDate = toUtcDateFromYmd(parsed.data.recoveryStartDate);
+    if (!parsedStartDate) {
+      return res.status(400).json({ code: "INVALID_DATE", message: "recoveryStartDate is invalid." });
+    }
+
     // Find the user's claimed activation code (most recent)
     const activation = await prisma.activationCode.findFirst({
       where: {
@@ -322,7 +328,7 @@ planRouter.post("/generate", async (req: Request, res: Response): Promise<any> =
       category,
     });
 
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const startDate = parsed.data.recoveryStartDate; // YYYY-MM-DD validated by Zod
 
     try {
       const instance = await prisma.recoveryPlanInstance.create({
@@ -331,7 +337,7 @@ planRouter.post("/generate", async (req: Request, res: Response): Promise<any> =
           activationCodeId: activation.id,
           templateId: template.id,
           engineVersion: "v1",
-          startDate: today,
+          startDate,
           configJson: configJson as unknown as Prisma.InputJsonValue,
           planJson: planJson as unknown as Prisma.InputJsonValue,
         },
@@ -495,6 +501,7 @@ planRouter.get("/today/resolved", async (req, res) => {
     throw e;
   }
 });
+
 /**
  * GET /plan/:id
  * Returns a specific plan instance by id, must belong to user.
