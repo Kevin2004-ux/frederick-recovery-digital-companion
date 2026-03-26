@@ -77,7 +77,8 @@ export async function register(req: Request, res: Response): Promise<any> {
  */
 export async function login(req: Request, res: Response): Promise<any> {
   try {
-    const { email, password } = req.body;
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = req.body.password;
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password required" });
