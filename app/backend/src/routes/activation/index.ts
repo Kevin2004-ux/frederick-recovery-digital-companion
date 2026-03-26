@@ -27,7 +27,8 @@ activationRouter.post("/claim", async (req: Request, res: Response): Promise<any
     return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
   }
 
-  const { code, email, password } = parsed.data;
+  const { code, password } = parsed.data;
+  const email = parsed.data.email.trim().toLowerCase();
 
   try {
     // 1. Verify Code exists and is usable
