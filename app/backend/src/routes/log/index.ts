@@ -11,6 +11,7 @@ import { getUserIdOrRespond } from "../../utils/requireUser.js";
 // Update import to include AuditSeverity
 import { AuditService, AuditCategory, AuditStatus, AuditSeverity } from "../../services/AuditService.js";
 import { PdfService } from "../../services/export/PdfService.js";
+import { syncOperationalAlertsForPatient } from "../../services/operationalAlerts.js";
 
 export const logRouter = Router();
 
@@ -47,6 +48,32 @@ const dateParamSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
+async function refreshOperationalAlertsAfterLogMutation(args: {
+  req: Parameters<typeof AuditService.log>[0]["req"];
+  userId: string;
+  logEntryId: string;
+}) {
+  try {
+    await syncOperationalAlertsForPatient(args.userId);
+  } catch (error) {
+    console.error("Operational alert sync failed", error);
+    await AuditService.log({
+      req: args.req,
+      category: AuditCategory.LOG,
+      type: "OPERATIONAL_ALERT_SYNC_FAILED",
+      status: AuditStatus.FAILURE,
+      userId: args.userId,
+      role: args.req?.user?.role,
+      patientUserId: args.userId,
+      targetId: args.logEntryId,
+      targetType: "LogEntry",
+      metadata: {
+        message: "Operational alert sync failed after log mutation",
+      },
+    });
+  }
+}
+
 /**
  * POST /log/entries
  */
@@ -68,6 +95,12 @@ logRouter.post("/entries", async (req, res) => {
       req, category: AuditCategory.LOG, type: "PHI_CREATED",
       userId, role: req.user!.role, patientUserId: userId,
       targetId: created.id, targetType: "LogEntry", status: AuditStatus.SUCCESS
+    });
+
+    await refreshOperationalAlertsAfterLogMutation({
+      req,
+      userId,
+      logEntryId: created.id,
     });
 
     return res.status(201).json(created);
@@ -100,6 +133,12 @@ logRouter.put("/entries/:date", async (req, res) => {
       req, category: AuditCategory.LOG, type: "PHI_UPDATED",
       userId, role: req.user!.role, patientUserId: userId,
       targetId: updated.id, targetType: "LogEntry", status: AuditStatus.SUCCESS
+    });
+
+    await refreshOperationalAlertsAfterLogMutation({
+      req,
+      userId,
+      logEntryId: updated.id,
     });
 
     return res.status(200).json(updated);
