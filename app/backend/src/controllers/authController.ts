@@ -181,7 +181,8 @@ export async function verify(req: Request, res: Response): Promise<any> {
     return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
   }
 
-  const { email, code } = parsed.data;
+  const email = String(parsed.data.email || "").trim().toLowerCase();
+  const code = parsed.data.code;
 
   try {
     await userRepo.verifyEmailCode(email, code);
@@ -222,8 +223,8 @@ export async function verify(req: Request, res: Response): Promise<any> {
  * Generates a new code and triggers the mailer (which prints to console for now)
  */
 export async function resendVerification(req: Request, res: Response): Promise<any> {
-  const email = req.body.email;
-  if (!email || typeof email !== "string") {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  if (!email) {
     return res.status(400).json({ code: "VALIDATION_ERROR", message: "Email required" });
   }
 
@@ -265,8 +266,8 @@ export async function resendVerification(req: Request, res: Response): Promise<a
  * Initializes password reset flow.
  */
 export async function forgotPassword(req: Request, res: Response): Promise<any> {
-  const email = req.body.email;
-  if (!email || typeof email !== "string") {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  if (!email) {
     return res.status(400).json({ code: "VALIDATION_ERROR", message: "Email required" });
   }
 
