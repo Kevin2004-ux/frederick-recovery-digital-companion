@@ -9,7 +9,7 @@ import {
 
 import { requireAuth } from "../../middleware/requireAuth.js";
 import { getUserIdOrRespond } from "../../utils/requireUser.js";
-import { prisma } from "../../prisma/client.js";
+import { prisma } from "../../db/prisma.js";
 import { generatePlan } from "../../services/plan/generatePlan.js";
 
 export const planRouter = Router();

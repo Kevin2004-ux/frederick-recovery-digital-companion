@@ -7,6 +7,7 @@ import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { ActivationCodeStatus, UserRole } from "@prisma/client";
 import { AuditService, AuditCategory, AuditStatus, AuditSeverity } from "../../services/AuditService.js";
+import { runDailyCheckInReminderDigest } from "../../services/reminders.js";
 
 export const adminRouter = Router();
 
@@ -28,6 +29,10 @@ const CreateClinicSchema = z.object({
   clinicTag: z.string().min(3).regex(/^[A-Za-z0-9-]+$/, "Alphanumeric and dashes only"),
   adminEmail: z.string().email(),
   adminPassword: z.string().min(12),
+});
+
+const RunDailyReminderSchema = z.object({
+  scheduledForDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 /**
@@ -206,5 +211,53 @@ adminRouter.post("/codes/:code/invalidate", async (req: Request, res: Response) 
     return res.json({ ok: true, code: activation.code, status: activation.status });
   } catch (err) {
     return res.status(404).json({ code: "NOT_FOUND" });
+  }
+});
+
+/**
+ * POST /admin/reminders/daily-check-in/run
+ * Owner-only trigger for the MVP daily reminder runner.
+ */
+adminRouter.post("/reminders/daily-check-in/run", async (req: Request, res: Response) => {
+  const parsed = RunDailyReminderSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
+  }
+
+  try {
+    const summary = await runDailyCheckInReminderDigest(parsed.data.scheduledForDate);
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "DAILY_CHECK_IN_REMINDER_RUN",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      metadata: summary,
+      severity: AuditSeverity.INFO,
+    });
+
+    return res.status(200).json({ ok: true, summary });
+  } catch (err: any) {
+    const message = err instanceof Error ? err.message : "INTERNAL_ERROR";
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "DAILY_CHECK_IN_REMINDER_RUN_FAILED",
+      status: AuditStatus.FAILURE,
+      userId: req.user!.id,
+      role: req.user!.role,
+      metadata: { message },
+      severity: AuditSeverity.WARN,
+    });
+
+    if (message === "INVALID_REMINDER_DATE") {
+      return res.status(400).json({ code: "VALIDATION_ERROR", message });
+    }
+
+    console.error(err);
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
   }
 });

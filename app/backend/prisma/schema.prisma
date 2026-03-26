@@ -28,6 +28,31 @@ enum RecoveryPlanCategory {
   cosmetic_recovery
 }
 
+enum OperationalAlertType {
+  MISSED_CHECK_IN
+  REVIEW_SIGNAL
+}
+
+enum OperationalAlertSeverity {
+  REVIEW
+  URGENT
+}
+
+enum OperationalAlertStatus {
+  OPEN
+  RESOLVED
+}
+
+enum ReminderType {
+  DAILY_CHECK_IN_EMAIL
+}
+
+enum ReminderStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
 // --- MODELS ---
 
 model User {
@@ -72,6 +97,9 @@ model User {
    
   createdActivationBatches ActivationBatch[]       @relation("ActivationBatchCreatedBy")
   capturedActivationConfigs ActivationCode[]       @relation("ActivationCodeConfigCapturedByUser")
+  approvedActivationCodes ActivationCode[]         @relation("ActivationCodeApprovedByUser")
+  operationalAlerts      OperationalAlert[]
+  reminderOutboxEntries  ReminderOutbox[]
 
   @@index([clinicTag])
 }
@@ -115,6 +143,8 @@ model ActivationBatch {
   id              String           @id @default(uuid())
   clinicTag       String?
   quantity        Int
+  boxType         String?
+  includedItemsJson Json?
    
   createdByUserId String?
   createdByUser   User?            @relation("ActivationBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
@@ -139,10 +169,14 @@ model ActivationCode {
 
   // Clinic flow
   configJson             Json?
+  approvedConfigSnapshot Json?
   planSnapshot           Json?
   configCapturedAt       DateTime?
   configCapturedByUserId String?
   configCapturedByUser   User?                 @relation("ActivationCodeConfigCapturedByUser", fields: [configCapturedByUserId], references: [id], onDelete: SetNull)
+  approvedAt             DateTime?
+  approvedByUserId       String?
+  approvedByUser         User?                 @relation("ActivationCodeApprovedByUser", fields: [approvedByUserId], references: [id], onDelete: SetNull)
 
   // Patient flow
   claimedByUserId        String?
@@ -150,6 +184,8 @@ model ActivationCode {
   claimedAt              DateTime?
 
   planInstance           RecoveryPlanInstance?
+  operationalAlerts      OperationalAlert[]
+  reminderOutboxEntries  ReminderOutbox[]
 
   createdAt              DateTime              @default(now())
   updatedAt              DateTime              @updatedAt
@@ -159,6 +195,7 @@ model ActivationCode {
   @@index([claimedByUserId])
   @@index([batchId])
   @@index([configCapturedByUserId])
+  @@index([approvedByUserId])
 }
 
 model RecoveryPlanTemplate {
@@ -206,6 +243,53 @@ model RecoveryPlanInstance {
 
   @@index([userId])
   @@index([startDate])
+}
+
+model OperationalAlert {
+  id               String                   @id @default(uuid())
+  patientUserId    String
+  patientUser      User                     @relation(fields: [patientUserId], references: [id], onDelete: Cascade)
+  clinicTag        String
+  activationCodeId String?
+  activationCode   ActivationCode?          @relation(fields: [activationCodeId], references: [id], onDelete: SetNull)
+  type             OperationalAlertType
+  severity         OperationalAlertSeverity
+  status           OperationalAlertStatus   @default(OPEN)
+  reasonsJson      Json?
+  detailsJson      Json?
+  dedupeKey        String                   @unique
+  triggeredAt      DateTime                 @default(now())
+  resolvedAt       DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@index([clinicTag, status, severity])
+  @@index([patientUserId, status])
+  @@index([activationCodeId])
+  @@index([clinicTag, patientUserId, status])
+}
+
+model ReminderOutbox {
+  id               String         @id @default(uuid())
+  patientUserId    String
+  patientUser      User           @relation(fields: [patientUserId], references: [id], onDelete: Cascade)
+  clinicTag        String
+  activationCodeId String?
+  activationCode   ActivationCode? @relation(fields: [activationCodeId], references: [id], onDelete: SetNull)
+  type             ReminderType
+  scheduledForDate String
+  status           ReminderStatus @default(PENDING)
+  sentAt           DateTime?
+  failedAt         DateTime?
+  providerMessageId String?
+  detailsJson      Json?
+  dedupeKey        String         @unique
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([clinicTag, scheduledForDate, status])
+  @@index([patientUserId, type, scheduledForDate])
+  @@index([activationCodeId])
 }
 
 model SecurityAudit {

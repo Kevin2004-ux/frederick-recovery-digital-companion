@@ -11,6 +11,18 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";
+import { listEntries } from "../../repositories/logRepo.js";
+import { normalizeIncludedItems } from "../../services/boxEducation.js";
+import {
+  deriveClinicOperationalStatus,
+  summarizeMetricTrend,
+} from "../../services/clinicStatus.js";
+import {
+  highestOpenOperationalAlertSeverity,
+  listOpenOperationalAlerts,
+  syncOperationalAlertsForPatient,
+  syncOperationalAlertsForPatients,
+} from "../../services/operationalAlerts.js";
 import { generatePlan } from "../../services/plan/generatePlan.js";
 
 export const clinicRouter = Router();
@@ -73,6 +85,8 @@ clinicRouter.get("/batches", async (req: Request, res: Response) => {
       id: true,
       clinicTag: true,
       quantity: true,
+      boxType: true,
+      includedItemsJson: true,
       createdAt: true,
       createdByUserId: true,
     },
@@ -142,6 +156,8 @@ clinicRouter.get("/batches", async (req: Request, res: Response) => {
 
     return {
       ...b,
+      boxType: b.boxType ?? null,
+      includedItems: Array.isArray(b.includedItemsJson) ? b.includedItemsJson : [],
       codeCounts: {
         total,
         unused,
@@ -175,6 +191,16 @@ function makeActivationCode(): string {
 const CreateBatchSchema = z.object({
   clinicTag: z.string().min(2).max(64),
   quantity: z.number().int().min(1).max(5000),
+  boxType: z.string().trim().min(1).max(120).optional(),
+  includedItems: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1).max(64).optional(),
+        label: z.string().trim().min(1).max(120),
+      })
+    )
+    .max(100)
+    .optional(),
 });
 
 const PlanConfigSchema = z.object({
@@ -210,7 +236,7 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
     return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
   }
 
-  const { clinicTag, quantity } = parsed.data;
+  const { clinicTag, quantity, boxType, includedItems } = parsed.data;
 
   // SECURITY FIX: Enforce that CLINIC users can only create batches for themselves
   if (userRole === UserRole.CLINIC) {
@@ -238,7 +264,16 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
       });
 
       const createdBatch = await tx.activationBatch.create({
-        data: { id: crypto.randomUUID(), clinicTag, quantity, createdByUserId: userId },
+        data: {
+          id: crypto.randomUUID(),
+          clinicTag,
+          quantity,
+          boxType,
+          includedItemsJson: includedItems
+            ? (includedItems as unknown as Prisma.InputJsonValue)
+            : undefined,
+          createdByUserId: userId,
+        },
       });
 
       let insertedTotal = 0;
@@ -272,7 +307,13 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
     AuditService.log({
       req, category: AuditCategory.ADMIN, type: "BATCH_CREATED",
       userId, role: userRole, clinicTag,
-      status: AuditStatus.SUCCESS, metadata: { batchId: batch.id, quantity }
+      status: AuditStatus.SUCCESS,
+      metadata: {
+        batchId: batch.id,
+        quantity,
+        boxType: boxType ?? null,
+        includedItemCount: includedItems?.length ?? 0,
+      }
     });
 
     return res.status(201).json({
@@ -280,6 +321,8 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
         id: batch.id,
         clinicTag: batch.clinicTag ?? null,
         quantity: batch.quantity,
+        boxType: batch.boxType ?? null,
+        includedItems: Array.isArray(batch.includedItemsJson) ? batch.includedItemsJson : [],
         createdAt: batch.createdAt,
       },
     });
@@ -298,7 +341,13 @@ clinicRouter.get("/batches/:id/codes", async (req: Request, res: Response) => {
 
   const batch = await prisma.activationBatch.findUnique({
     where: { id: batchId },
-    select: { id: true, quantity: true, clinicTag: true },
+    select: {
+      id: true,
+      quantity: true,
+      clinicTag: true,
+      boxType: true,
+      includedItemsJson: true,
+    },
   });
 
   if (!batch) return res.status(404).json({ code: "NOT_FOUND" });
@@ -323,7 +372,17 @@ clinicRouter.get("/batches/:id/codes", async (req: Request, res: Response) => {
     take: batch.quantity,
   });
 
-  return res.status(200).json({ batchId, codes });
+  return res.status(200).json({
+    batchId,
+    batch: {
+      id: batch.id,
+      clinicTag: batch.clinicTag ?? null,
+      quantity: batch.quantity,
+      boxType: batch.boxType ?? null,
+      includedItems: Array.isArray(batch.includedItemsJson) ? batch.includedItemsJson : [],
+    },
+    codes,
+  });
 });
 
 /**
@@ -521,10 +580,21 @@ clinicRouter.post("/activation/:code/approve", async (req: Request, res: Respons
     where: { id: activation.id },
     data: {
       status: ActivationCodeStatus.APPROVED,
-      // planSnapshot field not in schema yet, assuming strictly logical lock for now
-      // If you added it to schema, add: planSnapshot: planJson as Prisma.InputJsonValue
+      approvedConfigSnapshot:
+        activation.configJson === null
+          ? Prisma.JsonNull
+          : (activation.configJson as Prisma.InputJsonValue),
+      planSnapshot: planJson as Prisma.InputJsonValue,
+      approvedAt: new Date(),
+      approvedByUserId: actorId,
     },
     select: { code: true, status: true },
+  });
+
+  AuditService.log({
+    req, category: AuditCategory.PLAN, type: "ACTIVATION_APPROVED",
+    userId: actorId, role: actorRole, clinicTag: requesterTag,
+    targetId: code, targetType: "ActivationCode", status: AuditStatus.SUCCESS,
   });
 
   return res.status(200).json({ ok: true, activation: updated });
@@ -563,16 +633,256 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
     orderBy: { claimedAt: 'desc' }
   });
 
+  const patientIds = patients
+    .map((patient) => patient.claimedByUser?.id)
+    .filter((id): id is string => Boolean(id));
+
+  try {
+    await syncOperationalAlertsForPatients(patientIds, requesterTag);
+  } catch (error) {
+    console.error("Operational alert refresh failed for clinic roster", error);
+  }
+
+  const recentLogs = patientIds.length
+    ? await prisma.logEntry.findMany({
+        where: {
+          userId: { in: patientIds },
+        },
+        orderBy: [{ userId: "asc" }, { date: "desc" }],
+        select: {
+          userId: true,
+          date: true,
+          painLevel: true,
+          swellingLevel: true,
+          details: true,
+        },
+      })
+    : [];
+
+  const openAlerts = await listOpenOperationalAlerts({
+    patientUserIds: patientIds,
+    clinicTag: requesterTag,
+  });
+
+  const openAlertsByPatientUserId = new Map<
+    string,
+    Awaited<ReturnType<typeof listOpenOperationalAlerts>>
+  >();
+
+  for (const alert of openAlerts) {
+    const existing = openAlertsByPatientUserId.get(alert.patientUserId) ?? [];
+    existing.push(alert);
+    openAlertsByPatientUserId.set(alert.patientUserId, existing);
+  }
+
+  const recentLogsByUserId = new Map<
+    string,
+    Array<{
+      date: string;
+      painLevel: number;
+      swellingLevel: number;
+      details: Prisma.JsonValue | null;
+    }>
+  >();
+
+  for (const logEntry of recentLogs) {
+    const existing = recentLogsByUserId.get(logEntry.userId) ?? [];
+
+    if (existing.length < 3) {
+      existing.push(logEntry);
+      recentLogsByUserId.set(logEntry.userId, existing);
+    }
+  }
+
   const flatPatients = patients.map(p => {
+    const patientId = p.claimedByUser?.id;
     const latestPlan = p.claimedByUser?.recoveryPlans?.[0];
+    const patientRecentLogs = patientId ? recentLogsByUserId.get(patientId) ?? [] : [];
+    const latestLog = patientRecentLogs[0];
+    const patientAlerts = patientId ? openAlertsByPatientUserId.get(patientId) ?? [] : [];
+    const status = deriveClinicOperationalStatus({
+      recoveryStartDate: latestPlan?.startDate ?? null,
+      recentLogs: patientRecentLogs,
+    });
+
     return {
+      patientId: patientId ?? null,
+      displayName: p.claimedByUser?.email ?? null,
+      activationCode: p.code,
+      recoveryStartDate: latestPlan?.startDate ?? null,
+      currentRecoveryDay: status.currentRecoveryDay,
+      simpleStatus: status.simpleStatus,
+      statusReasons: status.reasons,
+      lastCheckInDate: latestLog?.date ?? null,
+      lastPainLevel: latestLog?.painLevel ?? null,
+      lastSwellingLevel: latestLog?.swellingLevel ?? null,
+      unresolvedAlertCount: patientAlerts.length,
+      highestOpenAlertSeverity: highestOpenOperationalAlertSeverity(patientAlerts),
       id: p.claimedByUser?.id,
       email: p.claimedByUser?.email,
       code: p.code,
       joinedAt: p.claimedAt,
-      startDate: latestPlan?.startDate
+      startDate: latestPlan?.startDate,
     };
   });
 
+  AuditService.log({
+    req,
+    category: AuditCategory.LOG,
+    type: "CLINIC_PATIENT_ROSTER_VIEWED",
+    userId: req.user!.id,
+    role: req.user!.role,
+    clinicTag: requesterTag,
+    status: AuditStatus.SUCCESS,
+    metadata: { count: flatPatients.length },
+  });
+
   return res.status(200).json({ patients: flatPatients });
+});
+
+/**
+ * GET /clinic/patients/:patientId/summary
+ */
+clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Response) => {
+  const requesterTag = req.user?.clinicTag ?? null;
+  const patientId = String(req.params.patientId ?? "").trim();
+
+  if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
+  if (!patientId) return res.status(400).json({ code: "VALIDATION_ERROR" });
+
+  const activation = await prisma.activationCode.findFirst({
+    where: {
+      clinicTag: requesterTag,
+      claimedByUserId: patientId,
+      status: ActivationCodeStatus.CLAIMED,
+    },
+    orderBy: { claimedAt: "desc" },
+    select: {
+      id: true,
+      code: true,
+      status: true,
+      clinicTag: true,
+      claimedAt: true,
+      batch: {
+        select: {
+          id: true,
+          boxType: true,
+          includedItemsJson: true,
+        },
+      },
+      claimedByUser: {
+        select: {
+          id: true,
+          email: true,
+        },
+      },
+    },
+  });
+
+  if (!activation || !activation.claimedByUser) {
+    return res.status(404).json({ code: "NOT_FOUND" });
+  }
+
+  const latestPlan = await prisma.recoveryPlanInstance.findFirst({
+    where: { userId: patientId },
+    orderBy: { createdAt: "desc" },
+    select: {
+      startDate: true,
+    },
+  });
+
+  try {
+    await syncOperationalAlertsForPatient(patientId, requesterTag);
+  } catch (error) {
+    console.error("Operational alert refresh failed for clinic patient summary", error);
+  }
+
+  const recentEntries = (await listEntries(patientId)).slice(-7).reverse();
+  const painTrend = summarizeMetricTrend(
+    recentEntries.map((entry) => entry.painLevel).reverse()
+  );
+  const swellingTrend = summarizeMetricTrend(
+    recentEntries.map((entry) => entry.swellingLevel).reverse()
+  );
+
+  const status = deriveClinicOperationalStatus({
+    recoveryStartDate: latestPlan?.startDate ?? null,
+    recentLogs: recentEntries.slice(0, 3).map((entry) => ({
+      date: entry.date,
+      painLevel: entry.painLevel,
+      swellingLevel: entry.swellingLevel,
+      details: entry.details,
+    })),
+  });
+
+  const includedItems = normalizeIncludedItems(activation.batch?.includedItemsJson);
+  const openAlerts = await listOpenOperationalAlerts({
+    patientUserId: patientId,
+    clinicTag: requesterTag,
+  });
+
+  AuditService.log({
+    req,
+    category: AuditCategory.LOG,
+    type: "CLINIC_PATIENT_SUMMARY_VIEWED",
+    userId: req.user!.id,
+    role: req.user!.role,
+    clinicTag: requesterTag,
+    patientUserId: patientId,
+    targetId: patientId,
+    targetType: "User",
+    status: AuditStatus.SUCCESS,
+  });
+
+  return res.status(200).json({
+    patient: {
+      patientId: activation.claimedByUser.id,
+      displayName: activation.claimedByUser.email,
+      email: activation.claimedByUser.email,
+    },
+    activation: {
+      activationCode: activation.code,
+      status: activation.status,
+      claimedAt: activation.claimedAt,
+      clinicTag: activation.clinicTag ?? null,
+    },
+    recovery: {
+      recoveryStartDate: latestPlan?.startDate ?? null,
+      currentRecoveryDay: status.currentRecoveryDay,
+      simpleStatus: status.simpleStatus,
+      statusReasons: status.reasons,
+    },
+    latestCheckIn: recentEntries[0]
+      ? {
+          date: recentEntries[0].date,
+          painLevel: recentEntries[0].painLevel,
+          swellingLevel: recentEntries[0].swellingLevel,
+          notes: recentEntries[0].notes ?? null,
+        }
+      : null,
+    recentCheckIns: recentEntries.map((entry) => ({
+      date: entry.date,
+      painLevel: entry.painLevel,
+      swellingLevel: entry.swellingLevel,
+      notes: entry.notes ?? null,
+    })),
+    recentPainTrend: painTrend,
+    recentSwellingTrend: swellingTrend,
+    myBox: activation.batch
+      ? {
+          batchId: activation.batch.id,
+          boxType: activation.batch.boxType ?? null,
+          includedItems,
+        }
+      : null,
+    openAlerts: openAlerts.map((alert) => ({
+      id: alert.id,
+      type: alert.type,
+      severity: alert.severity,
+      status: alert.status,
+      reasons: alert.reasons,
+      triggeredAt: alert.triggeredAt,
+      resolvedAt: alert.resolvedAt,
+    })),
+  });
 });

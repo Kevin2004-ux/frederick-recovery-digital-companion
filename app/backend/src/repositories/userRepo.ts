@@ -1,5 +1,5 @@
 // app/backend/src/repositories/userRepo.ts
-import { prisma } from "../prisma/client.js";
+import { prisma } from "../db/prisma.js";
 import { UserRole } from "@prisma/client"; 
 
 export type UserRecord = {

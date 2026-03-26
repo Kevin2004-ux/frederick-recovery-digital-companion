@@ -9,6 +9,15 @@ const isDev = process.env.NODE_ENV === "development";
 
 const resend = apiKey ? new Resend(apiKey) : null;
 
+function getDefaultAppUrl(): string {
+  const configuredOrigins = (process.env.FRONTEND_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return configuredOrigins[0] ?? "http://localhost:5173";
+}
+
 export async function sendVerificationEmail(params: {
   to: string;
   code: string;
@@ -79,5 +88,49 @@ export async function sendPasswordResetEmail(params: { to: string; token: string
     console.log(`[FRDC] Password reset email sent.`);
   } catch (err) {
     console.error("[FRDC] Mailer Exception");
+  }
+}
+
+export async function sendDailyCheckInReminderEmail(params: {
+  to: string;
+  appUrl?: string;
+}) {
+  const to = params.to.trim().toLowerCase();
+  const appUrl = params.appUrl?.trim() || getDefaultAppUrl();
+  const subject = "Frederick Recovery: complete today's check-in";
+  const html = `
+    <div style="font-family: sans-serif; line-height: 1.5;">
+      <h2>Today's symptom check-in</h2>
+      <p>Please sign in to Frederick Recovery and complete today's symptom check-in.</p>
+      <p><a href="${appUrl}">Open Frederick Recovery</a></p>
+    </div>
+  `;
+
+  if (!resend || !from) {
+    console.log(`\n=================================================`);
+    console.log(`[FRDC-TESTING] Mailer bypassed.`);
+    console.log(`[FRDC-TESTING] DAILY CHECK-IN REMINDER FOR ${to}: ${appUrl}`);
+    console.log(`=================================================\n`);
+    return { ok: true, providerMessageId: null };
+  }
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from,
+      to,
+      subject,
+      html,
+    });
+
+    if (error) {
+      console.error("[FRDC] Resend API Error (Daily Reminder)");
+      return { ok: false, providerMessageId: null };
+    }
+
+    console.log(`[FRDC] Daily reminder email sent. ID: ${data?.id}`);
+    return { ok: true, providerMessageId: data?.id ?? null };
+  } catch (err) {
+    console.error("[FRDC] Mailer Exception (Daily Reminder)");
+    return { ok: false, providerMessageId: null };
   }
 }
