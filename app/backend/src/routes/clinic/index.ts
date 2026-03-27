@@ -53,6 +53,29 @@ function getEffectiveClinicTag(req: Request): string | null {
   return null;
 }
 
+function resolveClinicRecoveryStartDate(args: {
+  planStartDate?: string | null;
+  profileRecoveryStartDate?: string | null;
+}): string | null {
+  return args.planStartDate ?? args.profileRecoveryStartDate ?? null;
+}
+
+function buildTopOpenAlertPreview(
+  alerts: Awaited<ReturnType<typeof listOpenOperationalAlerts>>
+) {
+  const topAlert = alerts[0];
+  if (!topAlert) return null;
+
+  const primaryReason = getPrimaryClinicStatusReason(topAlert.reasons);
+
+  return {
+    severity: topAlert.severity,
+    type: topAlert.type,
+    summary: formatClinicStatusReasonLabel(primaryReason) ?? topAlert.type,
+    lastTriggeredAt: topAlert.triggeredAt,
+  };
+}
+
 /**
  * GET /clinic/batches
  * List recent activation batches.
@@ -624,6 +647,7 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
         select: {
           id: true,
           email: true,
+          recoveryStartDate: true,
           recoveryPlans: {
             take: 1,
             orderBy: { createdAt: 'desc' },
@@ -699,11 +723,15 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
   const flatPatients = patients.map(p => {
     const patientId = p.claimedByUser?.id;
     const latestPlan = p.claimedByUser?.recoveryPlans?.[0];
+    const recoveryStartDate = resolveClinicRecoveryStartDate({
+      planStartDate: latestPlan?.startDate ?? null,
+      profileRecoveryStartDate: p.claimedByUser?.recoveryStartDate ?? null,
+    });
     const patientRecentLogs = patientId ? recentLogsByUserId.get(patientId) ?? [] : [];
     const latestLog = patientRecentLogs[0];
     const patientAlerts = patientId ? openAlertsByPatientUserId.get(patientId) ?? [] : [];
     const status = deriveClinicOperationalStatus({
-      recoveryStartDate: latestPlan?.startDate ?? null,
+      recoveryStartDate,
       recentLogs: patientRecentLogs,
     });
     const primaryStatusReason = getPrimaryClinicStatusReason(status.reasons);
@@ -712,7 +740,7 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
       patientId: patientId ?? null,
       displayName: p.claimedByUser?.email ?? null,
       activationCode: p.code,
-      recoveryStartDate: latestPlan?.startDate ?? null,
+      recoveryStartDate,
       currentRecoveryDay: status.currentRecoveryDay,
       simpleStatus: status.simpleStatus,
       statusReasons: status.reasons,
@@ -724,6 +752,7 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
       hasRecentCheckIn: Boolean(latestLog),
       unresolvedAlertCount: patientAlerts.length,
       highestOpenAlertSeverity: highestOpenOperationalAlertSeverity(patientAlerts),
+      topOpenAlert: buildTopOpenAlertPreview(patientAlerts),
       id: p.claimedByUser?.id,
       email: p.claimedByUser?.email,
       code: p.code,
@@ -780,6 +809,7 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
         select: {
           id: true,
           email: true,
+          recoveryStartDate: true,
         },
       },
     },
@@ -795,6 +825,10 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
     select: {
       startDate: true,
     },
+  });
+  const recoveryStartDate = resolveClinicRecoveryStartDate({
+    planStartDate: latestPlan?.startDate ?? null,
+    profileRecoveryStartDate: activation.claimedByUser.recoveryStartDate ?? null,
   });
 
   try {
@@ -812,7 +846,7 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
   );
 
   const status = deriveClinicOperationalStatus({
-    recoveryStartDate: latestPlan?.startDate ?? null,
+    recoveryStartDate,
     recentLogs: recentEntries.slice(0, 3).map((entry) => ({
       date: entry.date,
       painLevel: entry.painLevel,
@@ -853,7 +887,7 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
       clinicTag: activation.clinicTag ?? null,
     },
     recovery: {
-      recoveryStartDate: latestPlan?.startDate ?? null,
+      recoveryStartDate,
       currentRecoveryDay: status.currentRecoveryDay,
       simpleStatus: status.simpleStatus,
       statusReasons: status.reasons,
