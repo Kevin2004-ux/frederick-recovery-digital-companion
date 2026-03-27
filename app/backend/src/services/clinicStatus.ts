@@ -19,6 +19,32 @@ export type ClinicStatusLogSignal = {
   details?: unknown;
 };
 
+const CLINIC_STATUS_REASON_LABELS: Record<ClinicStatusReason, string> = {
+  early_recovery_no_check_in_yet: "No check-in yet - still early in recovery",
+  missed_recent_check_in: "Check-in overdue",
+  missing_recovery_start_date: "Missing recovery start date",
+  invalid_last_check_in_date: "Invalid last check-in date",
+  pain_threshold_exceeded: "High pain reported",
+  swelling_threshold_exceeded: "High swelling reported",
+  critical_red_flag_logged: "Red-flag symptom logged",
+  worsening_recent_trend: "Symptoms worsening",
+  recent_check_in_present: "Recent check-in received",
+  future_recovery_start_date: "Recovery start date is in the future",
+};
+
+const CLINIC_STATUS_REASON_PRIORITY: ClinicStatusReason[] = [
+  "critical_red_flag_logged",
+  "worsening_recent_trend",
+  "pain_threshold_exceeded",
+  "swelling_threshold_exceeded",
+  "missing_recovery_start_date",
+  "invalid_last_check_in_date",
+  "missed_recent_check_in",
+  "future_recovery_start_date",
+  "early_recovery_no_check_in_yet",
+  "recent_check_in_present",
+];
+
 function parseUtcDateFromYmd(ymd: string | null | undefined): Date | null {
   if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
 
@@ -35,6 +61,34 @@ function todayUtcDate(): Date {
 
 function diffDaysUtc(later: Date, earlier: Date): number {
   return Math.floor((later.getTime() - earlier.getTime()) / 86400000);
+}
+
+function formatFallbackReasonLabel(reason: string): string {
+  return reason
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function getPrimaryClinicStatusReason(
+  reasons: readonly ClinicStatusReason[]
+): ClinicStatusReason | null {
+  const uniqueReasons = new Set(reasons);
+
+  for (const reason of CLINIC_STATUS_REASON_PRIORITY) {
+    if (uniqueReasons.has(reason)) {
+      return reason;
+    }
+  }
+
+  return reasons[0] ?? null;
+}
+
+export function formatClinicStatusReasonLabel(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+
+  return CLINIC_STATUS_REASON_LABELS[reason as ClinicStatusReason] ?? formatFallbackReasonLabel(reason);
 }
 
 export function extractRedFlags(details: unknown): string[] {

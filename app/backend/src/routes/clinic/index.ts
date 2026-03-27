@@ -15,6 +15,8 @@ import { listEntries } from "../../repositories/logRepo.js";
 import { normalizeIncludedItems } from "../../services/boxEducation.js";
 import {
   deriveClinicOperationalStatus,
+  formatClinicStatusReasonLabel,
+  getPrimaryClinicStatusReason,
   summarizeMetricTrend,
 } from "../../services/clinicStatus.js";
 import {
@@ -704,6 +706,7 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
       recoveryStartDate: latestPlan?.startDate ?? null,
       recentLogs: patientRecentLogs,
     });
+    const primaryStatusReason = getPrimaryClinicStatusReason(status.reasons);
 
     return {
       patientId: patientId ?? null,
@@ -713,9 +716,12 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
       currentRecoveryDay: status.currentRecoveryDay,
       simpleStatus: status.simpleStatus,
       statusReasons: status.reasons,
+      primaryStatusReason,
+      primaryStatusReasonLabel: formatClinicStatusReasonLabel(primaryStatusReason),
       lastCheckInDate: latestLog?.date ?? null,
       lastPainLevel: latestLog?.painLevel ?? null,
       lastSwellingLevel: latestLog?.swellingLevel ?? null,
+      hasRecentCheckIn: Boolean(latestLog),
       unresolvedAlertCount: patientAlerts.length,
       highestOpenAlertSeverity: highestOpenOperationalAlertSeverity(patientAlerts),
       id: p.claimedByUser?.id,
@@ -858,6 +864,7 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
           painLevel: recentEntries[0].painLevel,
           swellingLevel: recentEntries[0].swellingLevel,
           notes: recentEntries[0].notes ?? null,
+          details: recentEntries[0].details ?? null,
         }
       : null,
     recentCheckIns: recentEntries.map((entry) => ({
@@ -865,6 +872,7 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
       painLevel: entry.painLevel,
       swellingLevel: entry.swellingLevel,
       notes: entry.notes ?? null,
+      details: entry.details ?? null,
     })),
     recentPainTrend: painTrend,
     recentSwellingTrend: swellingTrend,
