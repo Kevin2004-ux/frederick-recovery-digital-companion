@@ -71,7 +71,10 @@ function buildTopOpenAlertPreview(
   return {
     severity: topAlert.severity,
     type: topAlert.type,
-    summary: formatClinicStatusReasonLabel(primaryReason) ?? topAlert.type,
+    summary:
+      topAlert.summary ??
+      formatClinicStatusReasonLabel(primaryReason) ??
+      topAlert.type,
     lastTriggeredAt: topAlert.triggeredAt,
   };
 }
@@ -923,6 +926,7 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
       severity: alert.severity,
       status: alert.status,
       reasons: alert.reasons,
+      summary: alert.summary,
       triggeredAt: alert.triggeredAt,
       resolvedAt: alert.resolvedAt,
     })),

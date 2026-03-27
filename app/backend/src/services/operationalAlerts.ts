@@ -11,6 +11,8 @@ import {
   ClinicStatusLogSignal,
   deriveClinicOperationalStatus,
   extractRedFlags,
+  formatClinicStatusReasonLabel,
+  getPrimaryClinicStatusReason,
 } from "./clinicStatus.js";
 
 type AlertContext = {
@@ -29,6 +31,7 @@ export type OperationalAlertSummary = {
   severity: OperationalAlertSeverity;
   status: OperationalAlertStatus;
   reasons: ClinicStatusReason[];
+  summary: string | null;
   triggeredAt: Date;
   resolvedAt: Date | null;
 };
@@ -72,6 +75,18 @@ function buildDedupeKey(
   return `operational:${clinicTag}:${patientUserId}:${type}`;
 }
 
+function resolveOperationalRecoveryStartDate(args: {
+  planStartDate?: string | null;
+  profileRecoveryStartDate?: string | null;
+}): string | null {
+  return args.planStartDate ?? args.profileRecoveryStartDate ?? null;
+}
+
+function buildAlertSummary(reasons: readonly ClinicStatusReason[]): string | null {
+  const primaryReason = getPrimaryClinicStatusReason(reasons);
+  return formatClinicStatusReasonLabel(primaryReason);
+}
+
 function summarizeAlertSeverity(
   alerts: Array<{ severity: OperationalAlertSeverity }>
 ): OperationalAlertSeverity | null {
@@ -96,6 +111,11 @@ async function loadAlertContext(args: {
     select: {
       id: true,
       clinicTag: true,
+      claimedByUser: {
+        select: {
+          recoveryStartDate: true,
+        },
+      },
     },
   });
 
@@ -126,7 +146,10 @@ async function loadAlertContext(args: {
     patientUserId: args.patientUserId,
     clinicTag: activation.clinicTag,
     activationCodeId: activation.id,
-    recoveryStartDate: latestPlan?.startDate ?? null,
+    recoveryStartDate: resolveOperationalRecoveryStartDate({
+      planStartDate: latestPlan?.startDate ?? null,
+      profileRecoveryStartDate: activation.claimedByUser?.recoveryStartDate ?? null,
+    }),
     recentLogs,
   };
 }
@@ -141,8 +164,12 @@ function buildDesiredAlert(context: AlertContext) {
     extractRedFlags(log.details)
   );
   const urgentRedFlags = getUrgentRedFlags(recentRedFlags);
+  const hasOnlySetupMissingDate =
+    context.recentLogs.length === 0 &&
+    status.reasons.length === 1 &&
+    status.reasons[0] === "missing_recovery_start_date";
 
-  if (status.simpleStatus === "ON_TRACK") {
+  if (status.simpleStatus === "ON_TRACK" || hasOnlySetupMissingDate) {
     return null;
   }
 
@@ -161,6 +188,7 @@ function buildDesiredAlert(context: AlertContext) {
     severity,
     dedupeKey: buildDedupeKey(context.clinicTag, context.patientUserId, type),
     reasons: status.reasons,
+    summary: buildAlertSummary(status.reasons),
     details: {
       currentRecoveryDay: status.currentRecoveryDay,
       recoveryStartDate: context.recoveryStartDate,
@@ -169,6 +197,7 @@ function buildDesiredAlert(context: AlertContext) {
       latestSwellingLevel: context.recentLogs[0]?.swellingLevel ?? null,
       recentRedFlags,
       urgentRedFlags,
+      summary: buildAlertSummary(status.reasons),
     },
   };
 }
@@ -307,6 +336,7 @@ export async function listOpenOperationalAlerts(args: {
     severity: alert.severity,
     status: alert.status,
     reasons: parseReasonArray(alert.reasonsJson),
+    summary: buildAlertSummary(parseReasonArray(alert.reasonsJson)),
     triggeredAt: alert.triggeredAt,
     resolvedAt: alert.resolvedAt,
   })) satisfies OperationalAlertSummary[];
