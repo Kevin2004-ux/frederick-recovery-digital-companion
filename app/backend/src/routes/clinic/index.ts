@@ -10,9 +10,15 @@ import {
 import { prisma } from "../../db/prisma.js";
 import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";
+import {
+  AuditService,
+  AuditCategory,
+  AuditStatus,
+  AuditSeverity,
+} from "../../services/AuditService.js";
 import { listEntries } from "../../repositories/logRepo.js";
 import { normalizeIncludedItems } from "../../services/boxEducation.js";
+import { PdfService } from "../../services/export/PdfService.js";
 import {
   deriveClinicOperationalStatus,
   formatClinicStatusReasonLabel,
@@ -776,6 +782,74 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
   });
 
   return res.status(200).json({ patients: flatPatients });
+});
+
+/**
+ * GET /clinic/patients/:patientId/export.pdf
+ */
+clinicRouter.get("/patients/:patientId/export.pdf", async (req: Request, res: Response) => {
+  const requesterTag = req.user?.clinicTag ?? null;
+  const patientId = String(req.params.patientId ?? "").trim();
+
+  if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
+  if (!patientId) return res.status(400).json({ code: "VALIDATION_ERROR" });
+
+  const activation = await prisma.activationCode.findFirst({
+    where: {
+      clinicTag: requesterTag,
+      claimedByUserId: patientId,
+      status: ActivationCodeStatus.CLAIMED,
+    },
+    orderBy: { claimedAt: "desc" },
+    select: {
+      code: true,
+      claimedByUser: {
+        select: {
+          email: true,
+        },
+      },
+    },
+  });
+
+  if (!activation || !activation.claimedByUser) {
+    return res.status(404).json({ code: "NOT_FOUND" });
+  }
+
+  try {
+    const entries = await listEntries(patientId);
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.LOG,
+      type: "CLINIC_PATIENT_PHI_EXPORTED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: requesterTag,
+      patientUserId: patientId,
+      targetId: patientId,
+      targetType: "User",
+      metadata: {
+        format: "PDF",
+        count: entries.length,
+        activationCode: activation.code,
+      },
+      severity: AuditSeverity.CRITICAL,
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'attachment; filename="recovery-log.pdf"');
+
+    await PdfService.streamLogReport(entries, res, activation.claimedByUser.email);
+  } catch (error) {
+    console.error("Clinic PDF export blocked due to audit failure", error);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        code: "AUDIT_FAILURE",
+        message: "Security audit failed. Export blocked.",
+      });
+    }
+  }
 });
 
 /**
