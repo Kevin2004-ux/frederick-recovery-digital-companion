@@ -27,7 +27,8 @@ type NormalizedEntryPresentation = {
   mobility: string;
   incision: string;
   redFlags: string;
-  notes: string;
+  notesFull: string;
+  observationsFull: string;
 };
 
 const DETAIL_BUCKETS: DetailBucket[] = [
@@ -154,7 +155,10 @@ function summarizeDetails(details: unknown) {
 
 function buildEntryPresentation(entry: LogEntryData): NormalizedEntryPresentation {
   const detailSummary = summarizeDetails(entry.details);
-  const notesParts = [entry.notes?.trim() ?? "", detailSummary.followUp, detailSummary.unmatched].filter(Boolean);
+  const notesFull = entry.notes?.trim() || "--";
+  const observationsFull = [detailSummary.followUp, detailSummary.unmatched]
+    .filter(Boolean)
+    .join(" | ");
 
   return {
     date: entry.date,
@@ -164,7 +168,8 @@ function buildEntryPresentation(entry: LogEntryData): NormalizedEntryPresentatio
     mobility: truncateText(detailSummary.mobility || "--", 30),
     incision: truncateText(detailSummary.incision || "--", 40),
     redFlags: truncateText(detailSummary.redFlags || "--", 38),
-    notes: truncateText(notesParts.join(" | ") || "--", 70),
+    notesFull,
+    observationsFull,
   };
 }
 
@@ -211,6 +216,76 @@ function drawSummaryCard(
       .font("Helvetica")
       .fontSize(8)
       .text(subtitle, x + 10, y + 40, { width: width - 20 });
+  }
+}
+
+function ensureVerticalSpace(doc: any, requiredHeight: number) {
+  const pageBottom = doc.page.height - doc.page.margins.bottom;
+  if (doc.y + requiredHeight > pageBottom) {
+    doc.addPage();
+  }
+}
+
+function drawNotesSection(doc: any, entries: NormalizedEntryPresentation[]) {
+  const notedEntries = entries.filter(
+    (entry) =>
+      (entry.notesFull && entry.notesFull !== "--") ||
+      Boolean(entry.observationsFull)
+  );
+
+  if (notedEntries.length === 0) return;
+
+  ensureVerticalSpace(doc, 48);
+  doc.moveDown(1.2);
+  doc
+    .fillColor("#16324F")
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .text("Notes & Observations", 32, doc.y);
+
+  doc.moveDown(0.5);
+
+  for (const entry of notedEntries) {
+    const notesText = entry.notesFull && entry.notesFull !== "--" ? entry.notesFull : null;
+    const observationsText = entry.observationsFull || null;
+    const combinedText = [notesText, observationsText]
+      .filter(Boolean)
+      .join("\nObservations: ");
+    const contentText = notesText && observationsText
+      ? `${notesText}\nObservations: ${observationsText}`
+      : notesText ?? `Observations: ${observationsText}`;
+    const blockHeight =
+      28 +
+      doc.heightOfString(contentText, {
+        width: 730,
+        align: "left",
+      });
+
+    ensureVerticalSpace(doc, blockHeight + 12);
+
+    const blockTop = doc.y;
+    doc
+      .save()
+      .roundedRect(32, blockTop, 730, blockHeight, 8)
+      .fillAndStroke("#FAFCFE", "#D7E3F0")
+      .restore();
+
+    doc
+      .fillColor("#5B6B7A")
+      .font("Helvetica-Bold")
+      .fontSize(8)
+      .text(`ENTRY ${entry.date}`, 44, blockTop + 10);
+
+    doc
+      .fillColor("#1F2933")
+      .font("Helvetica")
+      .fontSize(9)
+      .text(contentText, 44, blockTop + 24, {
+        width: 706,
+        align: "left",
+      });
+
+    doc.y = blockTop + blockHeight + 12;
   }
 }
 
@@ -296,7 +371,6 @@ export const PdfService = {
         { label: "Mobility", property: "mobility", width: 82 },
         { label: "Incision / Wound", property: "incision", width: 108 },
         { label: "Red Flags", property: "redFlags", width: 96 },
-        { label: "Notes", property: "notes", width: 174 },
       ],
       datas:
         normalizedEntries.length > 0
@@ -310,7 +384,8 @@ export const PdfService = {
                 mobility: "--",
                 incision: "--",
                 redFlags: "--",
-                notes: "No recovery logs recorded yet",
+                notesFull: "--",
+                observationsFull: "",
               },
             ],
     };
@@ -329,6 +404,8 @@ export const PdfService = {
         horizontal: { disabled: false, width: 0.25, color: "#E2E8F0" },
       },
     });
+
+    drawNotesSection(doc, normalizedEntries);
 
     doc.end();
   },
