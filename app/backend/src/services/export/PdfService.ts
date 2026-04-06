@@ -14,29 +14,74 @@ type FlattenedDetail = {
   value: string;
 };
 
-function toReadableLabel(path: string): string {
-  return path
-    .split(".")
+type DetailBucket = {
+  key: "meds" | "mobility" | "incision" | "redFlags" | "followUp";
+  matcher: RegExp;
+};
+
+type NormalizedEntryPresentation = {
+  date: string;
+  pain: string;
+  swelling: string;
+  meds: string;
+  mobility: string;
+  incision: string;
+  redFlags: string;
+  notes: string;
+};
+
+const DETAIL_BUCKETS: DetailBucket[] = [
+  {
+    key: "meds",
+    matcher:
+      /(medication.?adherence|medications?.?(taken|used)?|took.?medication|took.?meds|missed.?dose|skipped?.?dose|side.?effects?|adverse.?effects?)/i,
+  },
+  {
+    key: "mobility",
+    matcher: /mobility|activity|walking|ambulation|weight.?bearing|stairs|exercise/i,
+  },
+  {
+    key: "incision",
+    matcher: /wound|incision|dressing|sutures?|staples?|healing|drainage|drain|fever|temperature|odor|smell/i,
+  },
+  {
+    key: "followUp",
+    matcher: /follow.?up/i,
+  },
+  {
+    key: "redFlags",
+    matcher: /red.?flags?|warning.?signs?|urgent.?symptoms?|chest.?pain|short.?ness.?of.?breath|heavy.?bleeding|fever.?over.?101|face.?drooping|speech.?difficulty|confusion/i,
+  },
+];
+
+function toReadableLabel(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
     .filter(Boolean)
-    .map((segment) =>
-      segment
-        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-        .replace(/[_-]+/g, " ")
-        .trim()
-    )
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 }
 
 function formatPrimitiveValue(value: unknown): string | null {
   if (value === null || value === undefined) return null;
+
   if (typeof value === "string") {
     const trimmed = value.trim();
-    return trimmed || null;
+    return trimmed ? toReadableLabel(trimmed) : null;
   }
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
-  if (typeof value === "boolean") return value ? "Yes" : "No";
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : null;
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+
   return null;
 }
 
@@ -47,12 +92,12 @@ function flattenDetails(value: unknown, prefix = ""): FlattenedDetail[] {
   }
 
   if (Array.isArray(value)) {
-    const formattedValues = value
+    const primitiveValues = value
       .map((item) => formatPrimitiveValue(item))
       .filter((item): item is string => Boolean(item));
 
-    if (formattedValues.length > 0) {
-      return prefix ? [{ path: prefix, value: formattedValues.join(", ") }] : [];
+    if (primitiveValues.length > 0) {
+      return prefix ? [{ path: prefix, value: primitiveValues.join(", ") }] : [];
     }
 
     return value.flatMap((item, index) =>
@@ -67,83 +112,106 @@ function flattenDetails(value: unknown, prefix = ""): FlattenedDetail[] {
   );
 }
 
-type DetailBucket = {
-  label: string;
-  matcher: RegExp;
-};
-
-const DETAIL_BUCKETS: DetailBucket[] = [
-  {
-    label: "Medication adherence / medications taken",
-    matcher: /(medication.?adherence|medications?.?(taken|used)?|took.?medication|took.?meds)/i,
-  },
-  {
-    label: "Missed doses",
-    matcher: /missed.?dose|skipped?.?dose/i,
-  },
-  {
-    label: "Side effects",
-    matcher: /side.?effects?|adverse.?effects?/i,
-  },
-  {
-    label: "Mobility / activity status",
-    matcher: /mobility|activity|walking|ambulation|weight.?bearing|stairs|exercise/i,
-  },
-  {
-    label: "Wound / incision status",
-    matcher: /wound|incision|dressing|sutures?|staples?|healing/i,
-  },
-  {
-    label: "Drainage / fever indicators",
-    matcher: /drainage|drain|fever|temperature|odor|smell/i,
-  },
-  {
-    label: "Follow-up requested",
-    matcher: /follow.?up/i,
-  },
-  {
-    label: "Red-flag symptoms",
-    matcher: /red.?flags?|warning.?signs?|urgent.?symptoms?/i,
-  },
-];
-
-function addBucketValue(
-  bucketValues: Map<string, string[]>,
-  label: string,
-  value: string
-) {
-  const existing = bucketValues.get(label) ?? [];
-  if (!existing.includes(value)) existing.push(value);
-  bucketValues.set(label, existing);
+function joinUnique(values: string[]): string {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).join("; ");
 }
 
-function formatDetailsSummary(details: unknown): string {
-  const flattened = flattenDetails(details);
-  if (flattened.length === 0) return "--";
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
 
-  const bucketValues = new Map<string, string[]>();
-  const unmatched: string[] = [];
+function summarizeDetails(details: unknown) {
+  const flattened = flattenDetails(details);
+  const bucketed = {
+    meds: [] as string[],
+    mobility: [] as string[],
+    incision: [] as string[],
+    redFlags: [] as string[],
+    followUp: [] as string[],
+    unmatched: [] as string[],
+  };
 
   for (const entry of flattened) {
-    const bucket = DETAIL_BUCKETS.find((candidate) => candidate.matcher.test(entry.path));
-    if (bucket) {
-      addBucketValue(bucketValues, bucket.label, entry.value);
+    const matchedBucket = DETAIL_BUCKETS.find((bucket) => bucket.matcher.test(entry.path));
+    if (matchedBucket) {
+      bucketed[matchedBucket.key].push(entry.value);
       continue;
     }
 
-    unmatched.push(`${toReadableLabel(entry.path)}: ${entry.value}`);
+    bucketed.unmatched.push(`${toReadableLabel(entry.path)}: ${entry.value}`);
   }
 
-  const lines = DETAIL_BUCKETS.flatMap((bucket) => {
-    const values = bucketValues.get(bucket.label);
-    return values && values.length > 0
-      ? [`${bucket.label}: ${values.join("; ")}`]
-      : [];
-  });
+  return {
+    meds: joinUnique(bucketed.meds),
+    mobility: joinUnique(bucketed.mobility),
+    incision: joinUnique(bucketed.incision),
+    redFlags: joinUnique(bucketed.redFlags),
+    followUp: joinUnique(bucketed.followUp),
+    unmatched: joinUnique(bucketed.unmatched),
+  };
+}
 
-  if (lines.length === 0 && unmatched.length === 0) return "--";
+function buildEntryPresentation(entry: LogEntryData): NormalizedEntryPresentation {
+  const detailSummary = summarizeDetails(entry.details);
+  const notesParts = [entry.notes?.trim() ?? "", detailSummary.followUp, detailSummary.unmatched].filter(Boolean);
 
-  return [...lines, ...unmatched.slice(0, 4)].join("\n");
+  return {
+    date: entry.date,
+    pain: String(entry.painLevel),
+    swelling: String(entry.swellingLevel),
+    meds: truncateText(detailSummary.meds || "--", 36),
+    mobility: truncateText(detailSummary.mobility || "--", 30),
+    incision: truncateText(detailSummary.incision || "--", 40),
+    redFlags: truncateText(detailSummary.redFlags || "--", 38),
+    notes: truncateText(notesParts.join(" | ") || "--", 70),
+  };
+}
+
+function average(values: number[]): string {
+  if (values.length === 0) return "--";
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return (total / values.length).toFixed(1);
+}
+
+function countEntriesWithText(values: string[]): number {
+  return values.filter((value) => value && value !== "--").length;
+}
+
+function drawSummaryCard(
+  doc: any,
+  x: number,
+  y: number,
+  width: number,
+  title: string,
+  value: string,
+  subtitle?: string
+) {
+  doc
+    .save()
+    .roundedRect(x, y, width, 54, 8)
+    .fillAndStroke("#F7FAFC", "#D7E3F0")
+    .restore();
+
+  doc
+    .fillColor("#5B6B7A")
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .text(title.toUpperCase(), x + 10, y + 9, { width: width - 20 });
+
+  doc
+    .fillColor("#16324F")
+    .font("Helvetica-Bold")
+    .fontSize(16)
+    .text(value, x + 10, y + 22, { width: width - 20 });
+
+  if (subtitle) {
+    doc
+      .fillColor("#6E7C8A")
+      .font("Helvetica")
+      .fontSize(8)
+      .text(subtitle, x + 10, y + 40, { width: width - 20 });
+  }
 }
 
 export const PdfService = {
@@ -151,49 +219,115 @@ export const PdfService = {
    * Generates a PDF stream of patient logs and pipes it to the response.
    */
   async streamLogReport(entries: LogEntryData[], res: Response, userEmail: string) {
-    // Cast to 'any' to bypass strict type checking for this specific library
-    // which has known issues with its type definitions.
-    const doc = new PDFDocument({ margin: 40, size: "A4" }) as any;
+    const doc = new PDFDocument({ margin: 32, size: "A4", layout: "landscape" }) as any;
+    const today = new Date().toISOString().split("T")[0];
+    const normalizedEntries = entries.map(buildEntryPresentation);
+    const firstDate = entries[0]?.date ?? "--";
+    const lastDate = entries[entries.length - 1]?.date ?? "--";
+    const latestEntry = entries[entries.length - 1];
 
-    // Pipe directly to the response so the user downloads it immediately
     doc.pipe(res);
 
-    // Header
     doc
-      .fontSize(18)
-      .text("Frederick Recovery - Patient Log Report", { align: "center" });
-    
-    doc.moveDown();
-    doc
-      .fontSize(10)
-      .text(`Generated for: ${userEmail}`)
-      .text(`Date: ${new Date().toISOString().split("T")[0]}`);
-    
-    doc.moveDown(2);
+      .save()
+      .rect(0, 0, doc.page.width, 86)
+      .fill("#16324F")
+      .restore();
 
-    // Table Data
+    doc
+      .fillColor("#FFFFFF")
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .text("Frederick Recovery", 32, 24)
+      .fontSize(12)
+      .text("Recovery Log Summary", 32, 48);
+
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor("#D7E3F0")
+      .text(`Patient: ${userEmail}`, 540, 24, { width: 240, align: "right" })
+      .text(`Generated: ${today}`, 540, 38, { width: 240, align: "right" })
+      .text(`Entries: ${entries.length}`, 540, 52, { width: 240, align: "right" });
+
+    doc
+      .fillColor("#16324F")
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .text("Clinical Snapshot", 32, 108);
+
+    const cardY = 126;
+    const cardWidth = 170;
+    drawSummaryCard(doc, 32, cardY, cardWidth, "Date range", `${firstDate} to ${lastDate}`);
+    drawSummaryCard(doc, 220, cardY, cardWidth, "Average pain", average(entries.map((entry) => entry.painLevel)));
+    drawSummaryCard(
+      doc,
+      408,
+      cardY,
+      cardWidth,
+      "Average swelling",
+      average(entries.map((entry) => entry.swellingLevel))
+    );
+    drawSummaryCard(
+      doc,
+      596,
+      cardY,
+      cardWidth,
+      "Red-flag entries",
+      String(countEntriesWithText(normalizedEntries.map((entry) => entry.redFlags))),
+      latestEntry ? `Latest entry: ${latestEntry.date}` : "No entries yet"
+    );
+
+    doc
+      .fillColor("#16324F")
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .text("Recovery History", 32, 205);
+
     const table = {
-      title: "Daily Recovery Logs",
+      x: 32,
+      y: 220,
+      title: "",
       headers: [
-        { label: "Date", property: "date", width: 70 },
-        { label: "Pain", property: "pain", width: 40 },
-        { label: "Swelling", property: "swelling", width: 55 },
-        { label: "Notes", property: "notes", width: 165 },
-        { label: "Details", property: "details", width: 145 },
+        { label: "Date", property: "date", width: 66 },
+        { label: "Pain", property: "pain", width: 38 },
+        { label: "Swelling", property: "swelling", width: 52 },
+        { label: "Meds", property: "meds", width: 92 },
+        { label: "Mobility", property: "mobility", width: 82 },
+        { label: "Incision / Wound", property: "incision", width: 108 },
+        { label: "Red Flags", property: "redFlags", width: 96 },
+        { label: "Notes", property: "notes", width: 174 },
       ],
-      datas: entries.map((e) => ({
-        date: e.date,
-        pain: e.painLevel.toString(),
-        swelling: e.swellingLevel.toString(),
-        notes: e.notes || "--",
-        details: formatDetailsSummary(e.details),
-      })),
+      datas:
+        normalizedEntries.length > 0
+          ? normalizedEntries
+          : [
+              {
+                date: "--",
+                pain: "--",
+                swelling: "--",
+                meds: "--",
+                mobility: "--",
+                incision: "--",
+                redFlags: "--",
+                notes: "No recovery logs recorded yet",
+              },
+            ],
     };
 
-    // Draw Table
     await doc.table(table, {
-      prepareHeader: () => doc.font("Helvetica-Bold").fontSize(10),
-      prepareRow: () => doc.font("Helvetica").fontSize(10),
+      prepareHeader: () =>
+        doc.fillColor("#16324F").font("Helvetica-Bold").fontSize(9),
+      prepareRow: (_row: unknown, indexColumn: number, indexRow: number) => {
+        doc
+          .font("Helvetica")
+          .fontSize(8)
+          .fillColor(indexColumn === 6 && normalizedEntries[indexRow]?.redFlags !== "--" ? "#A61B1B" : "#1F2933");
+      },
+      divider: {
+        header: { disabled: false, width: 0.5, color: "#C8D6E5" },
+        horizontal: { disabled: false, width: 0.25, color: "#E2E8F0" },
+      },
     });
 
     doc.end();
