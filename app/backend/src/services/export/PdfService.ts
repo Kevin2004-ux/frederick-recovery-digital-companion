@@ -27,6 +27,7 @@ type NormalizedEntryPresentation = {
   mobility: string;
   incision: string;
   redFlags: string;
+  hasRedFlags: boolean;
   notesFull: string;
   observationsFull: string;
 };
@@ -159,15 +160,17 @@ function buildEntryPresentation(entry: LogEntryData): NormalizedEntryPresentatio
   const observationsFull = [detailSummary.followUp, detailSummary.unmatched]
     .filter(Boolean)
     .join(" | ");
+  const hasRedFlags = Boolean(detailSummary.redFlags);
 
   return {
     date: entry.date,
     pain: String(entry.painLevel),
     swelling: String(entry.swellingLevel),
-    meds: truncateText(detailSummary.meds || "--", 36),
+    meds: truncateText(detailSummary.meds || "Not logged", 36),
     mobility: truncateText(detailSummary.mobility || "--", 30),
     incision: truncateText(detailSummary.incision || "--", 40),
-    redFlags: truncateText(detailSummary.redFlags || "--", 38),
+    redFlags: detailSummary.redFlags || "None logged",
+    hasRedFlags,
     notesFull,
     observationsFull,
   };
@@ -179,8 +182,8 @@ function average(values: number[]): string {
   return (total / values.length).toFixed(1);
 }
 
-function countEntriesWithText(values: string[]): number {
-  return values.filter((value) => value && value !== "--").length;
+function countEntriesWithText(values: boolean[]): number {
+  return values.filter(Boolean).length;
 }
 
 function drawSummaryCard(
@@ -310,12 +313,28 @@ export const PdfService = {
       .restore();
 
     doc
+      .save()
+      .rect(0, 82, doc.page.width, 4)
+      .fill("#0F766E")
+      .restore();
+
+    doc
+      .save()
+      .roundedRect(32, 18, 124, 20, 10)
+      .fill("#0F766E")
+      .restore();
+
+    doc
+      .fillColor("#FFFFFF")
+      .font("Helvetica-Bold")
+      .fontSize(8)
+      .text("CLINICAL SUMMARY", 32, 24, { width: 124, align: "center" })
       .fillColor("#FFFFFF")
       .font("Helvetica-Bold")
       .fontSize(20)
-      .text("Frederick Recovery", 32, 24)
+      .text("Frederick Recovery", 32, 44)
       .fontSize(12)
-      .text("Recovery Log Summary", 32, 48);
+      .text("Recovery Log Summary", 32, 66);
 
     doc
       .font("Helvetica")
@@ -349,7 +368,7 @@ export const PdfService = {
       cardY,
       cardWidth,
       "Red-flag entries",
-      String(countEntriesWithText(normalizedEntries.map((entry) => entry.redFlags))),
+      String(countEntriesWithText(normalizedEntries.map((entry) => entry.hasRedFlags))),
       latestEntry ? `Latest entry: ${latestEntry.date}` : "No entries yet"
     );
 
@@ -380,10 +399,11 @@ export const PdfService = {
                 date: "--",
                 pain: "--",
                 swelling: "--",
-                meds: "--",
+                meds: "Not logged",
                 mobility: "--",
                 incision: "--",
-                redFlags: "--",
+                redFlags: "None logged",
+                hasRedFlags: false,
                 notesFull: "--",
                 observationsFull: "",
               },
@@ -397,7 +417,7 @@ export const PdfService = {
         doc
           .font("Helvetica")
           .fontSize(8)
-          .fillColor(indexColumn === 6 && normalizedEntries[indexRow]?.redFlags !== "--" ? "#A61B1B" : "#1F2933");
+          .fillColor(indexColumn === 6 && normalizedEntries[indexRow]?.hasRedFlags ? "#A61B1B" : "#1F2933");
       },
       divider: {
         header: { disabled: false, width: 0.5, color: "#C8D6E5" },
