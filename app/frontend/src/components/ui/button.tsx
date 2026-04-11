@@ -1,31 +1,21 @@
-import * as React from "react";
-import { Slot } from "@radix-ui/react-slot";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-import { cn } from "@/lib/utils";
-import {
-  buttonVariants,
-  type ButtonVariantProps,
-} from "./button-variants.ts";
+import { cn } from "@/lib/cn";
 
-export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    ButtonVariantProps {
-  asChild?: boolean;
+type Variant = "primary" | "secondary" | "ghost" | "danger";
+
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: Variant;
+  children: ReactNode;
 }
 
-export const Button = React.forwardRef<
-  HTMLButtonElement,
-  ButtonProps
->(({ className, variant, size, asChild = false, ...props }, ref) => {
-  const Comp = asChild ? Slot : "button";
+const variants: Record<Variant, string> = {
+  primary: "button-primary",
+  secondary: "button-secondary",
+  ghost: "button-ghost",
+  danger: "button-base bg-red-600 text-white hover:bg-red-700",
+};
 
-  return (
-    <Comp
-      ref={ref}
-      className={cn(buttonVariants({ variant, size, className }))}
-      {...props}
-    />
-  );
-});
-
-Button.displayName = "Button";
+export function Button({ className, variant = "primary", type = "button", ...props }: ButtonProps) {
+  return <button className={cn(variants[variant], className)} type={type} {...props} />;
+}

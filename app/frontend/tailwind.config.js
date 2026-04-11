@@ -17,6 +17,18 @@ export default {
   			sm: 'calc(var(--radius) - 4px)'
   		},
   		colors: {
+        brand: {
+          50: "#e8f7f9",
+          100: "#c8edf2",
+          200: "#99dde7",
+          300: "#66c4d0",
+          400: "#3ea8ba",
+          500: "#2387a0",
+          600: "#1e6f86",
+          700: "#1b5a6c",
+          800: "#194c5a",
+          900: "#183f4a"
+        },
   			border: 'hsl(var(--border))',
   			input: 'hsl(var(--input))',
   			ring: 'hsl(var(--ring))',

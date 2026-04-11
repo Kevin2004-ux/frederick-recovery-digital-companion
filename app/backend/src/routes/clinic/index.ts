@@ -638,16 +638,24 @@ clinicRouter.post("/activation/:code/approve", async (req: Request, res: Respons
  * GET /clinic/patients
  */
 clinicRouter.get("/patients", async (req: Request, res: Response) => {
-  const requesterTag = req.user?.clinicTag ?? null;
-  
-  if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
+  const requester = req.user!;
+  const requestedOwnerClinicTag =
+    typeof req.query.clinicTag === "string" ? req.query.clinicTag.trim() : "";
+  const requesterTag =
+    requester.role === UserRole.CLINIC
+      ? requester.clinicTag ?? null
+      : requestedOwnerClinicTag || null;
+
+  if (requester.role === UserRole.CLINIC && !requesterTag) {
+    return res.status(403).json({ code: "FORBIDDEN" });
+  }
 
   // Find all codes claimed by this clinic that have a user attached
   const patients = await prisma.activationCode.findMany({
     where: {
-      clinicTag: requesterTag,
       status: ActivationCodeStatus.CLAIMED,
-      claimedByUserId: { not: null }
+      claimedByUserId: { not: null },
+      ...(requesterTag ? { clinicTag: requesterTag } : {}),
     },
     select: {
       code: true,
@@ -673,7 +681,7 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
     .filter((id): id is string => Boolean(id));
 
   try {
-    await syncOperationalAlertsForPatients(patientIds, requesterTag);
+    await syncOperationalAlertsForPatients(patientIds, requesterTag ?? undefined);
   } catch (error) {
     console.error("Operational alert refresh failed for clinic roster", error);
   }
@@ -696,7 +704,7 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
 
   const openAlerts = await listOpenOperationalAlerts({
     patientUserIds: patientIds,
-    clinicTag: requesterTag,
+    ...(requesterTag ? { clinicTag: requesterTag } : {}),
   });
 
   const openAlertsByPatientUserId = new Map<
@@ -788,21 +796,25 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
  * GET /clinic/patients/:patientId/export.pdf
  */
 clinicRouter.get("/patients/:patientId/export.pdf", async (req: Request, res: Response) => {
-  const requesterTag = req.user?.clinicTag ?? null;
+  const requester = req.user!;
+  const requesterTag = requester.clinicTag ?? null;
   const patientId = String(req.params.patientId ?? "").trim();
 
-  if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
+  if (requester.role === UserRole.CLINIC && !requesterTag) {
+    return res.status(403).json({ code: "FORBIDDEN" });
+  }
   if (!patientId) return res.status(400).json({ code: "VALIDATION_ERROR" });
 
   const activation = await prisma.activationCode.findFirst({
     where: {
-      clinicTag: requesterTag,
       claimedByUserId: patientId,
       status: ActivationCodeStatus.CLAIMED,
+      ...(requester.role === UserRole.CLINIC ? { clinicTag: requesterTag } : {}),
     },
     orderBy: { claimedAt: "desc" },
     select: {
       code: true,
+      clinicTag: true,
       claimedByUser: {
         select: {
           email: true,
@@ -825,7 +837,7 @@ clinicRouter.get("/patients/:patientId/export.pdf", async (req: Request, res: Re
       status: AuditStatus.SUCCESS,
       userId: req.user!.id,
       role: req.user!.role,
-      clinicTag: requesterTag,
+      clinicTag: activation.clinicTag ?? requesterTag,
       patientUserId: patientId,
       targetId: patientId,
       targetType: "User",
@@ -856,17 +868,20 @@ clinicRouter.get("/patients/:patientId/export.pdf", async (req: Request, res: Re
  * GET /clinic/patients/:patientId/summary
  */
 clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Response) => {
-  const requesterTag = req.user?.clinicTag ?? null;
+  const requester = req.user!;
+  const requesterTag = requester.clinicTag ?? null;
   const patientId = String(req.params.patientId ?? "").trim();
 
-  if (!requesterTag) return res.status(403).json({ code: "FORBIDDEN" });
+  if (requester.role === UserRole.CLINIC && !requesterTag) {
+    return res.status(403).json({ code: "FORBIDDEN" });
+  }
   if (!patientId) return res.status(400).json({ code: "VALIDATION_ERROR" });
 
   const activation = await prisma.activationCode.findFirst({
     where: {
-      clinicTag: requesterTag,
       claimedByUserId: patientId,
       status: ActivationCodeStatus.CLAIMED,
+      ...(requester.role === UserRole.CLINIC ? { clinicTag: requesterTag } : {}),
     },
     orderBy: { claimedAt: "desc" },
     select: {
@@ -909,7 +924,7 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
   });
 
   try {
-    await syncOperationalAlertsForPatient(patientId, requesterTag);
+    await syncOperationalAlertsForPatient(patientId, requesterTag ?? undefined);
   } catch (error) {
     console.error("Operational alert refresh failed for clinic patient summary", error);
   }
@@ -935,7 +950,7 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
   const includedItems = normalizeIncludedItems(activation.batch?.includedItemsJson);
   const openAlerts = await listOpenOperationalAlerts({
     patientUserId: patientId,
-    clinicTag: requesterTag,
+    ...(requesterTag ? { clinicTag: requesterTag } : {}),
   });
 
   AuditService.log({
@@ -944,7 +959,7 @@ clinicRouter.get("/patients/:patientId/summary", async (req: Request, res: Respo
     type: "CLINIC_PATIENT_SUMMARY_VIEWED",
     userId: req.user!.id,
     role: req.user!.role,
-    clinicTag: requesterTag,
+    clinicTag: activation.clinicTag ?? requesterTag,
     patientUserId: patientId,
     targetId: patientId,
     targetType: "User",
