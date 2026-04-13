@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -132,21 +131,21 @@ export function WeekLogPicker(props: {
   const windowLabel = useMemo(() => {
     const a = minDate.toLocaleDateString(undefined, { month: "short", day: "numeric" });
     const b = maxDate.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    return `Showing last ${windowDays} days • ${a} – ${b}`;
+    return `Last ${windowDays} days • ${a} – ${b}`;
   }, [minDate, maxDate, windowDays]);
 
   return (
-    <Card className="rounded-2xl p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
+    <div className="rounded-[24px] bg-stone-50/80 p-3 sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
-          <div className="text-sm text-muted-foreground">{rangeLabel}</div>
+          <div className="text-sm font-medium text-foreground">{rangeLabel}</div>
           <div className="text-xs text-muted-foreground">{windowLabel}</div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 self-start sm:self-auto">
           <Button
-            variant="outline"
-            className="rounded-xl"
+            variant="ghost"
+            className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-white"
             onClick={goPrevWeek}
             disabled={!canPrev}
             aria-label="Previous week"
@@ -154,8 +153,8 @@ export function WeekLogPicker(props: {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <Button
-            variant="outline"
-            className="rounded-xl"
+            variant="ghost"
+            className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-white"
             onClick={goNextWeek}
             disabled={!canNext}
             aria-label="Next week"
@@ -165,7 +164,7 @@ export function WeekLogPicker(props: {
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-7 gap-2">
+      <div className="mt-4 grid grid-cols-7 gap-1.5 sm:gap-2">
         {days.map((d) => {
           const isSelected = d.date === ymd(selected);
           return (
@@ -175,21 +174,26 @@ export function WeekLogPicker(props: {
               disabled={!d.inWindow}
               onClick={() => onSelectDate(d.date)}
               className={[
-                "rounded-2xl border px-2 py-3 text-center transition",
-                "disabled:opacity-40 disabled:cursor-not-allowed",
-                "hover:bg-muted/40",
-                isSelected ? "border-primary/60 bg-muted/30" : "",
+                "rounded-[18px] px-1.5 py-2.5 text-center transition-colors sm:rounded-[20px] sm:px-2 sm:py-3",
+                "disabled:cursor-not-allowed disabled:opacity-100",
+                "hover:bg-white/80",
+                d.inWindow ? "bg-white/70 text-foreground" : "bg-transparent text-muted-foreground/35",
+                isSelected ? "bg-emerald-50 ring-1 ring-emerald-200" : "",
               ].join(" ")}
             >
-              <div className="text-[11px] text-muted-foreground">{d.dayName}</div>
-              <div className="mt-1 text-base font-semibold">{d.dayNum}</div>
-              <div className="mt-2 flex justify-center">
-                {d.hasEntry ? <span className="h-2 w-2 rounded-full bg-primary" /> : <span className="h-2 w-2 rounded-full bg-transparent border" />}
+              <div className="text-[10px] text-muted-foreground sm:text-[11px]">{d.dayName}</div>
+              <div className="mt-1 text-sm font-semibold sm:text-base">{d.dayNum}</div>
+              <div className="mt-1.5 flex justify-center sm:mt-2">
+                {d.hasEntry ? (
+                  <span className="h-2 w-2 rounded-full bg-emerald-600" />
+                ) : (
+                  <span className="h-2 w-2 rounded-full border border-black/10 bg-transparent" />
+                )}
               </div>
             </button>
           );
         })}
       </div>
-    </Card>
+    </div>
   );
 }

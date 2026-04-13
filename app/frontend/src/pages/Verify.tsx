@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "@/api/client";
 
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
@@ -60,7 +59,7 @@ export default function Verify() {
       });
 
       if (res) {
-        setInfo("Verification code resent. Check your email (dev: backend console).");
+        setInfo("A new code has been sent to your email.");
       }
     } catch (e) {
       setError(formatError(e));
@@ -70,90 +69,111 @@ export default function Verify() {
   }
 
   return (
-    <Card className="rounded-2xl p-6 shadow-sm">
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold">Verify your email</h2>
-        <p className="text-sm text-muted-foreground">
-          Enter the 6-digit code we sent. (Dev mode: it prints in the backend console.)
-        </p>
-      </div>
-
-      <div className="mt-6 space-y-4">
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Email</label>
-          <Input
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-          />
+    <section className="mx-auto flex min-h-[calc(100vh-11rem)] w-full max-w-sm flex-col justify-center py-2 sm:min-h-[calc(100vh-12rem)] sm:py-4">
+      <div className="space-y-6 sm:space-y-8">
+        <div className="space-y-3">
+          <div className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium tracking-[0.08em] text-emerald-800">
+            Email verification
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-[1.75rem] font-semibold tracking-tight text-slate-950 sm:text-3xl">
+              Verify your email
+            </h2>
+            <p className="text-sm leading-6 text-slate-500">
+              Enter the code sent to your email to continue.
+            </p>
+          </div>
         </div>
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Verification code</label>
-          <Input
-            inputMode="numeric"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="123456"
-          />
-        </div>
+        <div className="space-y-5 rounded-[28px] bg-white px-4 py-5 shadow-[0_10px_30px_rgba(15,23,42,0.04)] ring-1 ring-black/5 sm:px-6 sm:py-6">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700">Email</label>
+            <Input
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="h-12 rounded-2xl border-slate-200 bg-[#fcfbf8] px-4 text-[15px] shadow-none focus-visible:ring-emerald-700"
+            />
+          </div>
 
-        {error ? (
-          <Alert className="rounded-xl">
-            <div className="text-sm">{error}</div>
-          </Alert>
-        ) : null}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700">Verification code</label>
+            <Input
+              inputMode="numeric"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="123456"
+              className="h-12 rounded-2xl border-slate-200 bg-[#fcfbf8] px-4 text-[15px] shadow-none focus-visible:ring-emerald-700"
+            />
+          </div>
 
-        {info ? (
-          <Alert className="rounded-xl">
-            <div className="text-sm">{info}</div>
-          </Alert>
-        ) : null}
+          {error ? (
+            <Alert className="rounded-2xl border-red-200 bg-red-50 text-red-950 shadow-none">
+              <div className="text-sm">{error}</div>
+            </Alert>
+          ) : null}
 
-        <div className="flex flex-col gap-3">
-          <Button className="w-full rounded-xl" onClick={onVerify} disabled={!canVerify}>
+          {info ? (
+            <Alert className="rounded-2xl border-emerald-200 bg-emerald-50 text-emerald-950 shadow-none">
+              <div className="text-sm">{info}</div>
+            </Alert>
+          ) : null}
+
+          <Button
+            className="h-12 w-full rounded-2xl bg-emerald-700 text-white shadow-none hover:bg-emerald-800 disabled:bg-stone-200 disabled:text-stone-500 disabled:opacity-100"
+            onClick={onVerify}
+            disabled={!canVerify}
+          >
             {loading === "verify" ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Verifying…
+                Verifying code…
               </>
             ) : (
-              "Verify"
+              "Continue"
             )}
           </Button>
 
-          <Button
-            variant="outline"
-            className="w-full rounded-xl"
-            onClick={onResend}
-            disabled={loading !== null || email.trim().length < 4}
-          >
-            {loading === "resend" ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Resending…
-              </>
-            ) : (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Resend code
-              </>
-            )}
-          </Button>
+          {!canVerify && loading === null ? (
+            <p className="text-center text-xs text-slate-500">
+              Enter your email and code to continue.
+            </p>
+          ) : null}
 
-          <Button
-            variant="ghost"
-            className="w-full rounded-xl"
-            onClick={() => navigate("/signup")}
-            disabled={loading !== null}
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to create account
-          </Button>
+          <div className="flex flex-col gap-3 border-t border-slate-100 pt-4">
+            <Button
+              variant="outline"
+              className="h-11 w-full rounded-2xl border-slate-200 bg-[#fcfbf8] text-slate-700 shadow-none hover:bg-stone-100"
+              onClick={onResend}
+              disabled={loading !== null || email.trim().length < 4}
+            >
+              {loading === "resend" ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Resending…
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Resend code
+                </>
+              )}
+            </Button>
+
+            <button
+              type="button"
+              onClick={() => navigate("/signup")}
+              disabled={loading !== null}
+              className="inline-flex items-center justify-start gap-2 text-sm font-medium text-emerald-800 transition hover:text-emerald-900 disabled:opacity-50"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to account setup
+            </button>
+          </div>
         </div>
       </div>
-    </Card>
+    </section>
   );
 }

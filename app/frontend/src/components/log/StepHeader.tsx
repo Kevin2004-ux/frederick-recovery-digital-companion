@@ -11,14 +11,20 @@ type Props = {
 export function StepHeader({ step, total, title, onCancel }: Props) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <div className="space-y-1">
-        <div className="text-xs text-muted-foreground">
+      <div className="space-y-2">
+        <div className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/80">
           Step {step} of {total}
         </div>
-        <h2 className="text-xl font-semibold">{title}</h2>
+        <h2 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+          {title}
+        </h2>
       </div>
 
-      <Button variant="outline" className="rounded-xl" onClick={onCancel}>
+      <Button
+        variant="ghost"
+        className="h-9 rounded-full px-3 text-muted-foreground"
+        onClick={onCancel}
+      >
         <X className="mr-2 h-4 w-4" />
         Close
       </Button>
