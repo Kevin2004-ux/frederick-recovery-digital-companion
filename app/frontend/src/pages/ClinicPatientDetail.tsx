@@ -237,7 +237,7 @@ export default function ClinicPatientDetail() {
   const insetClass = "rounded-[22px] border border-black/5 bg-stone-50/75 p-4";
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-5 sm:space-y-6">
+    <div className="mx-auto w-full max-w-[92rem] space-y-5 sm:space-y-6">
       <header className="space-y-3.5">
         <Button
           type="button"

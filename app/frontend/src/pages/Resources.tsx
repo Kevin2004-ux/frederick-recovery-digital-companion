@@ -48,6 +48,20 @@ const RESOURCES: ResourceTopic[] = [
     icon: ShieldCheck,
   },
   {
+    id: "eob",
+    section: "coverage-billing",
+    title: "Understanding Your Explanation of Benefits",
+    summary: "An explanation of benefits is not the same thing as a bill, but it can help you compare what was processed.",
+    bullets: [
+      "Look for the date of service and provider name",
+      "Check what the insurer says was covered or adjusted",
+      "Compare it with any bill you receive later",
+    ],
+    detail:
+      "If an explanation of benefits seems confusing, call your insurer’s member services line and ask them to explain the patient responsibility amount in plain language before you pay anything you do not understand.",
+    icon: ShieldCheck,
+  },
+  {
     id: "billing-questions",
     section: "coverage-billing",
     title: "Billing Questions to Ask",
@@ -90,6 +104,20 @@ const RESOURCES: ResourceTopic[] = [
     icon: ClipboardList,
   },
   {
+    id: "billing-office",
+    section: "coverage-billing",
+    title: "When to Call the Billing Office",
+    summary: "Your hospital or clinic billing office can often explain charges, timing, and who owns the next step.",
+    bullets: [
+      "Ask which office handles the charge",
+      "Confirm whether insurance was already billed",
+      "Request the best number for follow-up if needed",
+    ],
+    detail:
+      "If a statement seems unfamiliar, start with the hospital or clinic billing office listed on the paperwork. They can often clarify whether the charge is still being processed or if it needs insurer follow-up.",
+    icon: ReceiptText,
+  },
+  {
     id: "transportation",
     section: "support-assistance",
     title: "Transportation Support",
@@ -100,7 +128,7 @@ const RESOURCES: ResourceTopic[] = [
       "Confirm transportation needs before appointments",
     ],
     detail:
-      "Transportation needs can change during recovery. It helps to plan a few backup options in case mobility, timing, or appointment changes make travel harder than expected.",
+      "Transportation needs can change during recovery. It helps to plan a few backup options in case mobility, timing, or appointment changes make travel harder than expected. If your plan includes transportation benefits, your insurer’s transportation benefit hotline or member services line may be able to explain what is available.",
     icon: Bus,
   },
   {
@@ -114,8 +142,22 @@ const RESOURCES: ResourceTopic[] = [
       "Verify eligibility and required documents",
     ],
     detail:
-      "Program availability varies and may depend on your location, provider, or insurance. Contact the organization directly for the most accurate information.",
+      "Program availability varies and may depend on your location, provider, or insurance. Contact the organization directly for the most accurate information, and ask your clinic whether they work with any local financial counselors or assistance programs.",
     icon: HandCoins,
+  },
+  {
+    id: "patient-advocates",
+    section: "support-assistance",
+    title: "Patient Advocate Resources",
+    summary: "Patient advocacy groups may help you organize questions about bills, access, or next steps.",
+    bullets: [
+      "Write down the issue before you call",
+      "Keep claim numbers and service dates nearby",
+      "Ask what documentation would help your case",
+    ],
+    detail:
+      "Groups such as the Patient Advocate Foundation may offer general guidance for navigating billing or access concerns. Local hospital social work teams or patient relations staff may also be helpful depending on your situation.",
+    icon: Users,
   },
   {
     id: "caregiver-planning",
@@ -130,6 +172,20 @@ const RESOURCES: ResourceTopic[] = [
     detail:
       "Even short-term help can make recovery smoother. A written plan can reduce stress for both you and the people supporting you at home.",
     icon: Users,
+  },
+  {
+    id: "leave-planning",
+    section: "support-assistance",
+    title: "Employer and Leave Planning Basics",
+    summary: "Work-related planning can feel easier when you gather paperwork early and keep updates organized.",
+    bullets: [
+      "Ask what documentation your employer needs",
+      "Track deadlines for leave or return-to-work forms",
+      "Keep copies of forms and contact names",
+    ],
+    detail:
+      "Your clinic may be able to help with medical documentation, but employers and leave administrators often have their own timelines and forms. Ask your employer or leave administrator directly for the exact process that applies to you.",
+    icon: ClipboardList,
   },
   {
     id: "home-preparation",
@@ -168,7 +224,7 @@ export default function Resources() {
   }, [query, section]);
 
   return (
-    <div className="mx-auto w-full space-y-6 sm:space-y-7">
+    <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-7">
       <header className="space-y-4">
         <Button
           type="button"
@@ -234,7 +290,7 @@ export default function Resources() {
         </div>
       </section>
 
-      <section className="space-y-3">
+      <section className="grid gap-3 xl:grid-cols-2">
         {filteredResources.length === 0 ? (
           <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
             <div className="space-y-4">
@@ -326,7 +382,7 @@ export default function Resources() {
               General information only
             </div>
             <p className="text-sm leading-6 text-muted-foreground">
-              These resources are meant for general planning and support. Availability and coverage vary, so contact your clinic, insurer, or provider directly for details that apply to you.
+              These resources are meant for general planning and support only. Availability and coverage vary, so contact your clinic, insurer, hospital billing office, or provider directly for details that apply to you.
             </p>
           </div>
         </div>

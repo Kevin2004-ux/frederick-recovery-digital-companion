@@ -42,6 +42,24 @@ const TOPICS: HubTopic[] = [
     icon: Thermometer,
   },
   {
+    id: "showering-incision",
+    section: "care-guides",
+    title: "How to Shower With an Incision",
+    summary: "Return to showering only when your clinic says it is safe to do so.",
+    detail:
+      "Your care team should guide when showering is appropriate and whether the incision should stay covered. Avoid soaking in tubs, pools, or hot tubs until your clinic says that part of healing is ready.",
+    icon: ShowerHead,
+  },
+  {
+    id: "changing-dressings",
+    section: "care-guides",
+    title: "Changing Dressings Safely",
+    summary: "Use clean hands, clean supplies, and the dressing steps your clinic gave you.",
+    detail:
+      "If you were given dressing instructions, follow those steps closely and change supplies as directed. Contact your clinic if the dressing becomes hard to manage, won’t stay in place, or the wound looks different than expected.",
+    icon: UserRoundCheck,
+  },
+  {
     id: "swelling",
     section: "care-guides",
     title: "Managing Swelling",
@@ -60,6 +78,24 @@ const TOPICS: HubTopic[] = [
     icon: ShowerHead,
   },
   {
+    id: "sleep-rest",
+    section: "care-guides",
+    title: "Sleep and Rest During Recovery",
+    summary: "Give your body time to rest while keeping a steady daily routine when you can.",
+    detail:
+      "Recovery can make sleep feel different for a while. Try to build in regular rest, keep common supplies close by, and use positioning or support pillows only in ways your clinic has recommended.",
+    icon: HeartPulse,
+  },
+  {
+    id: "gentle-movement",
+    section: "care-guides",
+    title: "Returning to Gentle Movement Safely",
+    summary: "Ease back into light movement within the limits from your care team.",
+    detail:
+      "Short walks and gentle movement may be part of recovery, but the right pace depends on your procedure. Follow your clinic’s activity limits and slow down if symptoms worsen or something feels unsafe.",
+    icon: UserRoundCheck,
+  },
+  {
     id: "recovery-basics",
     section: "care-guides",
     title: "Rest, Mobility & Recovery Basics",
@@ -76,6 +112,24 @@ const TOPICS: HubTopic[] = [
     detail:
       "Use the instructions from your clinic or prescription label. If pain control is not working as expected or you are unsure about dosing, contact your clinic before making changes.",
     icon: Pill,
+  },
+  {
+    id: "otc-pain-meds",
+    section: "medication-safety",
+    title: "Safe Use of Over-the-Counter Pain Medication",
+    summary: "Only add over-the-counter medication if it is allowed in your recovery plan.",
+    detail:
+      "Some patients are told they can use over-the-counter pain relievers, while others should avoid certain options. Check with your clinic or pharmacist before combining medicines, especially if you have questions about timing or dosage.",
+    icon: Pill,
+  },
+  {
+    id: "constipation",
+    section: "medication-safety",
+    title: "Managing Constipation From Pain Medication",
+    summary: "Prescription pain medicine can sometimes slow digestion during recovery.",
+    detail:
+      "If constipation becomes a concern, contact your clinic or pharmacist for guidance on safe next steps. Hydration, gentle movement, and following the bowel-care guidance from your care team can also help when appropriate.",
+    icon: Droplets,
   },
   {
     id: "side-effects",
@@ -127,7 +181,7 @@ export default function MedicalHub() {
   }, [query, section]);
 
   return (
-    <div className="mx-auto w-full space-y-6 sm:space-y-7">
+    <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-7">
       <header className="space-y-4">
         <Button
           type="button"
@@ -177,7 +231,7 @@ export default function MedicalHub() {
         </div>
       </section>
 
-      <section className="space-y-3">
+      <section className="grid gap-3 xl:grid-cols-2">
         {filteredTopics.length === 0 ? (
           <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
             <div className="space-y-4">
@@ -259,7 +313,7 @@ export default function MedicalHub() {
               Educational information only
             </div>
             <p className="text-sm leading-6 text-muted-foreground">
-              Use this page as general guidance. Follow the instructions from your clinic, and contact your clinic or urgent care services if you have serious concerns.
+              Use this page as general educational guidance only. Follow the instructions from your clinic for your own recovery, and contact your clinic or urgent care services directly if you have serious concerns.
             </p>
           </div>
         </div>

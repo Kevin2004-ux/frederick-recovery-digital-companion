@@ -30,14 +30,14 @@ function NavigatorBridge() {
 function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-stone-50 text-foreground">
-      <div className="mx-auto flex min-h-screen max-w-md flex-col px-4 py-5 sm:px-5 sm:py-8">
-        <div className="mb-6 sm:mb-8">
+      <div className="flex min-h-screen w-full flex-col px-4 py-5 sm:px-5 sm:py-8 lg:px-8">
+        <div className="mb-6 w-full sm:mb-8">
           <div className="text-xs font-medium tracking-[0.08em] text-stone-500">
             Frederick Recovery
           </div>
         </div>
 
-        <div className="flex-1">{children}</div>
+        <div className="flex-1 w-full">{children}</div>
       </div>
     </div>
   );

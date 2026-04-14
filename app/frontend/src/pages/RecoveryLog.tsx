@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { api } from "@/api/client";
 import { clearToken } from "@/auth/token";
@@ -9,9 +9,10 @@ import DailyCheckInForm, {
   type DailyCheckInFormPayload,
   type RedFlagKey,
 } from "@/components/log/DailyCheckInForm";
-import { QuickCheckIn, type QuickCheckInState } from "@/components/log/QuickCheckIn";
+import type { QuickCheckInState } from "@/components/log/QuickCheckIn";
 import { WeekLogPicker } from "@/components/log/WeekLogPicker";
 import { DayEntrySummary } from "@/components/log/DayEntrySummary";
+import RecoveryTrendsChart from "@/components/log/RecoveryTrendsChart";
 import {
   buildClinicianReportHtml,
   downloadPdfReport,
@@ -254,7 +255,10 @@ function quickPrefillForState(state: QuickCheckInState): DailyCheckInFormInitial
 
 export default function RecoveryLog() {
   const navigate = useNavigate();
+  const location = useLocation();
   const today = todayLocalYYYYMMDD();
+  const quickCheckInState = (location.state as { quickCheckIn?: QuickCheckInState } | null)
+    ?.quickCheckIn;
 
   function onLogout() {
     clearToken();
@@ -276,11 +280,6 @@ export default function RecoveryLog() {
     DailyCheckInFormInitial | undefined
   >(undefined);
 
-  const [todayQuickPrefill, setTodayQuickPrefill] = useState<
-    DailyCheckInFormInitial | undefined
-  >(undefined);
-  const [todayQuickLoadingState, setTodayQuickLoadingState] =
-    useState<QuickCheckInState | null>(null);
   const [formSaving, setFormSaving] = useState(false);
 
   const todayEntry = useMemo(
@@ -311,15 +310,19 @@ export default function RecoveryLog() {
   }, []);
 
   useEffect(() => {
-    if (!todayEntry) return;
-
-    if (activeFormDate === today) {
-      setActiveFormDate(null);
+    if (todayEntry) {
+      setActiveFormDate(today);
+      setActiveFormMode("edit");
+      setActiveFormInitial(initialForEntry(todayEntry));
+      return;
     }
 
-    setTodayQuickPrefill(undefined);
-    setTodayQuickLoadingState(null);
-  }, [activeFormDate, today, todayEntry]);
+    setActiveFormDate(today);
+    setActiveFormMode("create");
+    setActiveFormInitial(
+      quickCheckInState ? quickPrefillForState(quickCheckInState) : undefined
+    );
+  }, [quickCheckInState, today, todayEntry]);
 
   async function saveEntryForDate(
     targetDate: string,
@@ -362,12 +365,8 @@ export default function RecoveryLog() {
   }
 
   function closeActiveForm() {
-    const wasTodayCreate = activeFormDate === today && !todayEntry;
     setActiveFormDate(null);
     setActiveFormInitial(undefined);
-    if (wasTodayCreate) {
-      setTodayQuickPrefill(undefined);
-    }
     if (activeFormDate !== today) {
       setSelectedDate(today);
     }
@@ -380,20 +379,13 @@ export default function RecoveryLog() {
     try {
       await saveEntryForDate(targetDate, activeFormMode, payload);
       setSelectedDate(targetDate);
-      setActiveFormDate(null);
-      setActiveFormInitial(undefined);
-      setTodayQuickPrefill(undefined);
+      if (targetDate !== today) {
+        setActiveFormDate(null);
+        setActiveFormInitial(undefined);
+      }
     } finally {
       setFormSaving(false);
     }
-  }
-
-  async function onTodayQuickLog(state: QuickCheckInState) {
-    setTodayQuickLoadingState(state);
-    const prefill = quickPrefillForState(state);
-    setTodayQuickPrefill(prefill);
-    openFormForDate(today, prefill);
-    setTodayQuickLoadingState(null);
   }
 
   async function onDownloadReport() {
@@ -425,7 +417,7 @@ export default function RecoveryLog() {
   const showingForm = activeFormDate !== null;
 
   return (
-    <div className="space-y-5 sm:space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-5 sm:space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground/80">
@@ -468,47 +460,7 @@ export default function RecoveryLog() {
       </div>
 
       <section className="rounded-[28px] border border-black/5 bg-white/90 p-4 shadow-[0_12px_40px_rgba(15,23,42,0.06)] backdrop-blur sm:p-7">
-        {!showingForm ? (
-          todayEntry ? (
-            <div className="space-y-5">
-              <div className="flex flex-col gap-3 rounded-2xl bg-emerald-50/70 px-4 py-4 text-sm text-emerald-950/80 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0 space-y-1">
-                  <div className="font-medium">{formatLongDate(today)}</div>
-                  <div className="text-xs text-emerald-900/65 sm:text-sm">
-                    Today’s check-in is saved and ready if you need to update it.
-                  </div>
-                </div>
-
-                <Button
-                  variant="ghost"
-                  className="h-9 self-start rounded-full px-4 text-emerald-900 hover:bg-emerald-100 sm:self-auto"
-                  onClick={() => openFormForDate(today)}
-                >
-                  Edit today
-                </Button>
-              </div>
-
-              <DayEntrySummary
-                selectedDate={today}
-                entry={todayEntry}
-                onEdit={() => openFormForDate(today)}
-              />
-            </div>
-          ) : (
-            <QuickCheckIn
-              loadingState={todayQuickLoadingState}
-              onQuickLog={onTodayQuickLog}
-              onGoToFullLog={() => {
-                setTodayQuickPrefill(undefined);
-                openFormForDate(today);
-              }}
-              onDismiss={() => {
-                setTodayQuickPrefill(undefined);
-                openFormForDate(today);
-              }}
-            />
-          )
-        ) : (
+        {showingForm ? (
           <>
             <div className="flex flex-col gap-3 rounded-2xl bg-emerald-50/70 px-4 py-3 text-sm text-emerald-950/80 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <div className="min-w-0">
@@ -537,15 +489,42 @@ export default function RecoveryLog() {
               <DailyCheckInForm
                 mode={activeFormMode}
                 date={activeDate}
-                initial={activeFormInitial ?? todayQuickPrefill}
+                initial={activeFormInitial}
                 saving={formSaving}
                 onSave={handleFormSave}
-                onClose={closeActiveForm}
+                onClose={activeDate !== today ? closeActiveForm : undefined}
               />
             </div>
           </>
-        )}
+        ) : todayEntry ? (
+          <div className="space-y-5">
+            <div className="flex flex-col gap-3 rounded-2xl bg-emerald-50/70 px-4 py-4 text-sm text-emerald-950/80 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="font-medium">{formatLongDate(today)}</div>
+                <div className="text-xs text-emerald-900/65 sm:text-sm">
+                  Today’s check-in is saved and ready if you need to update it.
+                </div>
+              </div>
+
+              <Button
+                variant="ghost"
+                className="h-9 self-start rounded-full px-4 text-emerald-900 hover:bg-emerald-100 sm:self-auto"
+                onClick={() => openFormForDate(today)}
+              >
+                Edit today
+              </Button>
+            </div>
+
+            <DayEntrySummary
+              selectedDate={today}
+              entry={todayEntry}
+              onEdit={() => openFormForDate(today)}
+            />
+          </div>
+        ) : null}
       </section>
+
+      <RecoveryTrendsChart entries={entries} />
 
       <section className="rounded-[28px] border border-black/5 bg-stone-50/80 p-4 shadow-[0_8px_28px_rgba(15,23,42,0.04)] sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">

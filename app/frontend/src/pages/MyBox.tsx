@@ -81,7 +81,7 @@ export default function MyBox() {
   const hasBox = Boolean(data?.myBox);
 
   return (
-    <div className="mx-auto w-full space-y-6 sm:space-y-7">
+    <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-7">
       <header className="space-y-4">
         <Button
           type="button"
@@ -109,7 +109,7 @@ export default function MyBox() {
             <div className="h-4 w-28 rounded-full bg-stone-200/80" />
             <div className="h-8 w-48 rounded-full bg-stone-200/70" />
             <div className="h-4 w-full max-w-md rounded-full bg-stone-200/60" />
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {Array.from({ length: 4 }).map((_, index) => (
                 <div
                   key={index}

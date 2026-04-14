@@ -12,6 +12,7 @@ import {
 
 import { api } from "@/api/client";
 import { clearToken } from "@/auth/token";
+import { QuickCheckIn, type QuickCheckInState } from "@/components/log/QuickCheckIn";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -142,8 +143,12 @@ export default function PatientHome() {
     navigate("/login", { replace: true });
   }
 
+  async function onQuickLog(state: QuickCheckInState) {
+    navigate("/log", { state: { quickCheckIn: state } });
+  }
+
   return (
-    <div className="mx-auto w-full space-y-6 sm:space-y-7">
+    <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-7">
       <header className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
@@ -203,7 +208,7 @@ export default function PatientHome() {
             </div>
           </div>
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="mt-5 grid gap-3 sm:grid-cols-3 lg:gap-4">
             <div className="rounded-[24px] bg-stone-50/90 p-4">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground/75">
                 Recovery day
@@ -247,7 +252,7 @@ export default function PatientHome() {
         </Card>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-4">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
 
@@ -288,6 +293,17 @@ export default function PatientHome() {
           );
         })}
       </section>
+
+      {!hasTodayEntry ? (
+        <div className="sticky bottom-4 z-10 pt-2">
+          <QuickCheckIn
+            onQuickLog={onQuickLog}
+            onGoToFullLog={() => navigate("/log")}
+            onDismiss={() => navigate("/log")}
+            className="mx-auto max-w-4xl shadow-[0_20px_48px_rgba(15,23,42,0.12)]"
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

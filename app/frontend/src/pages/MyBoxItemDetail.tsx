@@ -63,6 +63,10 @@ function resolveRequestedIdentifier(
   );
 }
 
+function normalizeIdentifier(value?: string | null) {
+  return value?.trim().toLowerCase() ?? "";
+}
+
 function itemRouteKey(item: Pick<BoxItem, "key" | "label">) {
   const raw = item.key?.trim() || item.label?.trim() || "item";
   return raw
@@ -74,10 +78,10 @@ function itemRouteKey(item: Pick<BoxItem, "key" | "label">) {
 function findItem(items: BoxItem[], identifier: string | null) {
   if (!identifier) return null;
 
-  const normalized = identifier.trim().toLowerCase();
+  const normalized = normalizeIdentifier(identifier);
   return (
-    items.find((item) => item.key?.trim().toLowerCase() === normalized) ??
-    items.find((item) => item.label?.trim().toLowerCase() === normalized) ??
+    items.find((item) => normalizeIdentifier(item.key) === normalized) ??
+    items.find((item) => normalizeIdentifier(item.label) === normalized) ??
     items.find((item) => itemRouteKey(item) === normalized) ??
     null
   );
@@ -132,15 +136,44 @@ export default function MyBoxItemDetail() {
     };
   }, [itemIdentifier]);
 
+  const liveItems = useMemo(() => buildDisplayItems(data), [data]);
+
   const item = useMemo(() => {
-    return findItem(buildDisplayItems(data), itemIdentifier) ?? stateItem;
-  }, [data, itemIdentifier, stateItem]);
+    const resolvedFromLiveData = findItem(liveItems, itemIdentifier);
+    if (resolvedFromLiveData) return resolvedFromLiveData;
+
+    if (!stateItem) return null;
+
+    const stateCandidates = [
+      stateItem,
+      {
+        ...stateItem,
+        key: stateItem.key || routeState?.itemKey || routeState?.itemLabel || itemIdentifier || "item",
+        label: stateItem.label || routeState?.itemLabel || stateItem.key || "Recovery item",
+      },
+    ];
+
+    return (
+      stateCandidates.find((candidate) => {
+        const normalizedKey = normalizeIdentifier(candidate.key);
+        const normalizedLabel = normalizeIdentifier(candidate.label);
+        const routeKey = itemRouteKey(candidate);
+
+        return (
+          normalizedKey === normalizeIdentifier(itemIdentifier) ||
+          normalizedLabel === normalizeIdentifier(itemIdentifier) ||
+          routeKey === normalizeIdentifier(itemIdentifier)
+        );
+      }) ??
+      stateCandidates[0]
+    );
+  }, [itemIdentifier, liveItems, routeState?.itemKey, routeState?.itemLabel, stateItem]);
 
   const summary = firstParagraph(item?.description) ?? firstParagraph(item?.education);
   const additionalGuidance = remainingParagraphs(item?.description ?? item?.education);
 
   return (
-    <div className="mx-auto w-full space-y-6 sm:space-y-7">
+    <div className="mx-auto w-full max-w-5xl space-y-6 sm:space-y-7">
       <header className="space-y-4">
         <Button
           type="button"
@@ -267,7 +300,7 @@ export default function MyBoxItemDetail() {
             </div>
           </Card>
 
-          <div className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
             <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
               <div className="flex items-start gap-3">
                 <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">

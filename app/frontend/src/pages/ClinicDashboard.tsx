@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowRight,
   ClipboardCheck,
+  LogOut,
   Search,
   ShieldAlert,
   Stethoscope,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { api } from "@/api/client";
+import { clearToken } from "@/auth/token";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,6 +28,10 @@ const FILTER_OPTIONS: Array<{ value: DashboardFilter; label: string }> = [
   { value: "needs-review", label: "Needs review" },
   { value: "missed-check-in", label: "Missed check-in" },
 ];
+
+type ClinicRosterResponse = {
+  patients?: ClinicPatientRow[];
+};
 
 function normalizeText(value?: string | null) {
   return value?.trim().toLowerCase() ?? "";
@@ -113,6 +119,27 @@ function missedCheckIn(patient: ClinicPatientRow) {
   return patient.hasRecentCheckIn === false || status.includes("missed") || reason.includes("missed");
 }
 
+function formatOpenAlertSummary(patient: ClinicPatientRow) {
+  const topAlert = patient.topOpenAlert;
+
+  if (topAlert && typeof topAlert === "object") {
+    const summary = (topAlert as Record<string, unknown>).summary;
+    if (typeof summary === "string" && summary.trim()) {
+      return summary.trim();
+    }
+  }
+
+  if (typeof patient.primaryStatusReasonLabel === "string" && patient.primaryStatusReasonLabel.trim()) {
+    return patient.primaryStatusReasonLabel.trim();
+  }
+
+  if (typeof patient.primaryStatusReason === "string" && patient.primaryStatusReason.trim()) {
+    return patient.primaryStatusReason.trim();
+  }
+
+  return null;
+}
+
 export default function ClinicDashboard() {
   const navigate = useNavigate();
   const [patients, setPatients] = useState<ClinicPatientRow[]>([]);
@@ -120,6 +147,11 @@ export default function ClinicDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<DashboardFilter>("all");
+
+  function onLogout() {
+    clearToken();
+    navigate("/login", { replace: true });
+  }
 
   useEffect(() => {
     let active = true;
@@ -129,12 +161,12 @@ export default function ClinicDashboard() {
       setError(null);
 
       try {
-        const payload = await api<ClinicPatientRow[]>("/clinic/patients", {
+        const payload = await api<ClinicRosterResponse>("/clinic/patients", {
           method: "GET",
         });
 
         if (!active) return;
-        setPatients(Array.isArray(payload) ? payload : []);
+        setPatients(Array.isArray(payload?.patients) ? payload.patients : []);
       } catch {
         if (!active) return;
         setError("We couldn’t load the clinic roster right now.");
@@ -176,7 +208,7 @@ export default function ClinicDashboard() {
   const insetClass = "rounded-[22px] border border-black/5 bg-stone-50/75 p-4";
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-5 sm:space-y-6">
+    <div className="mx-auto w-full max-w-[92rem] space-y-5 sm:space-y-6">
       <header className="space-y-3.5">
         <div className="space-y-2">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/75">
@@ -192,9 +224,21 @@ export default function ClinicDashboard() {
               </p>
             </div>
 
-            <div className="inline-flex items-center gap-2 self-start rounded-full border border-black/5 bg-stone-50/90 px-3 py-1.5 text-sm font-medium text-muted-foreground">
-              <Stethoscope className="h-4 w-4" />
-              Clinic portal
+            <div className="flex flex-wrap items-center gap-2 self-start">
+              <div className="inline-flex items-center gap-2 rounded-full border border-black/5 bg-stone-50/90 px-3 py-1.5 text-sm font-medium text-muted-foreground">
+                <Stethoscope className="h-4 w-4" />
+                Clinic portal
+              </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-9 rounded-full px-3 text-muted-foreground"
+                onClick={onLogout}
+              >
+                <LogOut className="h-4 w-4" />
+                Sign out
+              </Button>
             </div>
           </div>
         </div>
@@ -374,11 +418,9 @@ export default function ClinicDashboard() {
                         <span>Last check-in: {formatLastCheckIn(patient.lastCheckInDate)}</span>
                       </div>
 
-                      {patient.topOpenAlert || patient.primaryStatusReasonLabel || patient.primaryStatusReason ? (
+                      {formatOpenAlertSummary(patient) ? (
                         <div className="rounded-[22px] bg-stone-50/80 px-4 py-3 text-sm leading-6 text-muted-foreground">
-                          {patient.topOpenAlert ||
-                            patient.primaryStatusReasonLabel ||
-                            patient.primaryStatusReason}
+                          {formatOpenAlertSummary(patient)}
                         </div>
                       ) : null}
                     </div>
