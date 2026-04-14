@@ -211,21 +211,21 @@ export default function ClinicDashboard() {
     <div className="mx-auto w-full max-w-[92rem] space-y-5 sm:space-y-6">
       <header className="space-y-3.5">
         <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/75">
+          <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-800">
             Frederick Recovery
           </p>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-2">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0 space-y-2">
               <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-[2rem]">
                 Clinic dashboard
               </h1>
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
-                Review the current patient roster, spot follow-up needs, and keep recovery activity easy to scan.
+                Review the patient roster, spot follow-up needs, and keep recovery activity easy to scan.
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 self-start">
-              <div className="inline-flex items-center gap-2 rounded-full border border-black/5 bg-stone-50/90 px-3 py-1.5 text-sm font-medium text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 self-start md:justify-end">
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200/80 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900">
                 <Stethoscope className="h-4 w-4" />
                 Clinic portal
               </div>
@@ -233,7 +233,7 @@ export default function ClinicDashboard() {
               <Button
                 type="button"
                 variant="ghost"
-                className="h-9 rounded-full px-3 text-muted-foreground"
+                className="h-9 rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
                 onClick={onLogout}
               >
                 <LogOut className="h-4 w-4" />
@@ -244,7 +244,7 @@ export default function ClinicDashboard() {
         </div>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
         {[
           {
             label: "Needs Review",
@@ -356,11 +356,11 @@ export default function ClinicDashboard() {
               </div>
               <div className="space-y-1">
                 <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                  {patients.length === 0 ? "No patients yet" : "No patients match this view"}
+                  {patients.length === 0 ? "No patients in this roster yet" : "No patients match this view"}
                 </h2>
                 <p className="text-sm leading-6 text-muted-foreground">
                   {patients.length === 0
-                    ? "Patient activity will appear here once people are connected to your clinic roster."
+                    ? "Patient activity will appear here once patients are connected to your clinic roster."
                     : "Try a different search or switch filters to see more of the roster."}
                 </p>
               </div>
@@ -393,15 +393,15 @@ export default function ClinicDashboard() {
                     !patient.patientId && "cursor-default"
                   )}
                 >
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0 space-y-3">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="min-w-0 flex-1 space-y-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-semibold tracking-tight text-foreground">
+                        <h3 className="min-w-0 break-words text-lg font-semibold tracking-tight text-foreground">
                           {formatPatientName(patient)}
                         </h3>
                         <div
                           className={cn(
-                            "inline-flex items-center rounded-full px-3 py-1 text-sm font-medium",
+                            "inline-flex max-w-full items-center rounded-full px-3 py-1 text-sm font-medium",
                             statusTone(patient)
                           )}
                         >
@@ -410,7 +410,7 @@ export default function ClinicDashboard() {
                       </div>
 
                       <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm leading-6 text-muted-foreground">
-                        {patient.email ? <span>{patient.email}</span> : null}
+                        {patient.email ? <span className="break-all">{patient.email}</span> : null}
                         {patient.activationCode || patient.code ? (
                           <span>Code: {patient.activationCode ?? patient.code}</span>
                         ) : null}
@@ -419,13 +419,13 @@ export default function ClinicDashboard() {
                       </div>
 
                       {formatOpenAlertSummary(patient) ? (
-                        <div className="rounded-[22px] bg-stone-50/80 px-4 py-3 text-sm leading-6 text-muted-foreground">
+                        <div className="min-w-0 rounded-[22px] bg-stone-50/80 px-4 py-3 text-sm leading-6 text-muted-foreground">
                           {formatOpenAlertSummary(patient)}
                         </div>
                       ) : null}
                     </div>
 
-                    <div className="flex flex-col items-start gap-3 lg:items-end">
+                    <div className="flex shrink-0 flex-col items-start gap-3 xl:items-end">
                       {(patient.unresolvedAlertCount ?? 0) > 0 ? (
                         <div className="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700">
                           <ShieldAlert className="h-4 w-4" />

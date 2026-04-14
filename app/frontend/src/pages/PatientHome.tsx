@@ -36,7 +36,7 @@ const NAV_ITEMS = [
   {
     key: "my-box",
     title: "My Box",
-    subtitle: "See what came with your recovery kit.",
+    subtitle: "See what’s included with your recovery kit.",
     icon: Package2,
     href: FUTURE_PORTAL_ROUTES.myBox,
   },
@@ -97,6 +97,7 @@ export default function PatientHome() {
   const [profile, setProfile] = useState<PatientProfile | null>(null);
   const [entries, setEntries] = useState<DailyLogEntry[]>([]);
   const [boxData, setBoxData] = useState<MyBoxPayload | null>(null);
+  const [quickCheckInDismissed, setQuickCheckInDismissed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -152,7 +153,7 @@ export default function PatientHome() {
       <header className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/80">
+            <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-800">
               Frederick Recovery
             </p>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -163,7 +164,7 @@ export default function PatientHome() {
           <Button
             type="button"
             variant="ghost"
-            className="h-9 rounded-full px-3 text-muted-foreground"
+            className="h-9 rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
             onClick={onLogout}
           >
             <LogOut className="h-4 w-4" />
@@ -197,7 +198,7 @@ export default function PatientHome() {
                 <p className="text-sm leading-6 text-muted-foreground">
                   {hasTodayEntry
                     ? "Today’s check-in is already in place. You can review the rest of your recovery details below."
-                    : "Stay on track with daily check-ins, care information, and the tools you need for recovery."}
+                    : "Stay on track with check-ins, care information, and the tools you need for recovery."}
                 </p>
               </div>
             </div>
@@ -209,7 +210,7 @@ export default function PatientHome() {
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3 lg:gap-4">
-            <div className="rounded-[24px] bg-stone-50/90 p-4">
+            <div className="rounded-[24px] border border-emerald-100/70 bg-emerald-50/50 p-4">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground/75">
                 Recovery day
               </div>
@@ -221,7 +222,7 @@ export default function PatientHome() {
               </p>
             </div>
 
-            <div className="rounded-[24px] bg-stone-50/90 p-4">
+            <div className="rounded-[24px] border border-emerald-100/70 bg-emerald-50/50 p-4">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground/75">
                 Today
               </div>
@@ -231,13 +232,13 @@ export default function PatientHome() {
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
                 {hasTodayEntry
                   ? "You’ve already logged today’s recovery update."
-                  : "Open My Tracker when you’re ready to log today’s recovery."}
+                  : "Open My Tracker when you’re ready to complete today’s check-in."}
               </p>
             </div>
 
-            <div className="rounded-[24px] bg-stone-50/90 p-4">
+            <div className="rounded-[24px] border border-emerald-100/70 bg-emerald-50/50 p-4">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground/75">
-                Recovery box
+                My Box
               </div>
               <div className="mt-2 text-xl font-semibold tracking-tight text-foreground">
                 {boxData?.myBox ? boxType : "Not assigned"}
@@ -245,7 +246,7 @@ export default function PatientHome() {
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
                 {boxData?.myBox
                   ? "Review supplies and item guidance from your current kit."
-                  : "Your recovery box details will appear here when available."}
+                  : "Your box details will appear here when available."}
               </p>
             </div>
           </div>
@@ -270,7 +271,7 @@ export default function PatientHome() {
             >
               <div className="flex h-full flex-col justify-between gap-6">
                 <div className="space-y-4">
-                  <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+                  <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                     <Icon className="h-5 w-5" />
                   </div>
 
@@ -284,7 +285,7 @@ export default function PatientHome() {
                   </div>
                 </div>
 
-                <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition-colors group-hover:text-foreground">
+                <div className="inline-flex items-center gap-2 text-sm font-medium text-emerald-800 transition-colors group-hover:text-emerald-900">
                   <span>Open</span>
                   <ArrowRight className="h-4 w-4" />
                 </div>
@@ -294,12 +295,12 @@ export default function PatientHome() {
         })}
       </section>
 
-      {!hasTodayEntry ? (
+      {!hasTodayEntry && !quickCheckInDismissed ? (
         <div className="sticky bottom-4 z-10 pt-2">
           <QuickCheckIn
             onQuickLog={onQuickLog}
             onGoToFullLog={() => navigate("/log")}
-            onDismiss={() => navigate("/log")}
+            onDismiss={() => setQuickCheckInDismissed(true)}
             className="mx-auto max-w-4xl shadow-[0_20px_48px_rgba(15,23,42,0.12)]"
           />
         </div>

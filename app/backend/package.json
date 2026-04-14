@@ -9,7 +9,8 @@
     "postinstall": "prisma generate",
     "migrate:deploy": "prisma migrate deploy",
     "start": "node dist/server.js",
-"test:plan": "tsx scripts/testPlanEngine.ts"  },
+    "test:plan": "tsx scripts/testPlanEngine.ts"
+  },
   "dependencies": {
     "@prisma/client": "^5.10.0",
     "@types/bcryptjs": "^2.4.6",
@@ -23,6 +24,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.2.0",
+    "fast-xml-parser": "^5.5.12",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "pdfkit-table": "^0.1.99",
@@ -32,6 +34,5 @@
     "typescript": "^5.4.5",
     "zod": "^3.23.8",
     "zxcvbn-typescript": "^5.0.1"
-  },
-  "devDependencies": {}
+  }
 }

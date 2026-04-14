@@ -169,7 +169,7 @@ export default function Verify() {
               className="inline-flex items-center justify-start gap-2 text-sm font-medium text-emerald-800 transition hover:text-emerald-900 disabled:opacity-50"
             >
               <ArrowLeft className="h-4 w-4" />
-              Back to account setup
+              Back to activation claim
             </button>
           </div>
         </div>

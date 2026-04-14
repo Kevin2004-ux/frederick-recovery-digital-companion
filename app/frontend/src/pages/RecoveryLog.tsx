@@ -420,20 +420,20 @@ export default function RecoveryLog() {
     <div className="mx-auto w-full max-w-6xl space-y-5 sm:space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
-          <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground/80">
+          <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.22em] text-emerald-800">
             Recovery
           </p>
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
               {showingForm && !isTodayView
-                ? "Update your recovery log"
+                ? "Update your check-in"
                 : todayEntry && !showingForm
                   ? "Today's check-in"
                   : "Today's check-in"}
             </h1>
             <p className="max-w-xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
               {showingForm && !isTodayView
-                ? `Review ${formatLongDate(activeDate)} and make any updates.`
+                ? `Review ${formatLongDate(activeDate)} and update this check-in.`
                 : `Log how you're feeling for ${formatLongDate(today)}.`}
             </p>
           </div>
@@ -442,7 +442,7 @@ export default function RecoveryLog() {
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="ghost"
-            className="h-9 rounded-full px-3 text-muted-foreground"
+            className="h-9 rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
             onClick={() => navigate("/home")}
           >
             <House className="h-4 w-4" />
@@ -451,10 +451,10 @@ export default function RecoveryLog() {
 
           <Button
             variant="ghost"
-            className="h-9 rounded-full px-3 text-muted-foreground"
+            className="h-9 rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
             onClick={onLogout}
           >
-            Log out
+            Sign out
           </Button>
         </div>
       </div>
@@ -502,7 +502,7 @@ export default function RecoveryLog() {
               <div className="min-w-0 space-y-1">
                 <div className="font-medium">{formatLongDate(today)}</div>
                 <div className="text-xs text-emerald-900/65 sm:text-sm">
-                  Today’s check-in is saved and ready if you need to update it.
+                  Today’s check-in is saved. You can update it anytime.
                 </div>
               </div>
 

@@ -9,6 +9,7 @@ import { activationRouter } from "./activation/index.js";
 import { planRouter } from "./plan/index.js";
 import { clinicRouter } from "./clinic/index.js";
 import { adminRouter } from "./admin/index.js";
+import { educationRouter } from "./education/index.js";
 
 export const apiRouter = Router();
 
@@ -25,3 +26,4 @@ apiRouter.use("/plan", planRouter);
 
 apiRouter.use("/clinic", clinicRouter);
 apiRouter.use("/admin", adminRouter);
+apiRouter.use("/education", educationRouter);

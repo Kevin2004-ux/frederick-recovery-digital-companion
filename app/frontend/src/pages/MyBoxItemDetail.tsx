@@ -49,6 +49,19 @@ function remainingParagraphs(text?: string) {
     .slice(1);
 }
 
+function textParts(value?: string | string[] | null) {
+  if (!value) return [];
+
+  const rawParts = Array.isArray(value) ? value : [value];
+  return rawParts
+    .flatMap((part) =>
+      String(part)
+        .split(/\n\s*\n|\n+/)
+        .map((segment) => segment.trim())
+    )
+    .filter(Boolean);
+}
+
 function resolveRequestedIdentifier(
   params: Readonly<Partial<Record<string, string | undefined>>>,
   state: ItemLocationState | null
@@ -169,8 +182,14 @@ export default function MyBoxItemDetail() {
     );
   }, [itemIdentifier, liveItems, routeState?.itemKey, routeState?.itemLabel, stateItem]);
 
-  const summary = firstParagraph(item?.description) ?? firstParagraph(item?.education);
-  const additionalGuidance = remainingParagraphs(item?.description ?? item?.education);
+  const educationSummary = item?.education?.summary?.trim() || null;
+  const educationInstructions = textParts(item?.education?.instructions);
+  const educationWarnings = textParts(item?.education?.warnings);
+  const summary = educationSummary ?? firstParagraph(item?.description);
+  const additionalGuidance =
+    educationInstructions.length > 0
+      ? educationInstructions
+      : remainingParagraphs(item?.description);
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 sm:space-y-7">
@@ -178,7 +197,7 @@ export default function MyBoxItemDetail() {
         <Button
           type="button"
           variant="ghost"
-          className="h-9 self-start rounded-full px-3 text-muted-foreground"
+          className="h-9 self-start rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
           onClick={() => navigate("/my-box")}
         >
           <ArrowLeft className="h-4 w-4" />
@@ -186,11 +205,14 @@ export default function MyBoxItemDetail() {
         </Button>
 
         <div className="space-y-2.5">
+          <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-800">
+            Recovery supplies
+          </p>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             {item?.label ?? "Recovery item"}
           </h1>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
-            General usage guidance and supporting information for this recovery supply.
+            General guidance and supporting information for this recovery supply.
           </p>
         </div>
       </header>
@@ -235,7 +257,7 @@ export default function MyBoxItemDetail() {
       ) : !itemIdentifier ? (
         <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
           <div className="space-y-4">
-            <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+            <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
               <Box className="h-5 w-5" />
             </div>
             <div className="space-y-1">
@@ -251,7 +273,7 @@ export default function MyBoxItemDetail() {
       ) : !item ? (
         <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
           <div className="space-y-4">
-            <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+            <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
               <Box className="h-5 w-5" />
             </div>
             <div className="space-y-1">
@@ -287,7 +309,7 @@ export default function MyBoxItemDetail() {
 
               <div className="flex flex-wrap items-center gap-2 self-start">
                 {item.key ? (
-                  <div className="inline-flex items-center gap-2 rounded-full bg-stone-100 px-3 py-1.5 text-sm font-medium text-muted-foreground">
+                  <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800">
                     <Box className="h-4 w-4" />
                     {item.key}
                   </div>
@@ -303,7 +325,7 @@ export default function MyBoxItemDetail() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
               <div className="flex items-start gap-3">
-                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                   <Info className="h-5 w-5" />
                 </div>
                 <div className="space-y-2">
@@ -311,7 +333,7 @@ export default function MyBoxItemDetail() {
                     What this item is for
                   </h3>
                   <p className="text-sm leading-6 text-muted-foreground">
-                    {summary ?? "Use the instructions from your clinic to understand how this item fits into your recovery plan."}
+                    {summary ?? "Use your clinic’s instructions to understand how this item fits into your recovery plan."}
                   </p>
                 </div>
               </div>
@@ -319,7 +341,7 @@ export default function MyBoxItemDetail() {
 
             <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
               <div className="flex items-start gap-3">
-                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                   <ArrowRight className="h-5 w-5" />
                 </div>
                 <div className="space-y-2">
@@ -334,7 +356,7 @@ export default function MyBoxItemDetail() {
                     </div>
                   ) : (
                     <p className="text-sm leading-6 text-muted-foreground">
-                      Follow the instructions that came with your kit or the guidance from your clinic for day-to-day use.
+                      Follow the instructions included with your kit or the guidance from your clinic for day-to-day use.
                     </p>
                   )}
                 </div>
@@ -350,9 +372,17 @@ export default function MyBoxItemDetail() {
                   <h3 className="text-lg font-semibold tracking-tight text-foreground">
                     Safety notes
                   </h3>
-                  <p className="text-sm leading-6 text-muted-foreground">
-                    This page provides general product guidance only. Follow your clinic’s instructions for how long to use this item and when to stop or change it.
-                  </p>
+                  {educationWarnings.length > 0 ? (
+                    <div className="space-y-3 text-sm leading-6 text-muted-foreground">
+                      {educationWarnings.map((warning) => (
+                        <p key={warning}>{warning}</p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm leading-6 text-muted-foreground">
+                      This page provides general product guidance only. Follow your clinic’s instructions for how long to use this item and when to stop or change it.
+                    </p>
+                  )}
                 </div>
               </div>
             </Card>

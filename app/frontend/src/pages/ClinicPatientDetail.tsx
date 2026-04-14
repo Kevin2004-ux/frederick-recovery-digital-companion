@@ -17,7 +17,12 @@ import { api } from "@/api/client";
 import { AlertResolutionDrawer } from "@/components/clinic/AlertResolutionDrawer";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import type { ClinicPatientSummary, DailyLogEntry, OperationalAlert } from "@/types";
+import type {
+  ClinicPatientSummary,
+  DailyLogEntry,
+  IncludedItemRef,
+  OperationalAlert,
+} from "@/types";
 
 type LocationState = {
   patientId?: string;
@@ -131,6 +136,72 @@ function extractCheckInDetails(entry?: DailyLogEntry | null) {
   return items.slice(0, 4);
 }
 
+function formatTrendValue(value: unknown) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const trend = value as Record<string, unknown>;
+  const parts: string[] = [];
+
+  if (typeof trend.direction === "string" && trend.direction.trim()) {
+    parts.push(formatDetailLabel(trend.direction.trim()));
+  }
+
+  if (typeof trend.latest === "number") {
+    parts.push(
+      typeof trend.previous === "number"
+        ? `latest ${trend.latest}, previous ${trend.previous}`
+        : `latest ${trend.latest}`
+    );
+  } else if (typeof trend.previous === "number") {
+    parts.push(`previous ${trend.previous}`);
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function formatIncludedItemLabel(item: IncludedItemRef) {
+  if (typeof item === "string") {
+    const trimmed = item.trim();
+    return trimmed || null;
+  }
+
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const label = typeof item.label === "string" ? item.label.trim() : "";
+  if (label) return label;
+
+  const key = typeof item.key === "string" ? item.key.trim() : "";
+  return key || null;
+}
+
+function includedItemReactKey(item: IncludedItemRef, index: number) {
+  if (typeof item === "string") {
+    const trimmed = item.trim();
+    return trimmed ? `${trimmed}-${index}` : `included-item-${index}`;
+  }
+
+  if (!item || typeof item !== "object") {
+    return `included-item-${index}`;
+  }
+
+  const key = typeof item.key === "string" ? item.key.trim() : "";
+  if (key) return `${key}-${index}`;
+
+  const label = typeof item.label === "string" ? item.label.trim() : "";
+  if (label) return `${label}-${index}`;
+
+  return `included-item-${index}`;
+}
+
 export default function ClinicPatientDetail() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -187,6 +258,8 @@ export default function ClinicPatientDetail() {
   const recentCheckIns = summary?.recentCheckIns ?? [];
   const openAlert = summary?.openAlerts?.[0] ?? null;
   const openAlerts = summary?.openAlerts ?? [];
+  const recentPainTrend = formatTrendValue(summary?.recentPainTrend);
+  const recentSwellingTrend = formatTrendValue(summary?.recentSwellingTrend);
   const headerDisplayName =
     formatPatientName(summary) !== "Patient detail"
       ? formatPatientName(summary)
@@ -242,7 +315,7 @@ export default function ClinicPatientDetail() {
         <Button
           type="button"
           variant="ghost"
-          className="h-9 self-start rounded-full px-3 text-muted-foreground"
+          className="h-9 self-start rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
           onClick={() => navigate("/clinic")}
         >
           <ArrowLeft className="h-4 w-4" />
@@ -250,16 +323,16 @@ export default function ClinicPatientDetail() {
         </Button>
 
         <div className="space-y-2">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/75">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0 space-y-2">
+              <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-800">
                 Clinic portal
               </p>
               <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
                 {headerDisplayName}
               </h1>
               <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm leading-6 text-muted-foreground">
-                {headerEmail ? <span>{headerEmail}</span> : null}
+                {headerEmail ? <span className="break-all">{headerEmail}</span> : null}
                 {headerActivationCode ? (
                   <span>Code: {headerActivationCode}</span>
                 ) : null}
@@ -267,7 +340,7 @@ export default function ClinicPatientDetail() {
               </div>
             </div>
 
-            <div className="inline-flex items-center gap-2 self-start rounded-full border border-black/5 bg-stone-50/90 px-3 py-1.5 text-sm font-medium text-muted-foreground">
+            <div className="inline-flex items-center gap-2 self-start rounded-full border border-emerald-200/80 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900 md:shrink-0">
               <Download className="h-4 w-4" />
               Export
             </div>
@@ -325,7 +398,7 @@ export default function ClinicPatientDetail() {
             </div>
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                Summary unavailable
+                Patient summary unavailable
               </h2>
               <p className="text-sm leading-6 text-muted-foreground">
                 This patient summary is not available yet or may still be incomplete.
@@ -337,16 +410,16 @@ export default function ClinicPatientDetail() {
         <>
           {openAlert ? (
             <Card className={panelClass}>
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div className="flex items-start gap-3">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0 flex items-start gap-3">
                   <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-50 text-rose-700">
                     <ShieldAlert className="h-5 w-5" />
                   </div>
-                  <div className="space-y-1">
+                  <div className="min-w-0 space-y-1">
                     <div className="text-sm font-semibold text-foreground">
                       {openAlertSeverity(openAlert)}
                     </div>
-                    <p className="text-sm leading-6 text-muted-foreground">
+                    <p className="min-w-0 break-words text-sm leading-6 text-muted-foreground">
                       {openAlertSummary(openAlert)}
                     </p>
                     {openAlert.triggeredAt ? (
@@ -369,7 +442,7 @@ export default function ClinicPatientDetail() {
             </Card>
           ) : null}
 
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
             {metrics.map((metric) => {
               const Icon = metric.icon;
 
@@ -384,7 +457,7 @@ export default function ClinicPatientDetail() {
                         {metric.value}
                       </div>
                     </div>
-                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                       <Icon className="h-5 w-5" />
                     </div>
                   </div>
@@ -430,32 +503,30 @@ export default function ClinicPatientDetail() {
                   </p>
                 </div>
 
-                {summary.recentPainTrend || summary.recentSwellingTrend ? (
-                  <div className={`${insetClass} text-sm leading-6 text-muted-foreground`}>
-                    {summary.recentPainTrend ? <div>Pain trend: {summary.recentPainTrend}</div> : null}
-                    {summary.recentSwellingTrend ? (
-                      <div>Swelling trend: {summary.recentSwellingTrend}</div>
-                    ) : null}
-                  </div>
-                ) : null}
+                {recentPainTrend || recentSwellingTrend ? (
+                    <div className={`${insetClass} min-w-0 text-sm leading-6 text-muted-foreground`}>
+                      {recentPainTrend ? <div>Pain trend: {recentPainTrend}</div> : null}
+                      {recentSwellingTrend ? <div>Swelling trend: {recentSwellingTrend}</div> : null}
+                    </div>
+                  ) : null}
 
                 {recentCheckIns.length > 0 ? (
                   <div className="space-y-3">
                     {recentCheckIns.map((entry) => (
                       <div key={entry.date} className={insetClass}>
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="space-y-1">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0 space-y-1">
                             <div className="text-sm font-semibold text-foreground">
                               {formatDate(entry.date) || entry.date}
                             </div>
                             {entry.notes ? (
-                              <p className="text-sm leading-6 text-muted-foreground">
+                              <p className="min-w-0 break-words text-sm leading-6 text-muted-foreground">
                                 {entry.notes}
                               </p>
                             ) : null}
                           </div>
 
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex shrink-0 flex-wrap gap-2">
                             <div className="rounded-full bg-white px-3 py-1.5 text-sm font-medium text-stone-700">
                               Pain {entry.painLevel}/10
                             </div>
@@ -468,8 +539,8 @@ export default function ClinicPatientDetail() {
                     ))}
                   </div>
                 ) : latestCheckIn ? (
-                  <div className={insetClass}>
-                    <div className="space-y-2">
+                    <div className={insetClass}>
+                      <div className="space-y-2">
                       <div className="text-sm font-semibold text-foreground">
                         {formatDate(latestCheckIn.date) || latestCheckIn.date}
                       </div>
@@ -482,10 +553,10 @@ export default function ClinicPatientDetail() {
                         </div>
                       </div>
                       {latestCheckIn.notes ? (
-                        <p className="text-sm leading-6 text-muted-foreground">
-                          {latestCheckIn.notes}
-                        </p>
-                      ) : null}
+                          <p className="min-w-0 break-words text-sm leading-6 text-muted-foreground">
+                            {latestCheckIn.notes}
+                          </p>
+                        ) : null}
                     </div>
                   </div>
                 ) : (
@@ -500,7 +571,7 @@ export default function ClinicPatientDetail() {
               <div className="space-y-4">
                 <div className="space-y-1">
                   <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                    My Box
+                    Recovery kit
                   </h2>
                   <p className="text-sm leading-6 text-muted-foreground">
                     Current recovery kit details tied to this patient.
@@ -509,10 +580,10 @@ export default function ClinicPatientDetail() {
 
                 <div className={insetClass}>
                   <div className="flex items-start gap-3">
-                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                       <Package2 className="h-5 w-5" />
                     </div>
-                    <div className="space-y-1">
+                    <div className="min-w-0 space-y-1">
                       <div className="text-sm font-semibold text-foreground">
                         {summary.myBox?.boxType || "Recovery kit"}
                       </div>
@@ -526,15 +597,20 @@ export default function ClinicPatientDetail() {
                 </div>
 
                 {summary.myBox?.includedItems?.length ? (
-                  <div className="space-y-2">
-                    {summary.myBox.includedItems.slice(0, 6).map((item) => (
-                      <div
-                        key={item}
-                        className="rounded-full bg-stone-100 px-3 py-2 text-sm font-medium text-stone-700"
-                      >
-                        {item}
-                      </div>
-                    ))}
+                  <div className="flex flex-wrap gap-2">
+                    {summary.myBox.includedItems.slice(0, 6).map((item, index) => {
+                      const label = formatIncludedItemLabel(item);
+                      if (!label) return null;
+
+                      return (
+                        <div
+                          key={includedItemReactKey(item, index)}
+                          className="max-w-full rounded-full bg-stone-100 px-3 py-2 text-sm font-medium text-stone-700"
+                        >
+                          {label}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>
@@ -555,7 +631,7 @@ export default function ClinicPatientDetail() {
               <Card className={panelClass}>
                 <div className="space-y-4">
                   <div className="flex items-start gap-3">
-                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                       <History className="h-5 w-5" />
                     </div>
                     <div className="space-y-1">
@@ -575,19 +651,19 @@ export default function ClinicPatientDetail() {
 
                         return (
                           <div key={entry.date} className={insetClass}>
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="space-y-1">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                              <div className="min-w-0 space-y-1">
                                 <div className="text-sm font-semibold text-foreground">
                                   {formatDate(entry.date) || entry.date}
                                 </div>
                                 {entry.notes ? (
-                                  <p className="text-sm leading-6 text-muted-foreground">
+                                  <p className="min-w-0 break-words text-sm leading-6 text-muted-foreground">
                                     {entry.notes}
                                   </p>
                                 ) : null}
                               </div>
 
-                              <div className="flex flex-wrap gap-2">
+                              <div className="flex shrink-0 flex-wrap gap-2">
                                 <div className="rounded-full bg-white px-3 py-1.5 text-sm font-medium text-stone-700">
                                   Pain {entry.painLevel}/10
                                 </div>
@@ -602,7 +678,7 @@ export default function ClinicPatientDetail() {
                                 {detailItems.map((detail) => (
                                   <div
                                     key={detail}
-                                    className="rounded-full bg-white px-3 py-1.5 text-sm font-medium text-stone-700"
+                                    className="max-w-full rounded-full bg-white px-3 py-1.5 text-sm font-medium text-stone-700"
                                   >
                                     {detail}
                                   </div>
@@ -641,12 +717,12 @@ export default function ClinicPatientDetail() {
                     {openAlerts.length > 0 ? (
                       <div className="space-y-3">
                         {openAlerts.map((alert) => (
-                          <div key={alert.id} className={insetClass}>
+                          <div key={alert.id} className={`${insetClass} min-w-0`}>
                             <div className="space-y-1">
                               <div className="text-sm font-semibold text-foreground">
                                 {openAlertSeverity(alert)}
                               </div>
-                              <p className="text-sm leading-6 text-muted-foreground">
+                              <p className="min-w-0 break-words text-sm leading-6 text-muted-foreground">
                                 {openAlertSummary(alert)}
                               </p>
                               {alert.triggeredAt ? (
@@ -669,7 +745,7 @@ export default function ClinicPatientDetail() {
                 <Card className={panelClass}>
                   <div className="space-y-4">
                     <div className="flex items-start gap-3">
-                      <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+                      <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                         <FileText className="h-5 w-5" />
                       </div>
                       <div className="space-y-1">

@@ -43,7 +43,12 @@ export type BoxItem = {
   key: string;
   label: string;
   description?: string;
-  education?: string;
+  education?: {
+    title?: string;
+    summary?: string;
+    instructions?: string | string[];
+    warnings?: string | string[];
+  };
   educationUrl?: string;
 };
 
@@ -100,6 +105,13 @@ export type OperationalAlert = {
   resolvedAt?: string | Date | null;
 };
 
+export type IncludedItemRef =
+  | string
+  | {
+      key?: string | null;
+      label?: string | null;
+    };
+
 export type ClinicPatientSummary = {
   patient?: PatientProfile;
   activation?: {
@@ -121,7 +133,7 @@ export type ClinicPatientSummary = {
   myBox?: {
     batchId?: string;
     boxType?: string | null;
-    includedItems?: string[];
+    includedItems?: IncludedItemRef[];
   } | null;
   openAlerts?: OperationalAlert[];
 };

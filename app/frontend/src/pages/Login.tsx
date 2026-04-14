@@ -83,80 +83,85 @@ export default function Login() {
   }
 
   return (
-    <Card className="rounded-2xl p-5 shadow-sm sm:p-6">
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold">Sign in</h2>
-        <p className="text-sm text-muted-foreground">
-          Secure access to your recovery account.
-        </p>
-      </div>
-
-      <div className="mt-5 space-y-4 sm:mt-6">
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Email</label>
-          <Input
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-          />
+    <section className="mx-auto flex min-h-[calc(100vh-11rem)] w-full max-w-sm flex-col justify-center py-2 sm:min-h-[calc(100vh-12rem)] sm:py-4">
+      <Card className="rounded-2xl border border-black/5 bg-white/95 p-5 shadow-sm sm:p-6">
+        <div className="space-y-3">
+          <div className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium tracking-[0.08em] text-emerald-800">
+            Frederick Recovery
+          </div>
+          <h2 className="text-xl font-semibold">Sign in</h2>
+          <p className="text-sm text-muted-foreground">
+            Secure access to your recovery account.
+          </p>
         </div>
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Password</label>
-          <Input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-          />
-          <p className="text-xs text-muted-foreground">Use at least 8 characters.</p>
-        </div>
+        <div className="mt-5 space-y-4 sm:mt-6">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Email</label>
+            <Input
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+          </div>
 
-        {error ? (
-          <Alert className="rounded-2xl border-red-200 bg-red-50 text-red-950">
-            <div className="text-sm">{error}</div>
-          </Alert>
-        ) : null}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Password</label>
+            <Input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+            />
+            <p className="text-xs text-muted-foreground">Use at least 8 characters.</p>
+          </div>
 
-        <div className="flex flex-col gap-3">
-          <Button
-            className="h-11 w-full rounded-2xl disabled:bg-stone-200 disabled:text-stone-500 disabled:opacity-100 sm:h-12"
-            onClick={onLogin}
-            disabled={!canSubmit}
-          >
-            {loading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Signing in…
-              </>
-            ) : (
-              <>
-                <LogIn className="mr-2 h-4 w-4" />
-                Sign in
-              </>
-            )}
-          </Button>
-
-          {!canSubmit && !loading ? (
-            <p className="text-center text-xs text-muted-foreground">
-              Enter your email and password to continue.
-            </p>
+          {error ? (
+            <Alert className="rounded-2xl border-red-200 bg-red-50 text-red-950">
+              <div className="text-sm">{error}</div>
+            </Alert>
           ) : null}
 
-          <Button
-            variant="outline"
-            className="h-11 w-full rounded-2xl sm:h-12"
-            onClick={() => navigate("/signup")}
-            disabled={loading}
-          >
-            <UserPlus className="mr-2 h-4 w-4" />
-            Claim with activation code
-          </Button>
+          <div className="flex flex-col gap-3">
+            <Button
+              className="h-11 w-full rounded-2xl disabled:bg-stone-200 disabled:text-stone-500 disabled:opacity-100 sm:h-12"
+              onClick={onLogin}
+              disabled={!canSubmit}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Signing in…
+                </>
+              ) : (
+                <>
+                  <LogIn className="mr-2 h-4 w-4" />
+                  Sign in
+                </>
+              )}
+            </Button>
+
+            {!canSubmit && !loading ? (
+              <p className="text-center text-xs text-muted-foreground">
+                Enter your email and password to continue.
+              </p>
+            ) : null}
+
+            <Button
+              variant="outline"
+              className="h-11 w-full rounded-2xl sm:h-12"
+              onClick={() => navigate("/signup")}
+              disabled={loading}
+            >
+              <UserPlus className="mr-2 h-4 w-4" />
+              Claim with activation code
+            </Button>
+          </div>
         </div>
-      </div>
-    </Card>
+      </Card>
+    </section>
   );
 }

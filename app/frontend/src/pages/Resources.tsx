@@ -229,7 +229,7 @@ export default function Resources() {
         <Button
           type="button"
           variant="ghost"
-          className="h-9 self-start rounded-full px-3 text-muted-foreground"
+          className="h-9 self-start rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
           onClick={() => navigate("/home")}
         >
           <ArrowLeft className="h-4 w-4" />
@@ -237,6 +237,9 @@ export default function Resources() {
         </Button>
 
         <div className="space-y-2.5">
+          <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-800">
+            Support planning
+          </p>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             Resources
           </h1>
@@ -294,7 +297,7 @@ export default function Resources() {
         {filteredResources.length === 0 ? (
           <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
             <div className="space-y-4">
-              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                 <AlertCircle className="h-5 w-5" />
               </div>
               <div className="space-y-1">
@@ -328,7 +331,7 @@ export default function Resources() {
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-3">
-                      <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+                      <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                         <Icon className="h-5 w-5" />
                       </div>
 
@@ -342,7 +345,7 @@ export default function Resources() {
                       </div>
                     </div>
 
-                    <div className="inline-flex items-center gap-2 rounded-full bg-stone-100 px-3 py-1.5 text-sm font-medium text-muted-foreground">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800">
                       <span>{isExpanded ? "Less" : "Read more"}</span>
                       <ArrowRight
                         className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-90" : ""}`}
@@ -352,12 +355,12 @@ export default function Resources() {
                 </button>
 
                 {isExpanded ? (
-                  <div className="mt-4 space-y-4 rounded-2xl bg-stone-50/80 p-4 text-sm leading-6 text-muted-foreground">
+                  <div className="mt-4 space-y-4 rounded-2xl border border-emerald-100/80 bg-emerald-50/40 p-4 text-sm leading-6 text-muted-foreground">
                     {resource.bullets?.length ? (
                       <ul className="space-y-2">
                         {resource.bullets.map((bullet) => (
                           <li key={bullet} className="flex items-start gap-2">
-                            <span className="mt-2 h-1.5 w-1.5 rounded-full bg-stone-400" />
+                            <span className="mt-2 h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
                             <span>{bullet}</span>
                           </li>
                         ))}

@@ -86,7 +86,7 @@ export default function MyBox() {
         <Button
           type="button"
           variant="ghost"
-          className="h-9 self-start rounded-full px-3 text-muted-foreground"
+          className="h-9 self-start rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
           onClick={() => navigate("/home")}
         >
           <ArrowLeft className="h-4 w-4" />
@@ -94,11 +94,14 @@ export default function MyBox() {
         </Button>
 
         <div className="space-y-2.5">
+          <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-800">
+            Recovery supplies
+          </p>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            My Recovery Box
+            My Box
           </h1>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
-            Review your clinic-provided recovery supplies and any instructions included with your kit.
+            Review the supplies and guidance included with your recovery kit.
           </p>
         </div>
       </header>
@@ -143,7 +146,7 @@ export default function MyBox() {
       ) : !hasBox ? (
         <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
           <div className="space-y-4">
-            <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+            <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
               <PackageCheck className="h-5 w-5" />
             </div>
             <div className="space-y-1">
@@ -151,11 +154,52 @@ export default function MyBox() {
                 No recovery box assigned
               </h2>
               <p className="text-sm leading-6 text-muted-foreground">
-                Your recovery kit details are not available yet. If you were expecting a box, your clinic can help confirm the assignment.
+                Your box details are not available yet. If you were expecting a recovery kit, your clinic can help confirm the assignment.
               </p>
             </div>
           </div>
         </Card>
+      ) : items.length === 0 ? (
+        <>
+          <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/80">
+                  Prescribed kit
+                </p>
+                <div className="space-y-1">
+                  <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+                    {boxType}
+                  </h2>
+                  <p className="text-sm leading-6 text-muted-foreground">
+                    Clinic-provided supplies and related recovery instructions for your current kit.
+                  </p>
+                </div>
+              </div>
+
+              <div className="inline-flex items-center gap-2 self-start rounded-full border border-emerald-200/80 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900">
+                <BadgeCheck className="h-4 w-4" />
+                {sourceBadgeText(data?.source)}
+              </div>
+            </div>
+          </Card>
+
+          <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
+            <div className="space-y-4">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
+                <PackageCheck className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                  No item details available yet
+                </h2>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Your recovery box is assigned, but there are no displayable item details available right now.
+                </p>
+              </div>
+            </div>
+          </Card>
+        </>
       ) : (
         <>
           <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
@@ -187,7 +231,7 @@ export default function MyBox() {
                 Included supplies
               </h2>
               <p className="text-sm leading-6 text-muted-foreground">
-                Open any item to review the instructions included with your recovery box.
+                Open any item to review the guidance included with your recovery kit.
               </p>
             </div>
 
@@ -218,7 +262,7 @@ export default function MyBox() {
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div className="space-y-2">
-                          <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-100 text-foreground">
+                          <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                             <Box className="h-5 w-5" />
                           </div>
                           <div className="space-y-1">
@@ -226,14 +270,14 @@ export default function MyBox() {
                               {item.label}
                             </h3>
                             <p className="text-sm leading-6 text-muted-foreground">
-                              {item.description || item.education
+                              {item.description || item.education?.summary || item.education?.instructions
                                 ? "View instructions and supporting details."
                                 : "Open this item for guidance and clinic-provided details."}
                             </p>
                           </div>
                         </div>
 
-                        <div className="inline-flex items-center gap-2 rounded-full bg-stone-100 px-3 py-1.5 text-sm font-medium text-muted-foreground">
+                        <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800">
                           <span>View instructions</span>
                           <ArrowRight className="h-4 w-4" />
                         </div>
