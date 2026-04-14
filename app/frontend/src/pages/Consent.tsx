@@ -2,15 +2,14 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/api/client";
 
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { Loader2, CheckCircle2 } from "lucide-react";
 
 function formatError(e: unknown): string {
   const err = e as Partial<ApiError>;
-  if (err?.code === "UNAUTHORIZED") return "Your session expired. Please log in again.";
-  return "Could not record consent. Please try again.";
+  if (err?.code === "UNAUTHORIZED") return "Your session expired. Please sign in again.";
+  return "Could not save your response. Please try again.";
 }
 
 export default function Consent() {
@@ -36,54 +35,61 @@ export default function Consent() {
   }
 
   return (
-    <Card className="rounded-2xl p-6 shadow-sm">
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold">Consent</h2>
-        <p className="text-sm text-muted-foreground">
-          Please review and accept to continue.
+    <div className="space-y-5 rounded-[28px] border border-black/5 bg-white/90 p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] backdrop-blur sm:space-y-6 sm:p-8">
+      <div className="space-y-3">
+        <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground/80">
+          Consent
         </p>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Review and continue
+          </h2>
+          <p className="max-w-xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
+            Please read and accept these terms to continue.
+          </p>
+        </div>
       </div>
 
-      <div className="mt-5">
-        <div className="max-h-64 overflow-auto rounded-xl border bg-muted/20 p-4 text-sm leading-relaxed">
-          <p className="font-medium">Placeholder Consent Text</p>
-          <p className="mt-2 text-muted-foreground">
-            This app helps you track recovery information (pain, swelling, notes) that you choose to enter.
-            You own your data and can export it at any time to share with your clinic.
+      <div className="space-y-5">
+        <div className="max-h-72 overflow-auto rounded-[24px] border border-black/6 bg-stone-50/80 p-4 text-sm leading-7 text-foreground sm:p-5">
+          <p className="font-medium text-foreground">Using Frederick Recovery</p>
+          <p className="mt-3 text-muted-foreground">
+            Frederick Recovery helps you track the recovery information you choose to enter, including things
+            like pain, swelling, and notes.
           </p>
           <p className="mt-3 text-muted-foreground">
-            We recommend not entering highly sensitive information. This is not emergency care. If you
-            have urgent symptoms, contact your provider or seek emergency services.
+            This app is not emergency care. If you have urgent symptoms, contact your provider or seek
+            emergency services.
           </p>
           <p className="mt-3 text-muted-foreground">
-            By selecting “I Agree”, you acknowledge and accept these terms for use of this tool.
+            By selecting “Agree and continue,” you acknowledge these terms for using the app.
           </p>
         </div>
 
         {error ? (
-          <Alert className="mt-4 rounded-xl">
+          <Alert className="rounded-2xl border-red-200 bg-red-50 text-red-950">
             <div className="text-sm">{error}</div>
           </Alert>
         ) : null}
 
         <Button
-          className="mt-5 w-full rounded-xl"
+          className="h-12 w-full rounded-full px-5 text-[15px] disabled:bg-stone-200 disabled:text-stone-500 disabled:opacity-100"
           onClick={onAgree}
           disabled={loading}
         >
           {loading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Saving…
+              Saving response…
             </>
           ) : (
             <>
               <CheckCircle2 className="mr-2 h-4 w-4" />
-              I Agree
+              Agree and continue
             </>
           )}
         </Button>
       </div>
-    </Card>
+    </div>
   );
 }

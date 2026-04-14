@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
 
-import { StepHeader } from "@/components/log/StepHeader";
 import { ChevronLeft, ChevronRight, Save } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export type WizardState = {
   // v2 fields (frontend draft for now)
@@ -102,9 +100,20 @@ function enforceNoneExclusive<T extends string>(arr: T[], noneValue: T): T[] {
 }
 
 function optionButtonClass(selected: boolean) {
-  return `rounded-xl border px-3 py-2 text-sm ${
-    selected ? "bg-primary text-primary-foreground" : "bg-background"
+  return `rounded-2xl border px-3.5 py-2.5 text-sm font-medium transition-colors ${
+    selected
+      ? "border-emerald-900/10 bg-emerald-600 text-white shadow-sm"
+      : "border-black/8 bg-white text-foreground hover:bg-stone-50"
   }`;
+}
+
+function checkboxOptionClass(checked: boolean) {
+  return cn(
+    "flex items-center gap-3 rounded-2xl border px-3.5 py-3 text-sm transition-colors",
+    checked
+      ? "border-emerald-900/10 bg-emerald-50 text-foreground"
+      : "border-black/8 bg-white hover:bg-stone-50"
+  );
 }
 
 type Props = {
@@ -146,9 +155,16 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
 
   const title = useMemo(() => {
     if (step === 1) return "Pain & swelling";
-    if (step === 2) return "Mobility & medications";
-    if (step === 3) return "Wound & safety";
+    if (step === 2) return "Movement & medication";
+    if (step === 3) return "Healing & safety";
     return "Sleep, mood & notes";
+  }, [step]);
+
+  const stepNote = useMemo(() => {
+    if (step === 1) return "Start with how you're feeling today.";
+    if (step === 2) return "Add a quick update on movement and medication.";
+    if (step === 3) return "Note any healing changes or warning signs.";
+    return "Finish with sleep, mood, and any notes you want to keep.";
   }, [step]);
 
   // Derived swellingLevel for backend snapshot (1–10)
@@ -199,9 +215,9 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
 
       // Keep draft behavior: clear draft on success so reopening is clean
       localStorage.removeItem(draftKey(date));
-      setSaveSuccess(mode === "edit" ? "Updated." : "Saved.");
+      setSaveSuccess(mode === "edit" ? "Check-in updated." : "Check-in saved.");
     } catch {
-      setSaveError("Could not save. Please try again.");
+      setSaveError("Could not save your check-in. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -216,30 +232,63 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
   }
 
   return (
-    <Card className="rounded-2xl p-6 shadow-sm">
-      <div className="space-y-3">
-        <StepHeader
-          step={step}
-          total={TOTAL_STEPS}
-          title={title}
-          onCancel={onCancel}
-        />
+    <div className="space-y-5 sm:space-y-6">
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-2">
+            <div className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/80">
+              Step {step} of {TOTAL_STEPS}
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+                {title}
+              </h2>
+              <p className="max-w-xl text-sm leading-6 text-muted-foreground">
+                {stepNote}
+              </p>
+            </div>
+          </div>
 
-        <div className="text-sm text-muted-foreground">
-          {mode === "edit" ? "Editing check-in for" : "Check-in for"}{" "}
-          <span className="font-mono text-foreground">{date}</span>
+          <Button
+            variant="ghost"
+            className="h-9 self-start rounded-full px-3 text-muted-foreground sm:self-auto"
+            onClick={onCancel}
+          >
+            Close
+          </Button>
         </div>
 
-        <Separator />
+        <div className="flex items-center gap-2">
+          {Array.from({ length: TOTAL_STEPS }).map((_, index) => {
+            const active = index + 1 <= step;
+            return (
+              <div
+                key={index}
+                className={cn(
+                  "h-1.5 flex-1 rounded-full transition-colors",
+                  active ? "bg-emerald-600" : "bg-stone-200"
+                )}
+              />
+            );
+          })}
+        </div>
+
+        <div className="text-sm text-muted-foreground">
+          {mode === "edit" ? "Updating" : "Check-in for"}{" "}
+          <span className="font-medium text-foreground">{date}</span>
+        </div>
+      </div>
 
         {/* STEP CONTENT */}
         {step === 1 ? (
-          <div className="space-y-6">
+          <div className="space-y-6 sm:space-y-7">
             {/* Pain level */}
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium">Pain level</label>
-                <div className="text-sm text-muted-foreground">{state.painLevel}/10</div>
+                <div className="rounded-full bg-stone-100 px-2.5 py-1 text-sm text-muted-foreground">
+                  {state.painLevel}/10
+                </div>
               </div>
               <input
                 className="w-full"
@@ -252,8 +301,8 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
             </div>
 
             {/* Pain compared */}
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Pain compared to yesterday</div>
+            <div className="space-y-3">
+              <div className="text-sm font-medium">Pain compared with yesterday</div>
               <div className="flex flex-wrap gap-2">
                 {(["Better", "Same", "Worse"] as const).map((opt) => (
                   <button
@@ -269,7 +318,7 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
             </div>
 
             {/* Swelling today */}
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="text-sm font-medium">Swelling today</div>
               <div className="flex flex-wrap gap-2">
                 {(["None", "Mild", "Moderate", "Severe"] as const).map((opt) => (
@@ -283,14 +332,11 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
                   </button>
                 ))}
               </div>
-              <div className="text-xs text-muted-foreground">
-                (For now, this is stored as a 1–10 snapshot in the current backend export.)
-              </div>
             </div>
 
             {/* Swelling compared */}
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Swelling compared to yesterday</div>
+            <div className="space-y-3">
+              <div className="text-sm font-medium">Swelling compared with yesterday</div>
               <div className="flex flex-wrap gap-2">
                 {(["Better", "Same", "Worse"] as const).map((opt) => (
                   <button
@@ -308,9 +354,9 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
         ) : null}
 
         {step === 2 ? (
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Moved as recommended</div>
+          <div className="space-y-6 sm:space-y-7">
+            <div className="space-y-3">
+              <div className="text-sm font-medium">Movement today</div>
               <div className="flex flex-wrap gap-2">
                 {(["Yes", "Somewhat", "No"] as const).map((opt) => (
                   <button
@@ -325,8 +371,8 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               </div>
             </div>
 
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Difficulty with basic activities</div>
+            <div className="space-y-3">
+              <div className="text-sm font-medium">Daily activities</div>
               <div className="flex flex-wrap gap-2">
                 {(["None", "Mild", "Significant"] as const).map((opt) => (
                   <button
@@ -341,8 +387,8 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               </div>
             </div>
 
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Took meds today</div>
+            <div className="space-y-3">
+              <div className="text-sm font-medium">Medication today</div>
               <div className="flex flex-wrap gap-2">
                 {(["Yes", "Missed one", "Missed multiple"] as const).map((opt) => (
                   <button
@@ -359,11 +405,11 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
 
             <div className="space-y-3">
               <div className="text-sm font-medium">Side effects (select all that apply)</div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {(["None", "Nausea", "Dizziness", "Constipation", "Other"] as const).map((opt) => {
                   const checked = state.sideEffects.includes(opt);
                   return (
-                    <label key={opt} className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
+                    <label key={opt} className={checkboxOptionClass(checked)}>
                       <input
                         type="checkbox"
                         checked={checked}
@@ -394,11 +440,11 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
 
             <div className="space-y-3">
               <div className="text-sm font-medium">Non-med pain relief (select all that apply)</div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {(["Ice", "Compression", "Elevation", "Rest", "None"] as const).map((opt) => {
                   const checked = state.nonMedRelief.includes(opt);
                   return (
-                    <label key={opt} className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
+                    <label key={opt} className={checkboxOptionClass(checked)}>
                       <input
                         type="checkbox"
                         checked={checked}
@@ -418,8 +464,8 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
         ) : null}
 
         {step === 3 ? (
-          <div className="space-y-6">
-            <div className="space-y-2">
+          <div className="space-y-6 sm:space-y-7">
+            <div className="space-y-3">
               <div className="text-sm font-medium">Site change vs yesterday</div>
               <div className="flex flex-wrap gap-2">
                 {(["No", "Slight", "Significant"] as const).map((opt) => (
@@ -435,7 +481,7 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="text-sm font-medium">Drainage</div>
               <div className="flex flex-wrap gap-2">
                 {(["None", "Clear", "Bloody", "Yellow-green"] as const).map((opt) => (
@@ -452,14 +498,14 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
             </div>
 
             <div className="space-y-3">
-              <div className="text-sm font-medium">Red flags (select all that apply)</div>
+              <div className="text-sm font-medium">Symptoms to watch</div>
               <div className="grid gap-2">
                 {(
                   ["None", "Fever", "Shortness of breath", "Chest pain", "Severe swelling/pain", "Sudden worsening"] as const
                 ).map((opt) => {
                   const checked = state.redFlags.includes(opt);
                   return (
-                    <label key={opt} className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
+                    <label key={opt} className={checkboxOptionClass(checked)}>
                       <input
                         type="checkbox"
                         checked={checked}
@@ -476,10 +522,10 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               </div>
 
               {hasRedFlag ? (
-                <Alert className="rounded-xl">
+                <Alert className="rounded-2xl border-amber-200 bg-amber-50 text-amber-950">
                   <div className="text-sm">
-                    This tool does not provide medical advice. If symptoms are severe or worsening, contact your
-                    surgeon/clinic.
+                    This app does not provide medical advice. If symptoms are severe or getting worse, contact your
+                    surgeon or clinic.
                   </div>
                 </Alert>
               ) : null}
@@ -488,8 +534,8 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
         ) : null}
 
         {step === 4 ? (
-          <div className="space-y-6">
-            <div className="space-y-2">
+          <div className="space-y-6 sm:space-y-7">
+            <div className="space-y-3">
               <label className="text-sm font-medium">Sleep hours</label>
               <Input
                 type="number"
@@ -502,7 +548,7 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               />
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="text-sm font-medium">Sleep quality</div>
               <div className="flex flex-wrap gap-2">
                 {(["Poor", "Fair", "Good", "Excellent"] as const).map((opt) => (
@@ -518,7 +564,7 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="text-sm font-medium">Eat normally</div>
               <div className="flex flex-wrap gap-2">
                 {(["Yes", "Somewhat", "No"] as const).map((opt) => (
@@ -534,7 +580,7 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="text-sm font-medium">Fluid intake</div>
               <div className="flex flex-wrap gap-2">
                 {(["Low", "Adequate", "High"] as const).map((opt) => (
@@ -550,7 +596,7 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="text-sm font-medium">Mood</div>
               <div className="flex flex-wrap gap-2">
                 {(["Positive", "Neutral", "Low"] as const).map((opt) => (
@@ -566,8 +612,8 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               </div>
             </div>
 
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Anxiety / discouraged</div>
+            <div className="space-y-3">
+              <div className="text-sm font-medium">Stress or discouragement</div>
               <div className="flex flex-wrap gap-2">
                 {(["Not at all", "Somewhat", "Very"] as const).map((opt) => (
                   <button
@@ -582,7 +628,7 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <label className="text-sm font-medium">Notes (optional)</label>
               <Textarea
                 value={state.notes}
@@ -593,34 +639,34 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
             </div>
 
             {saveSuccess ? (
-              <Alert className="rounded-xl">
+              <Alert className="rounded-2xl border-emerald-200 bg-emerald-50 text-emerald-950">
                 <div className="text-sm">{saveSuccess}</div>
               </Alert>
             ) : null}
 
             {saveError ? (
-              <Alert className="rounded-xl">
+              <Alert className="rounded-2xl border-red-200 bg-red-50 text-red-950">
                 <div className="text-sm">{saveError}</div>
               </Alert>
             ) : null}
 
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <Button
-                variant="outline"
-                className="rounded-xl"
+                variant="ghost"
+                className="h-10 w-full rounded-full px-4 text-muted-foreground sm:h-9 sm:w-auto"
                 onClick={clearDraft}
                 disabled={saving}
               >
-                Clear draft
+                Clear answers
               </Button>
 
               <Button
-                className="rounded-xl"
+                className="h-11 w-full rounded-full px-5 sm:h-10 sm:w-auto"
                 onClick={saveSnapshotNow}
                 disabled={saving}
               >
                 {saving ? (
-                  <>Saving…</>
+                  <>Saving check-in…</>
                 ) : (
                   <>
                     <Save className="mr-2 h-4 w-4" />
@@ -629,21 +675,14 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
                 )}
               </Button>
             </div>
-
-            <div className="text-xs text-muted-foreground">
-              Note: full schemaVersion=2 saving will be enabled after the backend update. For now, the app saves a
-              core snapshot (pain, swelling, notes) while keeping your full draft locally until we wire v2.
-            </div>
           </div>
         ) : null}
 
-        <Separator />
-
         {/* NAV CONTROLS */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-2 border-t border-black/5 pt-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <Button
-            variant="outline"
-            className="rounded-xl"
+            variant="ghost"
+            className="h-10 w-full rounded-full px-3 text-muted-foreground sm:h-9 sm:w-auto"
             onClick={back}
             disabled={step === 1 || saving}
           >
@@ -651,16 +690,21 @@ export default function CheckInWizard({ mode, date, initial, onCancel, onSaveSna
             Back
           </Button>
 
-          <Button
-            className="rounded-xl"
-            onClick={next}
-            disabled={step === TOTAL_STEPS || saving}
-          >
-            Continue
-            <ChevronRight className="ml-2 h-4 w-4" />
-          </Button>
+          {step < TOTAL_STEPS ? (
+            <Button
+              className="h-11 w-full rounded-full px-5 sm:h-10 sm:w-auto"
+              onClick={next}
+              disabled={saving}
+            >
+              Continue
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Button>
+          ) : (
+            <div className="text-sm text-muted-foreground sm:text-right">
+              Review your answers, then save.
+            </div>
+          )}
         </div>
-      </div>
-    </Card>
+    </div>
   );
 }

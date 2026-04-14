@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { setApiNavigator } from "@/api/client";
 
 import Login from "@/pages/Login.tsx";
@@ -7,7 +7,15 @@ import Signup from "@/pages/Signup.tsx";
 import Verify from "@/pages/Verify.tsx";
 import Consent from "@/pages/Consent.tsx";
 import Onboarding from "@/pages/Onboarding.tsx";
+import PatientHome from "@/pages/PatientHome.tsx";
+import MyBox from "@/pages/MyBox.tsx";
+import MyBoxItemDetail from "@/pages/MyBoxItemDetail.tsx";
+import MedicalHub from "@/pages/MedicalHub.tsx";
+import Resources from "@/pages/Resources.tsx";
 import RecoveryLog from "@/pages/RecoveryLog.tsx";
+import ClinicDashboard from "@/pages/ClinicDashboard.tsx";
+import ClinicPatientDetail from "@/pages/ClinicPatientDetail.tsx";
+import { RoleGuard } from "@/components/auth/RoleGuard";
 
 function NavigatorBridge() {
   const navigate = useNavigate();
@@ -19,39 +27,17 @@ function NavigatorBridge() {
   return null;
 }
 
-function pageLabel(pathname: string): string {
-  if (pathname.startsWith("/login")) return "Login";
-  if (pathname.startsWith("/signup")) return "Create account";
-  if (pathname.startsWith("/verify")) return "Verify email";
-  if (pathname.startsWith("/consent")) return "Consent";
-  if (pathname.startsWith("/onboarding")) return "Onboarding";
-  if (pathname.startsWith("/log")) return "Recovery log";
-  return "Frederick Recovery";
-}
-
 function AppShell({ children }: { children: React.ReactNode }) {
-  const location = useLocation();
-  const label = pageLabel(location.pathname);
-
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-md px-4 py-8">
-        <div className="mb-6">
-          <div className="text-sm font-medium text-muted-foreground">
+    <div className="min-h-screen bg-stone-50 text-foreground">
+      <div className="flex min-h-screen w-full flex-col px-4 py-5 sm:px-5 sm:py-8 lg:px-8">
+        <div className="mb-6 w-full sm:mb-8">
+          <div className="text-xs font-medium tracking-[0.08em] text-stone-500">
             Frederick Recovery
           </div>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">
-            Recovery Companion
-          </h1>
-
-          <div className="mt-4 text-sm font-medium text-foreground">{label}</div>
         </div>
 
-        {children}
-
-        <div className="mt-10 text-center text-xs text-muted-foreground">
-          Patient-owned recovery notes. Export anytime to share with your clinic.
-        </div>
+        <div className="flex-1 w-full">{children}</div>
       </div>
     </div>
   );
@@ -72,7 +58,70 @@ export default function App() {
 
           <Route path="/consent" element={<Consent />} />
           <Route path="/onboarding" element={<Onboarding />} />
-          <Route path="/log" element={<RecoveryLog />} />
+          <Route
+            path="/home"
+            element={
+              <RoleGuard allow={["PATIENT"]} requirePatientReady>
+                <PatientHome />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/my-box"
+            element={
+              <RoleGuard allow={["PATIENT"]} requirePatientReady>
+                <MyBox />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/my-box/:itemKey"
+            element={
+              <RoleGuard allow={["PATIENT"]} requirePatientReady>
+                <MyBoxItemDetail />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/medical-hub"
+            element={
+              <RoleGuard allow={["PATIENT"]} requirePatientReady>
+                <MedicalHub />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/resources"
+            element={
+              <RoleGuard allow={["PATIENT"]} requirePatientReady>
+                <Resources />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/clinic"
+            element={
+              <RoleGuard allow={["CLINIC", "OWNER"]}>
+                <ClinicDashboard />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/clinic/patients/:patientId"
+            element={
+              <RoleGuard allow={["CLINIC", "OWNER"]}>
+                <ClinicPatientDetail />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/log"
+            element={
+              <RoleGuard allow={["PATIENT"]} requirePatientReady>
+                <RecoveryLog />
+              </RoleGuard>
+            }
+          />
 
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
