@@ -13,6 +13,9 @@ authRouter.post("/signup", authController.register);
 // POST /auth/login
 authRouter.post("/login", authController.login);
 
+// POST /auth/mfa/login/verify
+authRouter.post("/mfa/login/verify", authController.verifyMfaLogin);
+
 // POST /auth/verify
 authRouter.post("/verify", authController.verify);
 
@@ -33,3 +36,12 @@ authRouter.get("/me", requireAuth, authController.getProfile);
 
 // POST /auth/consent/accept (NEW)
 authRouter.post("/consent/accept", requireAuth, authController.acceptConsent);
+
+// POST /auth/mfa/setup
+authRouter.post("/mfa/setup", requireAuth, authController.setupMfa);
+
+// POST /auth/mfa/verify-setup
+authRouter.post("/mfa/verify-setup", requireAuth, authController.verifyMfaSetup);
+
+// POST /auth/mfa/disable
+authRouter.post("/mfa/disable", requireAuth, authController.disableMfa);
