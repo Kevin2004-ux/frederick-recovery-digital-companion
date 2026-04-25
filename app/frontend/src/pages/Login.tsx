@@ -9,7 +9,25 @@ import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { Loader2, LogIn, UserPlus } from "lucide-react";
 
-type AuthResponse = { token: string };
+type AuthUser = {
+  id: string;
+  email: string;
+  role: "PATIENT" | "CLINIC" | "OWNER";
+};
+
+type NormalLoginResponse = {
+  token: string;
+  user: AuthUser;
+};
+
+type MfaRequiredResponse = {
+  mfaRequired: true;
+  mfaToken: string;
+  user: AuthUser;
+};
+
+type LoginResponse = NormalLoginResponse | MfaRequiredResponse;
+type MfaVerifyResponse = NormalLoginResponse;
 type AuthMeResponse = {
   id: string;
   email: string;
@@ -28,19 +46,37 @@ function formatError(e: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
+function formatMfaError(e: unknown): string {
+  const err = e as Partial<ApiError>;
+  if (err?.code === "INVALID_MFA_CODE") return "Invalid authentication code. Try again.";
+  if (err?.code === "INVALID_MFA_TOKEN") return "Your sign-in session expired. Please sign in again.";
+  if (err?.code === "VALIDATION_ERROR") return "Enter the 6-digit authentication code.";
+  return "Something went wrong. Please try again.";
+}
+
+function isMfaRequiredResponse(res: LoginResponse): res is MfaRequiredResponse {
+  return "mfaRequired" in res && res.mfaRequired === true;
+}
+
 export default function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
   const [email, setEmail] = useState(() => searchParams.get("email") ?? "");
   const [password, setPassword] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isMfaStep = mfaToken !== null;
   const canSubmit = useMemo(() => {
-    return email.trim().length > 3 && password.length >= 8 && !loading;
-  }, [email, password, loading]);
+    return email.trim().length > 3 && password.length >= 8 && !loading && !isMfaStep;
+  }, [email, password, loading, isMfaStep]);
+  const canVerifyMfa = useMemo(() => {
+    return /^\d{6}$/.test(mfaCode) && !loading && !!mfaToken;
+  }, [mfaCode, loading, mfaToken]);
 
   async function forward() {
     try {
@@ -60,14 +96,26 @@ export default function Login() {
     }
   }
 
+  function resetMfaStep() {
+    setMfaToken(null);
+    setMfaCode("");
+    setError(null);
+  }
+
   async function onLogin() {
     setError(null);
     setLoading(true);
     try {
-      const res = await api<AuthResponse>("/auth/login", {
+      const res = await api<LoginResponse>("/auth/login", {
         method: "POST",
         json: { email: email.trim(), password },
       });
+      if (isMfaRequiredResponse(res)) {
+        setMfaToken(res.mfaToken);
+        setMfaCode("");
+        return;
+      }
+
       setToken(res.token);
       await forward();
     } catch (e) {
@@ -82,6 +130,29 @@ export default function Login() {
     }
   }
 
+  async function onVerifyMfa() {
+    if (!mfaToken) return;
+
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await api<MfaVerifyResponse>("/auth/mfa/login/verify", {
+        method: "POST",
+        json: { mfaToken, code: mfaCode },
+      });
+      setToken(res.token);
+      await forward();
+    } catch (e) {
+      const err = e as Partial<ApiError>;
+      if (err?.code === "INVALID_MFA_TOKEN") {
+        resetMfaStep();
+      }
+      setError(formatMfaError(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <section className="mx-auto flex min-h-[calc(100vh-11rem)] w-full max-w-sm flex-col justify-center py-2 sm:min-h-[calc(100vh-12rem)] sm:py-4">
       <Card className="rounded-2xl border border-black/5 bg-white/95 p-5 shadow-sm sm:p-6">
@@ -89,35 +160,56 @@ export default function Login() {
           <div className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium tracking-[0.08em] text-emerald-800">
             Frederick Recovery
           </div>
-          <h2 className="text-xl font-semibold">Sign in</h2>
+          <h2 className="text-xl font-semibold">
+            {isMfaStep ? "Enter authentication code" : "Sign in"}
+          </h2>
           <p className="text-sm text-muted-foreground">
-            Secure access to your recovery account.
+            {isMfaStep
+              ? "Open your authenticator app and enter the 6-digit code."
+              : "Secure access to your recovery account."}
           </p>
         </div>
 
         <div className="mt-5 space-y-4 sm:mt-6">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Email</label>
-            <Input
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-            />
-          </div>
+          {isMfaStep ? (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Authentication code</label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="123456"
+              />
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Email</label>
+                <Input
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                />
+              </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Password</label>
-            <Input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-            />
-            <p className="text-xs text-muted-foreground">Use at least 8 characters.</p>
-          </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Password</label>
+                <Input
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                />
+                <p className="text-xs text-muted-foreground">Use at least 8 characters.</p>
+              </div>
+            </>
+          )}
 
           {error ? (
             <Alert className="rounded-2xl border-red-200 bg-red-50 text-red-950">
@@ -128,37 +220,48 @@ export default function Login() {
           <div className="flex flex-col gap-3">
             <Button
               className="h-11 w-full rounded-2xl disabled:bg-stone-200 disabled:text-stone-500 disabled:opacity-100 sm:h-12"
-              onClick={onLogin}
-              disabled={!canSubmit}
+              onClick={isMfaStep ? onVerifyMfa : onLogin}
+              disabled={isMfaStep ? !canVerifyMfa : !canSubmit}
             >
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Signing in…
+                  {isMfaStep ? "Verifying…" : "Signing in…"}
                 </>
               ) : (
                 <>
                   <LogIn className="mr-2 h-4 w-4" />
-                  Sign in
+                  {isMfaStep ? "Verify code" : "Sign in"}
                 </>
               )}
             </Button>
 
-            {!canSubmit && !loading ? (
+            {!isMfaStep && !canSubmit && !loading ? (
               <p className="text-center text-xs text-muted-foreground">
                 Enter your email and password to continue.
               </p>
             ) : null}
 
-            <Button
-              variant="outline"
-              className="h-11 w-full rounded-2xl sm:h-12"
-              onClick={() => navigate("/signup")}
-              disabled={loading}
-            >
-              <UserPlus className="mr-2 h-4 w-4" />
-              Claim with activation code
-            </Button>
+            {isMfaStep ? (
+              <Button
+                variant="outline"
+                className="h-11 w-full rounded-2xl sm:h-12"
+                onClick={resetMfaStep}
+                disabled={loading}
+              >
+                Back
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                className="h-11 w-full rounded-2xl sm:h-12"
+                onClick={() => navigate("/signup")}
+                disabled={loading}
+              >
+                <UserPlus className="mr-2 h-4 w-4" />
+                Claim with activation code
+              </Button>
+            )}
           </div>
         </div>
       </Card>
