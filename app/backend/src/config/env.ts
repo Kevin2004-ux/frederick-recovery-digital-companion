@@ -12,8 +12,10 @@ const EnvSchema = z
     // --- SECURITY KEYS ---
     // Updated minimum length to 32 to match your new military-grade keys
     JWT_SECRET: z.string().min(32),
-    // Added ENCRYPTION_KEY support (optional in schema to prevent crash if missing, but code prefers it)
-    ENCRYPTION_KEY: z.string().min(32).optional(),
+    ENCRYPTION_KEY: z
+      .string()
+      .min(32, "ENCRYPTION_KEY must be at least 32 characters")
+      .optional(),
     // ---------------------
 
     DATABASE_URL: z.string().optional(),
@@ -27,6 +29,14 @@ const EnvSchema = z
         code: z.ZodIssueCode.custom,
         message: "DATABASE_URL is required in production",
         path: ["DATABASE_URL"],
+      });
+    }
+
+    if (val.APP_ENV === "production" && !val.ENCRYPTION_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "ENCRYPTION_KEY is required when APP_ENV is production",
+        path: ["ENCRYPTION_KEY"],
       });
     }
   });
@@ -56,4 +66,8 @@ export function getEnv() {
   };
 
   return _env;
+}
+
+export function resetEnvForTests() {
+  _env = null;
 }
