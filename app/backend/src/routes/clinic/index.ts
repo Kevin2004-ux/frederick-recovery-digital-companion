@@ -778,7 +778,11 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
     role: req.user!.role,
     clinicTag: requesterTag,
     status: AuditStatus.SUCCESS,
-    metadata: { count: flatPatients.length },
+    metadata: {
+      count: flatPatients.length,
+      patientUserIds: patientIds,
+      route: "/clinic/patients",
+    },
   });
 
   return res.status(200).json({ patients: flatPatients });
