@@ -2,13 +2,83 @@
 import { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
 
+const SENSITIVE_ERROR_MESSAGE_PATTERNS = [
+  /authorization/i,
+  /bearer/i,
+  /cookie/i,
+  /secret/i,
+  /token/i,
+  /password/i,
+  /symptom/i,
+  /medication/i,
+  /red flag/i,
+  /patient/i,
+  /note/i,
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
+];
+
+function isProductionLikeEnvironment() {
+  return process.env.APP_ENV === "production" || process.env.NODE_ENV === "production";
+}
+
+function getSafeErrorMessage(err: unknown): string {
+  if (err instanceof ZodError) {
+    return "Validation failed";
+  }
+
+  if (err && typeof err === "object" && "code" in err) {
+    const code = typeof err.code === "string" ? err.code : "";
+    if (code === "P2002") return "Unique constraint violation";
+    if (code === "P2025") return "Record not found";
+  }
+
+  const message = err instanceof Error ? err.message : undefined;
+  if (!message) {
+    return "Unexpected error";
+  }
+
+  if (SENSITIVE_ERROR_MESSAGE_PATTERNS.some((pattern) => pattern.test(message))) {
+    return "Sensitive error message redacted";
+  }
+
+  return message;
+}
+
+function sanitizeErrorForLog(err: unknown, req: Request) {
+  const isObject = err !== null && typeof err === "object";
+  const statusCode =
+    isObject && "statusCode" in err && typeof err.statusCode === "number"
+      ? err.statusCode
+      : isObject && "status" in err && typeof err.status === "number"
+        ? err.status
+        : undefined;
+
+  const sanitized = {
+    method: req.method,
+    path: req.path,
+    name: err instanceof Error ? err.name : undefined,
+    code: isObject && "code" in err && typeof err.code === "string" ? err.code : undefined,
+    message: getSafeErrorMessage(err),
+    statusCode,
+  };
+
+  if (!isProductionLikeEnvironment() && err instanceof Error && err.stack) {
+    return {
+      ...sanitized,
+      stack: err.stack,
+    };
+  }
+
+  return sanitized;
+}
+
 /**
  * Centralized Error Handler
  * Catches all errors thrown in routes/controllers
  */
 export function errorHandler(err: any, req: Request, res: Response, next: NextFunction) {
   // 1. Log the error for debugging (exclude 404s/401s if you want cleaner logs)
-  console.error(`[ERROR] ${req.method} ${req.path}`, err);
+  console.error("[ERROR]", sanitizeErrorForLog(err, req));
 
   // 2. Handle Zod Validation Errors (Input Validation)
   if (err instanceof ZodError) {
