@@ -56,33 +56,38 @@ enum ReminderStatus {
 // --- MODELS ---
 
 model User {
-  id                     String    @id @default(uuid())
-  email                  String    @unique
-  passwordHash           String
-  role                   UserRole  @default(PATIENT)
-  clinicTag              String?   // For CLINIC users
-  tokenVersion      Int      @default(1)
-  
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(PATIENT)
+  clinicTag    String? // For CLINIC users
+  tokenVersion Int      @default(1)
+
   // --- NEW SECURITY FIELDS ---
-  failedLoginAttempts    Int       @default(0)
-  lockedUntil            DateTime? // If set, user cannot login until this time
-  lastLoginAt            DateTime?
-  isBanned               Boolean   @default(false) // Instant termination switch
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime? // If set, user cannot login until this time
+  lastLoginAt         DateTime?
+  isBanned            Boolean   @default(false) // Instant termination switch
   // ---------------------------
-   
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+
+  mfaEnabled        Boolean   @default(false)
+  mfaSecret         String?   @db.Text
+  mfaEnabledAt      DateTime?
+  mfaLastVerifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Onboarding
-  consentAcceptedAt      DateTime?
-  procedureName          String?
-  procedureCode          String?                 // legacy compatibility
-  recoveryStartDate      String?                 // YYYY-MM-DD
+  consentAcceptedAt DateTime?
+  procedureName     String?
+  procedureCode     String? // legacy compatibility
+  recoveryStartDate String? // YYYY-MM-DD
 
   // Verification
-  emailVerifiedAt        DateTime?
-  verificationCode       String?
-  verificationExpiresAt  DateTime?
+  emailVerifiedAt       DateTime?
+  verificationCode      String?
+  verificationExpiresAt DateTime?
 
   // --- PASSWORD RESET FIELDS ---
   passwordResetTokenHash String?   @unique
@@ -91,81 +96,81 @@ model User {
 
   // Relations
   logEntries             LogEntry[]
-  claimedActivationCodes ActivationCode[]        @relation("ActivationCodeClaimedByUser")
-   
-  recoveryPlans          RecoveryPlanInstance[] 
-   
-  createdActivationBatches ActivationBatch[]       @relation("ActivationBatchCreatedBy")
-  capturedActivationConfigs ActivationCode[]       @relation("ActivationCodeConfigCapturedByUser")
-  approvedActivationCodes ActivationCode[]         @relation("ActivationCodeApprovedByUser")
-  operationalAlerts      OperationalAlert[]
-  reminderOutboxEntries  ReminderOutbox[]
+  claimedActivationCodes ActivationCode[] @relation("ActivationCodeClaimedByUser")
+
+  recoveryPlans RecoveryPlanInstance[]
+
+  createdActivationBatches  ActivationBatch[]  @relation("ActivationBatchCreatedBy")
+  capturedActivationConfigs ActivationCode[]   @relation("ActivationCodeConfigCapturedByUser")
+  approvedActivationCodes   ActivationCode[]   @relation("ActivationCodeApprovedByUser")
+  operationalAlerts         OperationalAlert[]
+  reminderOutboxEntries     ReminderOutbox[]
 
   @@index([clinicTag])
 }
 
 model LogEntry {
-  id            String   @id @default(uuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-   
-  date          String   // YYYY-MM-DD
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date          String // YYYY-MM-DD
   painLevel     Int
   swellingLevel Int
-  notes         String?  @db.Text
-   
-  schemaVersion Int      @default(2)
+  notes         String? @db.Text
+
+  schemaVersion Int   @default(2)
   details       Json?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, date])
   @@index([userId, date])
 }
 
 model ClinicPlanConfig {
-  clinicTag        String                @id
-  name             String?               // display name for admin UI (nullable for safe migration)
-  defaultCategory  RecoveryPlanCategory  @default(general_outpatient)
+  clinicTag       String               @id
+  name            String? // display name for admin UI (nullable for safe migration)
+  defaultCategory RecoveryPlanCategory @default(general_outpatient)
 
-  overridesJson    Json?
-  notes            String?
+  overridesJson Json?
+  notes         String?
 
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  activationCodes  ActivationCode[]
-  templates        RecoveryPlanTemplate[]
+  activationCodes ActivationCode[]
+  templates       RecoveryPlanTemplate[]
 }
 
 model ActivationBatch {
-  id              String           @id @default(uuid())
-  clinicTag       String?
-  quantity        Int
-  boxType         String?
+  id                String  @id @default(uuid())
+  clinicTag         String?
+  quantity          Int
+  boxType           String?
   includedItemsJson Json?
-   
+
   createdByUserId String?
-  createdByUser   User?            @relation("ActivationBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-   
-  codes           ActivationCode[]
-  createdAt       DateTime         @default(now())
+  createdByUser   User?   @relation("ActivationBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  codes     ActivationCode[]
+  createdAt DateTime         @default(now())
 
   @@index([clinicTag])
   @@index([createdByUserId])
 }
 
 model ActivationCode {
-  id                     String                @id @default(uuid())
-  code                   String                @unique
-  status                 ActivationCodeStatus  @default(ISSUED)
-   
-  clinicTag              String?
-  clinicConfig           ClinicPlanConfig?     @relation(fields: [clinicTag], references: [clinicTag])
-   
-  batchId                String?
-  batch                  ActivationBatch?      @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  id     String               @id @default(uuid())
+  code   String               @unique
+  status ActivationCodeStatus @default(ISSUED)
+
+  clinicTag    String?
+  clinicConfig ClinicPlanConfig? @relation(fields: [clinicTag], references: [clinicTag])
+
+  batchId String?
+  batch   ActivationBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
   // Clinic flow
   configJson             Json?
@@ -173,22 +178,22 @@ model ActivationCode {
   planSnapshot           Json?
   configCapturedAt       DateTime?
   configCapturedByUserId String?
-  configCapturedByUser   User?                 @relation("ActivationCodeConfigCapturedByUser", fields: [configCapturedByUserId], references: [id], onDelete: SetNull)
+  configCapturedByUser   User?     @relation("ActivationCodeConfigCapturedByUser", fields: [configCapturedByUserId], references: [id], onDelete: SetNull)
   approvedAt             DateTime?
   approvedByUserId       String?
-  approvedByUser         User?                 @relation("ActivationCodeApprovedByUser", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  approvedByUser         User?     @relation("ActivationCodeApprovedByUser", fields: [approvedByUserId], references: [id], onDelete: SetNull)
 
   // Patient flow
-  claimedByUserId        String?
-  claimedByUser          User?                 @relation("ActivationCodeClaimedByUser", fields: [claimedByUserId], references: [id], onDelete: SetNull)
-  claimedAt              DateTime?
+  claimedByUserId String?
+  claimedByUser   User?     @relation("ActivationCodeClaimedByUser", fields: [claimedByUserId], references: [id], onDelete: SetNull)
+  claimedAt       DateTime?
 
-  planInstance           RecoveryPlanInstance?
-  operationalAlerts      OperationalAlert[]
-  reminderOutboxEntries  ReminderOutbox[]
+  planInstance          RecoveryPlanInstance?
+  operationalAlerts     OperationalAlert[]
+  reminderOutboxEntries ReminderOutbox[]
 
-  createdAt              DateTime              @default(now())
-  updatedAt              DateTime              @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([clinicTag])
@@ -199,21 +204,21 @@ model ActivationCode {
 }
 
 model RecoveryPlanTemplate {
-  id           String               @id @default(uuid())
-   
-  clinicTag    String?              
-  clinic       ClinicPlanConfig?    @relation(fields: [clinicTag], references: [clinicTag], onDelete: Cascade)
+  id String @id @default(uuid())
 
-  category     RecoveryPlanCategory
-  version      Int
-  title        String
-  planJson     Json
-  sourcesJson  Json?
+  clinicTag String?
+  clinic    ClinicPlanConfig? @relation(fields: [clinicTag], references: [clinicTag], onDelete: Cascade)
 
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
+  category    RecoveryPlanCategory
+  version     Int
+  title       String
+  planJson    Json
+  sourcesJson Json?
 
-  instances    RecoveryPlanInstance[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  instances RecoveryPlanInstance[]
 
   @@unique([clinicTag, category, version])
   @@index([category])
@@ -221,25 +226,25 @@ model RecoveryPlanTemplate {
 }
 
 model RecoveryPlanInstance {
-  id               String               @id @default(uuid())
-  userId           String
-   
-  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String
 
-  activationCodeId String               @unique
-  activationCode   ActivationCode       @relation(fields: [activationCodeId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  templateId       String
-  template         RecoveryPlanTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  activationCodeId String         @unique
+  activationCode   ActivationCode @relation(fields: [activationCodeId], references: [id], onDelete: Cascade)
 
-  engineVersion    String
-  startDate        String
+  templateId String
+  template   RecoveryPlanTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
 
-  configJson       Json
-  planJson         Json
+  engineVersion String
+  startDate     String
 
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
+  configJson Json
+  planJson   Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([startDate])
@@ -270,22 +275,22 @@ model OperationalAlert {
 }
 
 model ReminderOutbox {
-  id               String         @id @default(uuid())
-  patientUserId    String
-  patientUser      User           @relation(fields: [patientUserId], references: [id], onDelete: Cascade)
-  clinicTag        String
-  activationCodeId String?
-  activationCode   ActivationCode? @relation(fields: [activationCodeId], references: [id], onDelete: SetNull)
-  type             ReminderType
-  scheduledForDate String
-  status           ReminderStatus @default(PENDING)
-  sentAt           DateTime?
-  failedAt         DateTime?
+  id                String          @id @default(uuid())
+  patientUserId     String
+  patientUser       User            @relation(fields: [patientUserId], references: [id], onDelete: Cascade)
+  clinicTag         String
+  activationCodeId  String?
+  activationCode    ActivationCode? @relation(fields: [activationCodeId], references: [id], onDelete: SetNull)
+  type              ReminderType
+  scheduledForDate  String
+  status            ReminderStatus  @default(PENDING)
+  sentAt            DateTime?
+  failedAt          DateTime?
   providerMessageId String?
-  detailsJson      Json?
-  dedupeKey        String         @unique
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  detailsJson       Json?
+  dedupeKey         String          @unique
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
   @@index([clinicTag, scheduledForDate, status])
   @@index([patientUserId, type, scheduledForDate])
@@ -293,24 +298,24 @@ model ReminderOutbox {
 }
 
 model SecurityAudit {
-  id               String   @id @default(uuid())
-  actorUserId      String?
-  actorRole        String
-  eventCategory    String
-  eventType        String
-   
-  clinicTag        String?
-  patientUserId    String?
-   
+  id            String  @id @default(uuid())
+  actorUserId   String?
+  actorRole     String
+  eventCategory String
+  eventType     String
+
+  clinicTag     String?
+  patientUserId String?
+
   targetObjectType String?
-  targetObjectId   String?  
-   
-  ipAddress        String
-  userAgent        String
-  status           String
-  metadata         Json?
-   
-  timestamp        DateTime @default(now())
+  targetObjectId   String?
+
+  ipAddress String
+  userAgent String
+  status    String
+  metadata  Json?
+
+  timestamp DateTime @default(now())
 
   @@index([timestamp])
   @@index([actorUserId])

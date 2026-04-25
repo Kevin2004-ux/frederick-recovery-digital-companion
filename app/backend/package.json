@@ -27,6 +27,7 @@
     "fast-xml-parser": "^5.5.12",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
+    "otplib": "^13.4.0",
     "pdfkit-table": "^0.1.99",
     "prisma": "^5.10.0",
     "resend": "^3.2.0",

@@ -8,8 +8,40 @@ import { UserRole } from "@prisma/client";
 import { prisma } from "../db/prisma.js"; 
 import * as userRepo from "../repositories/userRepo.js";
 import { AuditService, AuditCategory, AuditStatus, AuditSeverity } from "../services/AuditService.js";
-import { signAccessToken } from "../utils/jwt.js";
+import { decryptPHI, encryptPHI } from "../utils/encryption.js";
+import { signAccessToken, signMfaLoginToken, verifyMfaLoginToken } from "../utils/jwt.js";
 import { sendPasswordResetEmail, sendVerificationEmail } from "../utils/mailer.js"; // <--- Import Mailers
+import { generateMfaEnrollment, isMfaEligibleRole, normalizeMfaCode, verifyMfaCode } from "../utils/mfa.js";
+
+const MFA_DECRYPT_FAILURE_MESSAGE = "[Encrypted Data Cannot Be Accessed]";
+
+const MfaCodeSchema = z.object({
+  code: z.string().trim().regex(/^\d{6}$/, "MFA code must be 6 digits"),
+});
+
+const MfaLoginVerifySchema = z.object({
+  mfaToken: z.string().min(1),
+  code: z.string().trim().regex(/^\d{6}$/, "MFA code must be 6 digits"),
+});
+
+function buildAuthUserResponse(user: { id: string; email: string; role: UserRole }) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+  };
+}
+
+function getDecryptedMfaSecret(encryptedSecret: string | null | undefined) {
+  if (!encryptedSecret) return null;
+
+  const decrypted = decryptPHI(encryptedSecret);
+  if (!decrypted || decrypted === MFA_DECRYPT_FAILURE_MESSAGE) {
+    return null;
+  }
+
+  return decrypted;
+}
 
 /**
  * POST /auth/register
@@ -89,7 +121,8 @@ export async function login(req: Request, res: Response): Promise<any> {
       select: {
         id: true, email: true, passwordHash: true, role: true,
         tokenVersion: true, isBanned: true, lockedUntil: true, failedLoginAttempts: true,
-        emailVerifiedAt: true // <--- NEW: Select this field to check verification status
+        emailVerifiedAt: true,
+        mfaEnabled: true,
       }
     });
 
@@ -142,6 +175,31 @@ export async function login(req: Request, res: Response): Promise<any> {
       return res.status(403).json({ code: "EMAIL_NOT_VERIFIED", message: "Please verify your email before logging in." });
     }
 
+    if (isMfaEligibleRole(user.role) && user.mfaEnabled) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: 0, lockedUntil: null },
+      });
+
+      const mfaToken = signMfaLoginToken({
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+        tokenVersion: user.tokenVersion,
+      });
+
+      AuditService.log({
+        req, category: AuditCategory.AUTH, type: "MFA_REQUIRED",
+        userId: user.id, role: user.role, status: AuditStatus.SUCCESS
+      });
+
+      return res.json({
+        mfaRequired: true,
+        mfaToken,
+        user: buildAuthUserResponse(user),
+      });
+    }
+
     await prisma.user.update({
       where: { id: user.id },
       data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() }
@@ -159,12 +217,265 @@ export async function login(req: Request, res: Response): Promise<any> {
       userId: user.id, role: user.role, status: AuditStatus.SUCCESS
     });
 
-    return res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+    return res.json({ token, user: buildAuthUserResponse(user) });
 
   } catch (err) {
     console.error("Login Error:", err);
     return res.status(500).json({ error: "Internal Server Error" });
   }
+}
+
+/**
+ * POST /auth/mfa/setup
+ */
+export async function setupMfa(req: Request, res: Response): Promise<any> {
+  const userId = req.user?.id;
+  const userRole = req.user?.role;
+
+  if (!userId || !userRole) {
+    return res.status(401).json({ code: "UNAUTHORIZED" });
+  }
+
+  if (!isMfaEligibleRole(userRole)) {
+    return res.status(403).json({ code: "MFA_NOT_REQUIRED" });
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      mfaEnabled: true,
+    },
+  });
+
+  if (!user) {
+    return res.status(404).json({ code: "USER_NOT_FOUND" });
+  }
+
+  if (user.mfaEnabled) {
+    return res.status(409).json({ code: "MFA_ALREADY_ENABLED" });
+  }
+
+  const { otpauthUrl, manualEntryKey } = generateMfaEnrollment(user.email);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      mfaSecret: encryptPHI(manualEntryKey),
+      mfaEnabled: false,
+      mfaEnabledAt: null,
+      mfaLastVerifiedAt: null,
+    },
+  });
+
+  AuditService.log({
+    req, category: AuditCategory.AUTH, type: "MFA_SETUP_STARTED",
+    userId: user.id, role: user.role, status: AuditStatus.SUCCESS
+  });
+
+  return res.status(200).json({
+    otpauthUrl,
+    manualEntryKey,
+  });
+}
+
+/**
+ * POST /auth/mfa/verify-setup
+ */
+export async function verifyMfaSetup(req: Request, res: Response): Promise<any> {
+  const userId = req.user?.id;
+  const userRole = req.user?.role;
+
+  if (!userId || !userRole) {
+    return res.status(401).json({ code: "UNAUTHORIZED" });
+  }
+
+  if (!isMfaEligibleRole(userRole)) {
+    return res.status(403).json({ code: "MFA_NOT_REQUIRED" });
+  }
+
+  const parsed = MfaCodeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      role: true,
+      mfaSecret: true,
+    },
+  });
+
+  if (!user) {
+    return res.status(404).json({ code: "USER_NOT_FOUND" });
+  }
+
+  const secret = getDecryptedMfaSecret(user.mfaSecret);
+  if (!secret) {
+    return res.status(400).json({ code: "MFA_SETUP_REQUIRED" });
+  }
+
+  const isValid = verifyMfaCode(secret, normalizeMfaCode(parsed.data.code));
+  if (!isValid) {
+    AuditService.log({
+      req, category: AuditCategory.AUTH, type: "MFA_SETUP_FAILED",
+      userId: user.id, role: user.role, status: AuditStatus.FAILURE
+    });
+
+    return res.status(401).json({ code: "INVALID_MFA_CODE" });
+  }
+
+  const now = new Date();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      mfaEnabled: true,
+      mfaEnabledAt: now,
+      mfaLastVerifiedAt: now,
+    },
+  });
+
+  AuditService.log({
+    req, category: AuditCategory.AUTH, type: "MFA_SETUP_VERIFIED",
+    userId: user.id, role: user.role, status: AuditStatus.SUCCESS
+  });
+
+  return res.status(200).json({ ok: true });
+}
+
+/**
+ * POST /auth/mfa/disable
+ */
+export async function disableMfa(req: Request, res: Response): Promise<any> {
+  const userId = req.user?.id;
+  const userRole = req.user?.role;
+
+  if (!userId || !userRole) {
+    return res.status(401).json({ code: "UNAUTHORIZED" });
+  }
+
+  if (userRole !== UserRole.OWNER) {
+    return res.status(403).json({ code: "FORBIDDEN" });
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaEnabledAt: null,
+      mfaLastVerifiedAt: null,
+    },
+  });
+
+  AuditService.log({
+    req, category: AuditCategory.AUTH, type: "MFA_DISABLED",
+    userId, role: userRole, status: AuditStatus.SUCCESS
+  });
+
+  return res.status(200).json({ ok: true });
+}
+
+/**
+ * POST /auth/mfa/login/verify
+ */
+export async function verifyMfaLogin(req: Request, res: Response): Promise<any> {
+  const parsed = MfaLoginVerifySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
+  }
+
+  let payload: ReturnType<typeof verifyMfaLoginToken>;
+
+  try {
+    payload = verifyMfaLoginToken(parsed.data.mfaToken);
+  } catch {
+    return res.status(401).json({ code: "INVALID_MFA_TOKEN" });
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: payload.sub },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      tokenVersion: true,
+      isBanned: true,
+      lockedUntil: true,
+      mfaEnabled: true,
+      mfaSecret: true,
+    },
+  });
+
+  if (!user) {
+    return res.status(401).json({ code: "INVALID_MFA_TOKEN" });
+  }
+
+  if (user.isBanned) {
+    return res.status(403).json({ code: "ACCOUNT_TERMINATED", message: "Account is permanently disabled." });
+  }
+
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    return res.status(403).json({ code: "ACCOUNT_LOCKED", message: "Account locked. Try again later." });
+  }
+
+  if (payload.tokenVersion !== user.tokenVersion) {
+    return res.status(401).json({ code: "TOKEN_REVOKED", message: "Session expired or password changed. Please login again." });
+  }
+
+  if (!isMfaEligibleRole(user.role) || !user.mfaEnabled) {
+    return res.status(400).json({ code: "MFA_NOT_ENABLED" });
+  }
+
+  const secret = getDecryptedMfaSecret(user.mfaSecret);
+  if (!secret) {
+    return res.status(500).json({ code: "MFA_CONFIGURATION_ERROR" });
+  }
+
+  const isValid = verifyMfaCode(secret, normalizeMfaCode(parsed.data.code));
+  if (!isValid) {
+    AuditService.log({
+      req, category: AuditCategory.AUTH, type: "MFA_LOGIN_FAILED",
+      userId: user.id, role: user.role, status: AuditStatus.FAILURE
+    });
+
+    return res.status(401).json({ code: "INVALID_MFA_CODE" });
+  }
+
+  const now = new Date();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      mfaLastVerifiedAt: now,
+      lastLoginAt: now,
+    },
+  });
+
+  const token = signAccessToken({
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+    tokenVersion: user.tokenVersion,
+  });
+
+  AuditService.log({
+    req, category: AuditCategory.AUTH, type: "MFA_LOGIN_VERIFIED",
+    userId: user.id, role: user.role, status: AuditStatus.SUCCESS
+  });
+
+  AuditService.log({
+    req, category: AuditCategory.AUTH, type: "LOGIN_SUCCESS",
+    userId: user.id, role: user.role, status: AuditStatus.SUCCESS
+  });
+
+  return res.status(200).json({
+    token,
+    user: buildAuthUserResponse(user),
+  });
 }
 
 /**
