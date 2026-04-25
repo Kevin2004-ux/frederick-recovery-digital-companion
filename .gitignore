@@ -26,6 +26,9 @@ coverage
 !app/frontend/tsconfig.app.json
 !app/frontend/tsconfig.node.json
 !app/frontend/vercel.json
+!app/factory-frontend/tsconfig.json
+!app/factory-frontend/tsconfig.*.json
+!app/factory-frontend/vercel.json
 !app/backend/tsconfig.json
 !app/backend/tsconfig.*.json
 !tsconfig.json
