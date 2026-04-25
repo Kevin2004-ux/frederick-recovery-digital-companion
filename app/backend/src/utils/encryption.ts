@@ -5,16 +5,20 @@ import { getEnv } from "../config/env.js";
 // Algorithm: AES-256-GCM (Authenticated Encryption)
 // Prevents tampering and ensures confidentiality.
 const ALGORITHM = "aes-256-gcm";
+const MISSING_ENCRYPTION_KEY_ERROR = "ENCRYPTION_KEY is required for PHI encryption";
 
 function getKey(): Buffer {
   const env = getEnv();
-  // We expect a 32-character hex string or similar high-entropy key
-  // For now, we will hash the secret to ensure it's exactly 32 bytes
-  if (!env.JWT_SECRET) throw new Error("Encryption key derivation failed: No secret");
-  
-  // In production, you should use a dedicated ENCRYPTION_KEY. 
-  // For this step, we derive a stable key from your existing JWT_SECRET to avoid breaking your env.
-  return crypto.createHash("sha256").update(env.JWT_SECRET).digest();
+
+  if (!env.ENCRYPTION_KEY) {
+    throw new Error(MISSING_ENCRYPTION_KEY_ERROR);
+  }
+
+  return crypto.createHash("sha256").update(env.ENCRYPTION_KEY).digest();
+}
+
+function isMissingEncryptionKeyError(error: unknown): boolean {
+  return error instanceof Error && error.message === MISSING_ENCRYPTION_KEY_ERROR;
 }
 
 /**
@@ -37,7 +41,10 @@ export function encryptPHI(text: string | null | undefined): string | null {
     // Store everything needed to decrypt: IV + Tag + Content
     return `${iv.toString("hex")}:${authTag}:${encrypted}`;
   } catch (error) {
-    console.error("[CRYPTO] Encryption failed", error);
+    if (isMissingEncryptionKeyError(error)) {
+      throw error;
+    }
+
     throw new Error("Failed to secure sensitive data");
   }
 }
@@ -70,6 +77,10 @@ export function decryptPHI(stored: string | null | undefined): string | null {
 
     return decrypted;
   } catch (error) {
+    if (isMissingEncryptionKeyError(error)) {
+      throw error;
+    }
+
     console.error("[CRYPTO] Decryption failed or data tampered");
     // Fail safe: Do not return garbage/corrupted data
     return "[Encrypted Data Cannot Be Accessed]";
