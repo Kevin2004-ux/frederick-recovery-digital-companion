@@ -6,6 +6,12 @@ import { getEnv } from "../config/env.js";
 // Prevents tampering and ensures confidentiality.
 const ALGORITHM = "aes-256-gcm";
 const MISSING_ENCRYPTION_KEY_ERROR = "ENCRYPTION_KEY is required for PHI encryption";
+const ENCRYPTED_DATA_FAILURE_MESSAGE = "[Encrypted Data Cannot Be Accessed]";
+
+type EncryptedJsonWrapper = {
+  __encrypted: true;
+  value: string;
+};
 
 function getKey(): Buffer {
   const env = getEnv();
@@ -19,6 +25,20 @@ function getKey(): Buffer {
 
 function isMissingEncryptionKeyError(error: unknown): boolean {
   return error instanceof Error && error.message === MISSING_ENCRYPTION_KEY_ERROR;
+}
+
+function isEncryptedJsonWrapper(value: unknown): value is EncryptedJsonWrapper {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).__encrypted === true &&
+    typeof (value as Record<string, unknown>).value === "string"
+  );
+}
+
+export function isEncryptedJsonPHI(value: unknown): value is EncryptedJsonWrapper {
+  return isEncryptedJsonWrapper(value);
 }
 
 /**
@@ -83,6 +103,40 @@ export function decryptPHI(stored: string | null | undefined): string | null {
 
     console.error("[CRYPTO] Decryption failed or data tampered");
     // Fail safe: Do not return garbage/corrupted data
-    return "[Encrypted Data Cannot Be Accessed]";
+    return ENCRYPTED_DATA_FAILURE_MESSAGE;
+  }
+}
+
+export function encryptJsonPHI(value: unknown): EncryptedJsonWrapper | null {
+  if (value === null || value === undefined) return null;
+
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) return null;
+
+  const encrypted = encryptPHI(serialized);
+  if (!encrypted) return null;
+
+  return {
+    __encrypted: true,
+    value: encrypted,
+  };
+}
+
+export function decryptJsonPHI<T = unknown>(value: unknown): T | null {
+  if (value === null || value === undefined) return null;
+
+  if (!isEncryptedJsonWrapper(value)) {
+    return value as T;
+  }
+
+  const decrypted = decryptPHI(value.value);
+  if (!decrypted || decrypted === ENCRYPTED_DATA_FAILURE_MESSAGE) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(decrypted) as T;
+  } catch {
+    return null;
   }
 }

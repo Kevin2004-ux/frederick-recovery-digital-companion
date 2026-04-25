@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { prisma } from "../db/prisma.js";
 import { sendDailyCheckInReminderEmail } from "../utils/mailer.js";
+import { encryptJsonPHI } from "../utils/encryption.js";
 
 const DAILY_CHECK_IN_REMINDER_WINDOW_DAYS = 21;
 
@@ -196,11 +197,11 @@ export async function runDailyCheckInReminderDigest(
         scheduledForDate,
         status: ReminderStatus.PENDING,
         failedAt: null,
-        detailsJson: {
+        detailsJson: encryptJsonPHI({
           currentRecoveryDay,
           recoveryStartDate,
           appLinkSource: "frontend_origins_or_localhost",
-        } as Prisma.InputJsonValue,
+        }) as Prisma.InputJsonValue,
       },
       create: {
         patientUserId,
@@ -210,11 +211,11 @@ export async function runDailyCheckInReminderDigest(
         scheduledForDate,
         status: ReminderStatus.PENDING,
         dedupeKey,
-        detailsJson: {
+        detailsJson: encryptJsonPHI({
           currentRecoveryDay,
           recoveryStartDate,
           appLinkSource: "frontend_origins_or_localhost",
-        } as Prisma.InputJsonValue,
+        }) as Prisma.InputJsonValue,
       },
       select: {
         id: true,
