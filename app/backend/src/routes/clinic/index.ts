@@ -32,6 +32,7 @@ import {
   syncOperationalAlertsForPatients,
 } from "../../services/operationalAlerts.js";
 import { generatePlan } from "../../services/plan/generatePlan.js";
+import { decryptJsonPHI } from "../../utils/encryption.js";
 
 export const clinicRouter = Router();
 
@@ -693,6 +694,10 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
         },
       })
     : [];
+  const decryptedRecentLogs = recentLogs.map((logEntry) => ({
+    ...logEntry,
+    details: decryptJsonPHI(logEntry.details),
+  }));
 
   const openAlerts = await listOpenOperationalAlerts({
     patientUserIds: patientIds,
@@ -716,11 +721,11 @@ clinicRouter.get("/patients", async (req: Request, res: Response) => {
       date: string;
       painLevel: number;
       swellingLevel: number;
-      details: Prisma.JsonValue | null;
+      details: unknown;
     }>
   >();
 
-  for (const logEntry of recentLogs) {
+  for (const logEntry of decryptedRecentLogs) {
     const existing = recentLogsByUserId.get(logEntry.userId) ?? [];
 
     if (existing.length < 3) {

@@ -14,6 +14,7 @@ import {
   formatClinicStatusReasonLabel,
   getPrimaryClinicStatusReason,
 } from "./clinicStatus.js";
+import { decryptJsonPHI, encryptJsonPHI } from "../utils/encryption.js";
 
 type AlertContext = {
   patientUserId: string;
@@ -142,6 +143,11 @@ async function loadAlertContext(args: {
     }),
   ]);
 
+  const decryptedRecentLogs = recentLogs.map((log) => ({
+    ...log,
+    details: decryptJsonPHI(log.details),
+  }));
+
   return {
     patientUserId: args.patientUserId,
     clinicTag: activation.clinicTag,
@@ -150,7 +156,7 @@ async function loadAlertContext(args: {
       planStartDate: latestPlan?.startDate ?? null,
       profileRecoveryStartDate: activation.claimedByUser?.recoveryStartDate ?? null,
     }),
-    recentLogs,
+    recentLogs: decryptedRecentLogs,
   };
 }
 
@@ -251,8 +257,8 @@ export async function syncOperationalAlertsForPatient(
         type: desiredAlert.type,
         severity: desiredAlert.severity,
         status: OperationalAlertStatus.OPEN,
-        reasonsJson: desiredAlert.reasons as Prisma.InputJsonValue,
-        detailsJson: desiredAlert.details as Prisma.InputJsonValue,
+        reasonsJson: encryptJsonPHI(desiredAlert.reasons) as Prisma.InputJsonValue,
+        detailsJson: encryptJsonPHI(desiredAlert.details) as Prisma.InputJsonValue,
         triggeredAt: now,
         resolvedAt: null,
       },
@@ -263,8 +269,8 @@ export async function syncOperationalAlertsForPatient(
         type: desiredAlert.type,
         severity: desiredAlert.severity,
         status: OperationalAlertStatus.OPEN,
-        reasonsJson: desiredAlert.reasons as Prisma.InputJsonValue,
-        detailsJson: desiredAlert.details as Prisma.InputJsonValue,
+        reasonsJson: encryptJsonPHI(desiredAlert.reasons) as Prisma.InputJsonValue,
+        detailsJson: encryptJsonPHI(desiredAlert.details) as Prisma.InputJsonValue,
         dedupeKey: desiredAlert.dedupeKey,
         triggeredAt: now,
       },
@@ -328,18 +334,22 @@ export async function listOpenOperationalAlerts(args: {
     },
   });
 
-  return alerts.map((alert) => ({
-    id: alert.id,
-    patientUserId: alert.patientUserId,
-    clinicTag: alert.clinicTag,
-    type: alert.type,
-    severity: alert.severity,
-    status: alert.status,
-    reasons: parseReasonArray(alert.reasonsJson),
-    summary: buildAlertSummary(parseReasonArray(alert.reasonsJson)),
-    triggeredAt: alert.triggeredAt,
-    resolvedAt: alert.resolvedAt,
-  })) satisfies OperationalAlertSummary[];
+  return alerts.map((alert) => {
+    const reasons = parseReasonArray(decryptJsonPHI(alert.reasonsJson));
+
+    return {
+      id: alert.id,
+      patientUserId: alert.patientUserId,
+      clinicTag: alert.clinicTag,
+      type: alert.type,
+      severity: alert.severity,
+      status: alert.status,
+      reasons,
+      summary: buildAlertSummary(reasons),
+      triggeredAt: alert.triggeredAt,
+      resolvedAt: alert.resolvedAt,
+    };
+  }) satisfies OperationalAlertSummary[];
 }
 
 export function highestOpenOperationalAlertSeverity(
