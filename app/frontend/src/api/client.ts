@@ -72,6 +72,10 @@ async function parseBody(res: Response): Promise<unknown> {
   return text ? text : undefined;
 }
 
+async function parseErrorBody(res: Response): Promise<unknown> {
+  return parseBody(res);
+}
+
 function toApiError(status: number, body: unknown): ApiError {
   if (body && typeof body === "object") {
     const payload = body as ErrorPayload;
@@ -119,4 +123,36 @@ export async function api<T = unknown>(
   }
 
   return body as T;
+}
+
+export async function apiBlob(
+  path: string,
+  options: ApiOptions = {}
+): Promise<Blob> {
+  const headers = new Headers(options.headers);
+  const token = getToken();
+
+  if (options.json !== undefined && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: options.method ?? "GET",
+    headers,
+    body: options.json !== undefined ? JSON.stringify(options.json) : undefined,
+    signal: options.signal,
+  });
+
+  if (!res.ok) {
+    const body = await parseErrorBody(res);
+    const err = toApiError(res.status, body);
+    redirectForError(res.status, err.code);
+    throw err;
+  }
+
+  return res.blob();
 }

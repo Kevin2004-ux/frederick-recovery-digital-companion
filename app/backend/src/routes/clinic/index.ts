@@ -33,6 +33,7 @@ import {
 } from "../../services/operationalAlerts.js";
 import { generatePlan } from "../../services/plan/generatePlan.js";
 import { decryptJsonPHI } from "../../utils/encryption.js";
+import { toCsv } from "../../utils/csv.js";
 
 export const clinicRouter = Router();
 
@@ -429,7 +430,7 @@ clinicRouter.get("/batches/:id/codes.csv", async (req: Request, res: Response) =
 
   const batch = await prisma.activationBatch.findUnique({
     where: { id: batchId },
-    select: { id: true, quantity: true, clinicTag: true },
+    select: { id: true, quantity: true, clinicTag: true, boxType: true },
   });
 
   if (!batch) return res.status(404).send("Not Found");
@@ -444,21 +445,40 @@ clinicRouter.get("/batches/:id/codes.csv", async (req: Request, res: Response) =
   const codes = await prisma.activationCode.findMany({
     where: { batchId },
     orderBy: { createdAt: "asc" },
+    select: {
+      code: true,
+      clinicTag: true,
+      status: true,
+      batchId: true,
+      createdAt: true,
+      claimedAt: true,
+      claimedByUserId: true,
+    },
   });
-
-  const header = "code,clinicTag,status\n";
-  const lines = codes.map((c) => `${c.code},${c.clinicTag ?? ""},${c.status}`).join("\n");
+  const csv = toCsv(
+    ["code", "clinicTag", "status", "batchId", "boxType", "createdAt", "claimedAt", "claimedByUserId"],
+    codes.map((code) => [
+      code.code,
+      code.clinicTag,
+      code.status,
+      code.batchId,
+      batch.boxType,
+      code.createdAt,
+      code.claimedAt,
+      code.claimedByUserId,
+    ]),
+  );
 
   // Audit export
   AuditService.log({
     req, category: AuditCategory.ADMIN, type: "BATCH_EXPORTED",
     userId: user.id, role: user.role, clinicTag: batch.clinicTag,
-    status: AuditStatus.SUCCESS, metadata: { batchId, format: "CSV" }
+    status: AuditStatus.SUCCESS, metadata: { batchId, format: "CSV", exportedCount: codes.length }
   });
 
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="activation-codes-${batchId}.csv"`);
-  return res.status(200).send(header + lines + "\n");
+  return res.status(200).send(csv);
 });
 
 /**

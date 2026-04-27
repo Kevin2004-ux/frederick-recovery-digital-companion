@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   AlertCircle,
   ArrowRight,
   ClipboardCheck,
+  LayoutList,
   LogOut,
   Search,
   ShieldAlert,
@@ -31,6 +32,10 @@ const FILTER_OPTIONS: Array<{ value: DashboardFilter; label: string }> = [
 
 type ClinicRosterResponse = {
   patients?: ClinicPatientRow[];
+};
+
+type AuthMeResponse = {
+  role?: "PATIENT" | "CLINIC" | "OWNER";
 };
 
 function normalizeText(value?: string | null) {
@@ -143,6 +148,7 @@ function formatOpenAlertSummary(patient: ClinicPatientRow) {
 export default function ClinicDashboard() {
   const navigate = useNavigate();
   const [patients, setPatients] = useState<ClinicPatientRow[]>([]);
+  const [currentRole, setCurrentRole] = useState<AuthMeResponse["role"] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -156,21 +162,26 @@ export default function ClinicDashboard() {
   useEffect(() => {
     let active = true;
 
-    async function loadPatients() {
+    async function loadDashboard() {
       setLoading(true);
       setError(null);
 
       try {
-        const payload = await api<ClinicRosterResponse>("/clinic/patients", {
-          method: "GET",
-        });
+        const [payload, me] = await Promise.all([
+          api<ClinicRosterResponse>("/clinic/patients", {
+            method: "GET",
+          }),
+          api<AuthMeResponse>("/auth/me", { method: "GET" }),
+        ]);
 
         if (!active) return;
         setPatients(Array.isArray(payload?.patients) ? payload.patients : []);
+        setCurrentRole(me.role ?? null);
       } catch {
         if (!active) return;
         setError("We couldn’t load the clinic roster right now.");
         setPatients([]);
+        setCurrentRole(null);
       } finally {
         if (active) {
           setLoading(false);
@@ -178,7 +189,7 @@ export default function ClinicDashboard() {
       }
     }
 
-    void loadPatients();
+    void loadDashboard();
 
     return () => {
       active = false;
@@ -229,6 +240,15 @@ export default function ClinicDashboard() {
                 <Stethoscope className="h-4 w-4" />
                 Clinic portal
               </div>
+
+              {currentRole === "OWNER" ? (
+                <Button asChild variant="outline" className="h-9 rounded-full px-3">
+                  <Link to="/owner/clinics">
+                    <LayoutList className="h-4 w-4" />
+                    Clinic Management
+                  </Link>
+                </Button>
+              ) : null}
 
               <Button
                 type="button"
