@@ -269,6 +269,16 @@ h3 {
   background: rgba(20, 81, 63, 0.06);
 }
 
+.button.danger {
+  border-color: rgba(166, 34, 34, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+  color: #9d1c1c;
+}
+
+.button.danger:hover:not(:disabled) {
+  background: rgba(166, 34, 34, 0.08);
+}
+
 .alert {
   padding: 14px 16px;
   border-radius: 16px;
@@ -291,6 +301,14 @@ h3 {
 .grid-two {
   display: grid;
   gap: 16px;
+}
+
+.owner-layout {
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+}
+
+.owner-detail-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .card-grid {
@@ -412,6 +430,114 @@ h3 {
   margin: 0 auto;
 }
 
+.compact-note {
+  margin-top: 0;
+  align-self: flex-start;
+}
+
+.metric-card {
+  grid-template-columns: auto 1fr;
+}
+
+.metric-card p {
+  font-size: 1.75rem;
+  line-height: 1.1;
+  color: inherit;
+  font-weight: 700;
+}
+
+.owner-form {
+  margin-top: 0;
+}
+
+.owner-form-card,
+.warning-card,
+.danger-card {
+  display: grid;
+  gap: 14px;
+}
+
+.owner-table-wrap {
+  margin-top: 0;
+}
+
+.action-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.action-button {
+  min-height: 40px;
+  width: 100%;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(24, 87, 66, 0.06);
+  color: #28473d;
+}
+
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.owner-count-grid,
+.owner-activity-grid {
+  display: grid;
+  gap: 4px 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  font-size: 0.9rem;
+  color: #59756b;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.metric-value {
+  font-size: 1.8rem;
+  line-height: 1.1;
+  font-weight: 700;
+  color: #17362d;
+}
+
+.inline-reset-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(20, 81, 63, 0.05);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 720px) {
   .auth-card,
   .panel {
@@ -432,5 +558,19 @@ h3 {
   .inline-note {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .owner-layout,
+  .owner-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-actions {
+    justify-content: flex-start;
+  }
+
+  .owner-count-grid,
+  .owner-activity-grid {
+    grid-template-columns: 1fr;
   }
 }

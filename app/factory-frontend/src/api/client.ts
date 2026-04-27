@@ -5,12 +5,14 @@ const DEFAULT_API_URL = "https://frederick-backend.onrender.com";
 export class ApiError extends Error {
   status: number;
   code?: string;
+  issues?: unknown;
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, issues?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.issues = issues;
   }
 }
 
@@ -61,6 +63,14 @@ function extractCode(payload: unknown) {
   return undefined;
 }
 
+function extractIssues(payload: unknown) {
+  if (payload && typeof payload === "object" && "issues" in payload) {
+    return payload.issues;
+  }
+
+  return undefined;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(`${getBaseUrl()}${path}`, {
     method: options.method ?? "GET",
@@ -82,10 +92,41 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       extractMessage(payload, `Request failed with status ${response.status}`),
       response.status,
       extractCode(payload),
+      extractIssues(payload),
     );
   }
 
   return payload as T;
+}
+
+async function requestBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+  const response = await fetch(`${getBaseUrl()}${path}`, {
+    method: options.method ?? "GET",
+    headers: buildHeaders(options.body, options.headers),
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+
+  if (!response.ok) {
+    const rawText = await response.text();
+    const payload = rawText
+      ? (() => {
+          try {
+            return JSON.parse(rawText);
+          } catch {
+            return rawText;
+          }
+        })()
+      : null;
+
+    throw new ApiError(
+      extractMessage(payload, `Request failed with status ${response.status}`),
+      response.status,
+      extractCode(payload),
+      extractIssues(payload),
+    );
+  }
+
+  return response.blob();
 }
 
 export const api = {
@@ -97,5 +138,13 @@ export const api = {
       method: "POST",
       body,
     });
+  },
+  delete<T>(path: string) {
+    return request<T>(path, {
+      method: "DELETE",
+    });
+  },
+  blob(path: string, options: RequestOptions = {}) {
+    return requestBlob(path, options);
   },
 };
