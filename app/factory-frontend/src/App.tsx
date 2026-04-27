@@ -4,6 +4,8 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import DashboardPage from "@/pages/Dashboard";
 import LoginPage from "@/pages/Login";
 import MfaSetupPage from "@/pages/MfaSetup";
+import OwnerClinicDetailPage from "@/pages/OwnerClinicDetail";
+import OwnerClinicsPage from "@/pages/OwnerClinics";
 
 export default function App() {
   return (
@@ -23,6 +25,22 @@ export default function App() {
         element={
           <ProtectedRoute>
             <MfaSetupPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/owner/clinics"
+        element={
+          <ProtectedRoute>
+            <OwnerClinicsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/owner/clinics/:clinicTag"
+        element={
+          <ProtectedRoute>
+            <OwnerClinicDetailPage />
           </ProtectedRoute>
         }
       />

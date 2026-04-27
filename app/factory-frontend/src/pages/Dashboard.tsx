@@ -1,4 +1,4 @@
-import { ArrowRight, Boxes, KeyRound, LogOut, ShieldCheck } from "lucide-react";
+import { ArrowRight, Boxes, Building2, KeyRound, LogOut, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -40,6 +40,12 @@ export default function DashboardPage() {
         description: "Connect an authenticator app for this OWNER account.",
         href: "/mfa/setup",
         icon: KeyRound,
+      },
+      {
+        title: "Clinic Management",
+        description: "Create clinics, manage clinic admins, and export clinic code activity.",
+        href: "/owner/clinics",
+        icon: Building2,
       },
       {
         title: "System status",
