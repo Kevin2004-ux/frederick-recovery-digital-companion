@@ -15,6 +15,8 @@ import Resources from "@/pages/Resources.tsx";
 import RecoveryLog from "@/pages/RecoveryLog.tsx";
 import ClinicDashboard from "@/pages/ClinicDashboard.tsx";
 import ClinicPatientDetail from "@/pages/ClinicPatientDetail.tsx";
+import OwnerClinics from "@/pages/OwnerClinics.tsx";
+import OwnerClinicDetail from "@/pages/OwnerClinicDetail.tsx";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 
 function NavigatorBridge() {
@@ -111,6 +113,22 @@ export default function App() {
             element={
               <RoleGuard allow={["CLINIC", "OWNER"]}>
                 <ClinicPatientDetail />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/owner/clinics"
+            element={
+              <RoleGuard allow={["OWNER"]}>
+                <OwnerClinics />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/owner/clinics/:clinicTag"
+            element={
+              <RoleGuard allow={["OWNER"]}>
+                <OwnerClinicDetail />
               </RoleGuard>
             }
           />
