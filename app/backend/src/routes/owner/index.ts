@@ -496,6 +496,7 @@ async function getClinicOr404(clinicTag: string) {
       name: true,
       defaultCategory: true,
       notes: true,
+      archivedAt: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -680,11 +681,13 @@ ownerRouter.post("/clinics", async (req: Request, res: Response) => {
         where: { clinicTag },
         update: {
           name: clinicName,
+          archivedAt: null,
         },
         create: {
           clinicTag,
           name: clinicName,
           defaultCategory: "general_outpatient",
+          archivedAt: null,
         },
         select: {
           clinicTag: true,
@@ -1011,6 +1014,9 @@ ownerRouter.post("/clinic-users/:userId/enable", async (req: Request, res: Respo
 ownerRouter.get("/clinics", async (req: Request, res: Response) => {
   try {
     const clinics = await prisma.clinicPlanConfig.findMany({
+      where: {
+        archivedAt: null,
+      },
       orderBy: [
         { updatedAt: "desc" },
         { clinicTag: "asc" },
@@ -1018,6 +1024,7 @@ ownerRouter.get("/clinics", async (req: Request, res: Response) => {
       select: {
         clinicTag: true,
         name: true,
+        archivedAt: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -1045,6 +1052,7 @@ ownerRouter.get("/clinics", async (req: Request, res: Response) => {
         return {
           clinicTag: clinic.clinicTag,
           name: clinic.name,
+          archivedAt: clinic.archivedAt,
           createdAt: clinic.createdAt,
           updatedAt: clinic.updatedAt,
           adminUserCount: summary.adminUserCount,
@@ -1120,10 +1128,20 @@ ownerRouter.post("/clinics/:clinicTag/deactivate", async (req: Request, res: Res
           status: ActivationCodeStatus.INVALIDATED,
         },
       });
+      const archivedClinic = await tx.clinicPlanConfig.update({
+        where: { clinicTag },
+        data: {
+          archivedAt: new Date(),
+        },
+        select: {
+          archivedAt: true,
+        },
+      });
 
       return {
         disabledClinicUsersCount: disabledClinicUsers.count,
         invalidatedCodesCount: invalidatedCodes.count,
+        archivedAt: archivedClinic.archivedAt,
       };
     });
 
@@ -1142,6 +1160,7 @@ ownerRouter.post("/clinics/:clinicTag/deactivate", async (req: Request, res: Res
         disabledClinicUsersCount: result.disabledClinicUsersCount,
         invalidatedCodesCount: result.invalidatedCodesCount,
         claimedCodesPreservedCount,
+        archivedAt: result.archivedAt,
       },
     });
 
@@ -1151,6 +1170,7 @@ ownerRouter.post("/clinics/:clinicTag/deactivate", async (req: Request, res: Res
       disabledClinicUsersCount: result.disabledClinicUsersCount,
       invalidatedCodesCount: result.invalidatedCodesCount,
       claimedCodesPreservedCount,
+      archivedAt: result.archivedAt,
     });
   } catch (err) {
     console.error("[OWNER_CLINIC_DEACTIVATE_FAILED]", {
@@ -1310,6 +1330,7 @@ ownerRouter.get("/clinics/:clinicTag", async (req: Request, res: Response) => {
         name: true,
         defaultCategory: true,
         notes: true,
+        archivedAt: true,
         createdAt: true,
         updatedAt: true,
       },

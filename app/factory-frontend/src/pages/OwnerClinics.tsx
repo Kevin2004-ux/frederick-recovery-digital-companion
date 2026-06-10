@@ -1,4 +1,4 @@
-import { Building2, Download, PlusCircle, ShieldCheck } from "lucide-react";
+import { ArrowRight, Building2, Download, PlusCircle, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -7,6 +7,7 @@ import { api, ApiError } from "@/api/client";
 type OwnerClinicSummary = {
   clinicTag: string;
   name?: string | null;
+  archivedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   adminUserCount: number;
@@ -326,7 +327,7 @@ export default function OwnerClinicsPage() {
               <p className="eyebrow">All clinics</p>
               <h2>Owner clinic list</h2>
               <p className="muted">
-                Review clinic activity, open detail views, and download full clinic CSV exports.
+                Open a clinic workspace to manage logins, activation batches, generated codes, and safe delete/archive controls.
               </p>
             </div>
           </div>
@@ -360,10 +361,16 @@ export default function OwnerClinicsPage() {
                   {clinics.map((clinic) => (
                     <tr key={clinic.clinicTag}>
                       <td>
-                        <div className="cell-strong">{clinic.name || "Unnamed clinic"}</div>
+                        <Link className="cell-strong table-link" to={`/owner/clinics/${clinic.clinicTag}`}>
+                          {clinic.name || "Unnamed clinic"}
+                        </Link>
                         <div className="cell-muted">Updated {formatDate(clinic.updatedAt)}</div>
                       </td>
-                      <td>{clinic.clinicTag}</td>
+                      <td>
+                        <Link className="table-link" to={`/owner/clinics/${clinic.clinicTag}`}>
+                          {clinic.clinicTag}
+                        </Link>
+                      </td>
                       <td>{clinic.adminUserCount}</td>
                       <td>{clinic.totalCodes}</td>
                       <td>{clinic.issuedCodes}</td>
@@ -376,7 +383,8 @@ export default function OwnerClinicsPage() {
                       <td>
                         <div className="action-stack">
                           <Link className="button secondary action-button" to={`/owner/clinics/${clinic.clinicTag}`}>
-                            View Details
+                            <ArrowRight size={16} />
+                            Open / Manage
                           </Link>
                           <button
                             className="button secondary action-button"

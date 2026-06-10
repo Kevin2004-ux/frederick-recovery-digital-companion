@@ -448,6 +448,18 @@ h3 {
   margin-top: 4px;
 }
 
+.table-link {
+  color: #164f3d;
+  text-decoration: underline;
+  text-decoration-color: rgba(22, 79, 61, 0.22);
+  text-underline-offset: 3px;
+}
+
+.table-link:hover {
+  color: #0e3d2f;
+  text-decoration-color: rgba(22, 79, 61, 0.55);
+}
+
 .status-panel {
   max-width: 520px;
   margin: 0 auto;
@@ -482,6 +494,32 @@ h3 {
 
 .owner-table-wrap {
   margin-top: 0;
+}
+
+.clinic-workspace-panel {
+  padding: 22px;
+}
+
+.workspace-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.workspace-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(20, 81, 63, 0.07);
+  color: #164f3d;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.workspace-nav a:hover {
+  background: rgba(20, 81, 63, 0.12);
 }
 
 .action-stack {
