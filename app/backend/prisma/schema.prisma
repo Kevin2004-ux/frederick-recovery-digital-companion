@@ -136,12 +136,15 @@ model ClinicPlanConfig {
 
   overridesJson Json?
   notes         String?
+  archivedAt   DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   activationCodes ActivationCode[]
   templates       RecoveryPlanTemplate[]
+
+  @@index([archivedAt, updatedAt])
 }
 
 model ActivationBatch {

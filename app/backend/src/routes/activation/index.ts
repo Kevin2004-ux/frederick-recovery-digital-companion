@@ -67,9 +67,22 @@ activationRouter.post("/claim", async (req: Request, res: Response): Promise<any
 
   try {
     // 1. Verify Code exists and is usable
-    const activation = await prisma.activationCode.findUnique({ where: { code } });
+    const activation = await prisma.activationCode.findUnique({
+      where: { code },
+      include: {
+        clinicConfig: {
+          select: {
+            archivedAt: true,
+          },
+        },
+      },
+    });
     
     if (!activation) {
+      return res.status(404).json({ code: "INVALID_CODE" });
+    }
+
+    if (activation.clinicConfig?.archivedAt) {
       return res.status(404).json({ code: "INVALID_CODE" });
     }
 

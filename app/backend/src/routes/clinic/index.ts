@@ -353,6 +353,17 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
     }
   }
 
+  const existingClinic = await prisma.clinicPlanConfig.findUnique({
+    where: { clinicTag },
+    select: { archivedAt: true },
+  });
+  if (existingClinic?.archivedAt) {
+    return res.status(409).json({
+      code: "CLINIC_ARCHIVED",
+      message: "This clinic is archived. Reactivate it before generating activation codes.",
+    });
+  }
+
   const educationTargets = await validateActivationEducationTargets({
     educationBundleId,
     boxTemplateId,

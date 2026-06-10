@@ -17,6 +17,7 @@ type OwnerClinicDetailResponse = {
     name?: string | null;
     defaultCategory?: string | null;
     notes?: string | null;
+    archivedAt?: string | null;
     createdAt?: string;
     updatedAt?: string;
   };
@@ -146,6 +147,7 @@ type DeactivateClinicResponse = {
   disabledClinicUsersCount: number;
   invalidatedCodesCount: number;
   claimedCodesPreservedCount: number;
+  archivedAt?: string | null;
 };
 
 type DeleteClinicResponse = {
@@ -237,6 +239,10 @@ function formatClinicError(error: unknown, fallback: string) {
 
   if (apiError?.code === "CLINIC_DELETE_CONFIRMATION_MISMATCH") {
     return "Type the clinic tag exactly before deleting this clinic.";
+  }
+
+  if (apiError?.code === "CLINIC_ARCHIVED") {
+    return "This clinic is archived. Reactivate or provision the clinic before generating new codes.";
   }
 
   if (apiError?.code === "VALIDATION_ERROR") {
@@ -684,7 +690,7 @@ export default function OwnerClinicDetailPage() {
 
   async function handleDeactivateClinic() {
     const confirmed = window.confirm(
-      "This disables clinic logins and invalidates unused codes. Claimed patient records and audit history are preserved. This cannot automatically restore invalidated codes.",
+      "Archive this clinic? This disables clinic logins, invalidates unused codes, removes the clinic from the active owner list, and preserves claimed patient records and audit history.",
     );
     if (!confirmed) return;
 
@@ -696,7 +702,7 @@ export default function OwnerClinicDetailPage() {
     try {
       const payload = await api.post<DeactivateClinicResponse>(`/owner/clinics/${clinicTag}/deactivate`);
       setClinicActionSuccess(
-        `Clinic deactivated. Disabled ${payload.disabledClinicUsersCount} clinic user(s), invalidated ${payload.invalidatedCodesCount} unused code(s), preserved ${payload.claimedCodesPreservedCount} claimed code(s).`,
+        `Clinic archived. Disabled ${payload.disabledClinicUsersCount} clinic user login(s), invalidated ${payload.invalidatedCodesCount} unused code(s), preserved ${payload.claimedCodesPreservedCount} claimed code(s).`,
       );
       await loadDetail(false);
     } catch (nextError) {
@@ -798,17 +804,24 @@ export default function OwnerClinicDetailPage() {
     );
   }
 
+  const clinicArchived = Boolean(detail.clinic.archivedAt);
+
   return (
     <div className="page-shell">
       <section className="panel hero-panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Clinic Detail</p>
+            <p className="eyebrow">Clinic workspace</p>
             <h1>{detail.clinic.name || detail.clinic.clinicTag}</h1>
             <p className="muted">
-              Review clinic profile, admin users, activation batches, and generated codes for{" "}
+              Manage clinic overview, logins, activation batches, generated codes, code configuration, and lifecycle actions for{" "}
               <strong>{detail.clinic.clinicTag}</strong>.
             </p>
+            {detail.clinic.archivedAt ? (
+              <p className="muted">
+                Archived {formatDateTime(detail.clinic.archivedAt)}. Clinic logins are disabled and unused codes should not be claimable.
+              </p>
+            ) : null}
           </div>
 
           <div className="hero-actions">
@@ -846,6 +859,27 @@ export default function OwnerClinicDetailPage() {
         </div>
       </section>
 
+      <section className="panel clinic-workspace-panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Workspace map</p>
+            <h2>Manage this clinic from one place</h2>
+            <p className="muted">
+              Use these sections to move from clinic setup to activation-code generation and code-level configuration.
+            </p>
+          </div>
+        </div>
+        <nav className="workspace-nav" aria-label="Clinic workspace sections">
+          <a href="#clinic-overview">Clinic overview</a>
+          <a href="#clinic-users">Clinic users / logins</a>
+          <a href="#activation-batches">Activation batches</a>
+          <a href="#generate-codes">Generate codes</a>
+          <a href="#activation-codes">Activation codes</a>
+          <a href="#code-assignment-editor">Configure code</a>
+          <a href="#clinic-lifecycle">Delete / archive clinic</a>
+        </nav>
+      </section>
+
       {error ? <div className="alert error">{error}</div> : null}
       {adminError ? <div className="alert error">{adminError}</div> : null}
       {adminSuccess ? <div className="alert success">{adminSuccess}</div> : null}
@@ -870,11 +904,11 @@ export default function OwnerClinicDetailPage() {
         </div>
       ) : null}
 
-      <section className="grid-two owner-detail-grid">
+      <section className="grid-two owner-detail-grid" id="clinic-overview">
         <div className="panel">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Clinic profile</p>
+              <p className="eyebrow">Clinic overview</p>
               <h2>Profile</h2>
               <p className="muted">Core clinic settings and timestamps.</p>
             </div>
@@ -886,6 +920,7 @@ export default function OwnerClinicDetailPage() {
               ["Clinic tag", detail.clinic.clinicTag],
               ["Default category", detail.clinic.defaultCategory || "—"],
               ["Notes", detail.clinic.notes || "—"],
+              ["Archive status", detail.clinic.archivedAt ? `Archived ${formatDateTime(detail.clinic.archivedAt)}` : "Active"],
               ["Created", formatDateTime(detail.clinic.createdAt)],
               ["Updated", formatDateTime(detail.clinic.updatedAt)],
             ].map(([label, value]) => (
@@ -929,8 +964,8 @@ export default function OwnerClinicDetailPage() {
       <section className="panel" id="code-assignment-editor">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Activation code education</p>
-            <h2>Code assignment editor</h2>
+            <p className="eyebrow">Configure individual code</p>
+            <h2>Activation code assignment editor</h2>
             <p className="muted">
               Select a generated code to adjust its bundle, box template, procedure, product mode,
               and code-level guide overrides.
@@ -1159,17 +1194,20 @@ export default function OwnerClinicDetailPage() {
         )}
       </section>
 
-      <section className="panel">
+      <section className="panel" id="clinic-users">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Clinic Admin Users</p>
-            <h2>Manage clinic admins</h2>
-            <p className="muted">Add clinic admins and manage account access.</p>
+            <p className="eyebrow">Clinic users / logins</p>
+            <h2>Full-platform clinic login management</h2>
+            <p className="muted">
+              Create, view, reset, and disable clinic user logins tied to <strong>{clinicTag}</strong>.
+              Clinic users are scoped by their clinic tag and backend tenant checks only return their own clinic data.
+            </p>
           </div>
         </div>
 
         <div className="info-card owner-form-card">
-          <h3>Add clinic admin</h3>
+          <h3>Create clinic user login</h3>
           <form className="form-stack" onSubmit={handleAddClinicUser}>
             <label className="field">
               <span>Email</span>
@@ -1207,7 +1245,7 @@ export default function OwnerClinicDetailPage() {
             </label>
 
             <button className="button primary" type="submit" disabled={adminSubmitting}>
-              {adminSubmitting ? "Adding clinic admin..." : "Add Clinic Admin"}
+              {adminSubmitting ? "Creating clinic login..." : "Create Clinic Login"}
             </button>
           </form>
         </div>
@@ -1316,7 +1354,7 @@ export default function OwnerClinicDetailPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="activation-batches">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Activation batches</p>
@@ -1406,7 +1444,7 @@ export default function OwnerClinicDetailPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="activation-codes">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Activation Codes</p>
@@ -1426,8 +1464,13 @@ export default function OwnerClinicDetailPage() {
           ) : null}
         </div>
 
-        <div className="info-card owner-form-card">
+        <div className="info-card owner-form-card" id="generate-codes">
           <h3>Generate codes for this clinic</h3>
+          {clinicArchived ? (
+            <div className="alert error">
+              This clinic is archived. New activation codes cannot be generated until the clinic is provisioned again.
+            </div>
+          ) : null}
           <form className="form-stack" onSubmit={handleGenerateCodes}>
             <div className="grid-two">
               <label className="field">
@@ -1519,7 +1562,7 @@ export default function OwnerClinicDetailPage() {
               </label>
             </div>
 
-            <button className="button primary" type="submit" disabled={generateCodesLoading}>
+            <button className="button primary" type="submit" disabled={generateCodesLoading || clinicArchived}>
               {generateCodesLoading ? (
                 <>
                   <Loader2 size={16} className="spin" />
@@ -1600,28 +1643,32 @@ export default function OwnerClinicDetailPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="clinic-lifecycle">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Clinic lifecycle actions</p>
-            <h2>Deactivate or delete</h2>
-            <p className="muted">Use deactivate for real clinics and hard delete only for empty test clinics.</p>
+            <h2>Archive or delete</h2>
+            <p className="muted">Use archive for real clinics and hard delete only for empty test clinics with no patient history.</p>
           </div>
         </div>
 
         <div className="grid-two">
           <div className="info-card warning-card">
-            <h3>Deactivate clinic</h3>
+            <h3>Archive clinic</h3>
             <p className="muted">
-              This disables clinic logins and invalidates unused codes. Claimed patient records and audit history are preserved.
+              This disables clinic logins, invalidates unused codes, removes the clinic from the active owner list, and preserves claimed patient records and audit history.
             </p>
             <button
               className="button secondary"
               type="button"
               onClick={() => void handleDeactivateClinic()}
-              disabled={clinicActionLoading === "deactivate"}
+              disabled={clinicActionLoading === "deactivate" || clinicArchived}
             >
-              {clinicActionLoading === "deactivate" ? "Deactivating..." : "Deactivate Clinic"}
+              {clinicArchived
+                ? "Clinic Archived"
+                : clinicActionLoading === "deactivate"
+                  ? "Archiving..."
+                  : "Archive Clinic"}
             </button>
           </div>
 
