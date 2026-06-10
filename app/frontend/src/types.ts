@@ -137,3 +137,77 @@ export type ClinicPatientSummary = {
   } | null;
   openAlerts?: OperationalAlert[];
 };
+
+export type RecoveryLibraryCategoryKey =
+  | "start-here"
+  | "common-recovery-topics"
+  | "procedure-guides"
+  | "box-item-instructions"
+  | "videos"
+  | "clinic-instructions";
+
+export type RecoveryLibraryGuideSummary = {
+  id: string;
+  title: string;
+  type: "education" | "task" | "milestone";
+  summary: string;
+  videoUrl?: string | null;
+  thumbnailUrl?: string | null;
+  categories: RecoveryLibraryCategoryKey[];
+  procedureNames: string[];
+  boxItemKeys: string[];
+  displayOrder: number;
+  requiredBoxItems: string[];
+  frequency?: string | null;
+};
+
+export type RecoveryLibraryCategory = {
+  key: RecoveryLibraryCategoryKey;
+  title: string;
+  description: string;
+  moduleCount: number;
+  featuredGuides: RecoveryLibraryGuideSummary[];
+};
+
+export type RecoveryLibraryHomePayload = {
+  categories: RecoveryLibraryCategory[];
+  sections: Record<RecoveryLibraryCategoryKey, RecoveryLibraryGuideSummary[]>;
+  personalized: {
+    procedureName: string | null;
+    boxItems: Array<{ key: string | null; label: string }>;
+    procedureGuides: RecoveryLibraryGuideSummary[];
+    boxItemGuides: RecoveryLibraryGuideSummary[];
+  };
+};
+
+export type RecoveryLibraryGuide = {
+  id: string;
+  type: "education" | "task" | "milestone";
+  title: string;
+  text: string;
+  summary: string;
+  paragraphs: string[];
+  keyPoints: string[];
+  videoUrl?: string | null;
+  thumbnailUrl?: string | null;
+  frequency?: string | null;
+  redFlags: string[];
+  requiredBoxItems: string[];
+  categories: RecoveryLibraryCategoryKey[];
+  procedureNames: string[];
+  boxItemKeys: string[];
+  active: boolean;
+  displayOrder: number;
+  source: "content_library" | "custom";
+  isCustomized: boolean;
+};
+
+export type RecoveryLibraryGuidePayload = {
+  guide: RecoveryLibraryGuide;
+  relatedGuides: RecoveryLibraryGuideSummary[];
+};
+
+export type RecoveryLibraryCategoryPayload = {
+  category: Omit<RecoveryLibraryCategory, "moduleCount" | "featuredGuides">;
+  guides: RecoveryLibraryGuideSummary[];
+};

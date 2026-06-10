@@ -49,3 +49,46 @@ export type ActivationBatch = {
 export type CreateBatchResponse = {
   batch: ActivationBatch;
 };
+
+export type RecoveryLibraryCategoryKey =
+  | "start-here"
+  | "common-recovery-topics"
+  | "procedure-guides"
+  | "box-item-instructions"
+  | "videos"
+  | "clinic-instructions";
+
+export type RecoveryLibraryAdminModule = {
+  id: string;
+  type: "education" | "task" | "milestone";
+  title: string;
+  text: string;
+  summary: string;
+  paragraphs: string[];
+  keyPoints: string[];
+  videoUrl?: string | null;
+  thumbnailUrl?: string | null;
+  frequency?: string | null;
+  redFlags: string[];
+  requiredBoxItems: string[];
+  categories: RecoveryLibraryCategoryKey[];
+  procedureNames: string[];
+  boxItemKeys: string[];
+  active: boolean;
+  displayOrder: number;
+  source: "content_library" | "custom";
+  isCustomized: boolean;
+};
+
+export type RecoveryLibraryAdminPayload = {
+  categories: Array<{
+    key: RecoveryLibraryCategoryKey;
+    title: string;
+    description: string;
+  }>;
+  modules: RecoveryLibraryAdminModule[];
+  suggestions: {
+    procedures: string[];
+    boxItems: string[];
+  };
+};

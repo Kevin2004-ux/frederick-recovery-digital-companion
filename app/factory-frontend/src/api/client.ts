@@ -139,6 +139,12 @@ export const api = {
       body,
     });
   },
+  put<T>(path: string, body?: unknown) {
+    return request<T>(path, {
+      method: "PUT",
+      body,
+    });
+  },
   delete<T>(path: string) {
     return request<T>(path, {
       method: "DELETE",

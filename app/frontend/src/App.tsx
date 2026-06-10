@@ -11,6 +11,8 @@ import PatientHome from "@/pages/PatientHome.tsx";
 import MyBox from "@/pages/MyBox.tsx";
 import MyBoxItemDetail from "@/pages/MyBoxItemDetail.tsx";
 import MedicalHub from "@/pages/MedicalHub.tsx";
+import MedicalLibraryCategory from "@/pages/MedicalLibraryCategory.tsx";
+import MedicalLibraryGuide from "@/pages/MedicalLibraryGuide.tsx";
 import Resources from "@/pages/Resources.tsx";
 import RecoveryLog from "@/pages/RecoveryLog.tsx";
 import ClinicDashboard from "@/pages/ClinicDashboard.tsx";
@@ -89,6 +91,22 @@ export default function App() {
             element={
               <RoleGuard allow={["PATIENT"]} requirePatientReady>
                 <MedicalHub />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/medical-hub/categories/:categoryKey"
+            element={
+              <RoleGuard allow={["PATIENT"]} requirePatientReady>
+                <MedicalLibraryCategory />
+              </RoleGuard>
+            }
+          />
+          <Route
+            path="/medical-hub/guides/:guideId"
+            element={
+              <RoleGuard allow={["PATIENT"]} requirePatientReady>
+                <MedicalLibraryGuide />
               </RoleGuard>
             }
           />

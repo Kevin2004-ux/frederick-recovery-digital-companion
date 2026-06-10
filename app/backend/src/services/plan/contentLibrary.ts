@@ -6,6 +6,7 @@ export type ModuleDefinition = {
   title: string;
   text: string;
   videoUrl?: string | null;
+  thumbnailUrl?: string | null;
   frequency?: string;
   redFlags?: string[];
   requiredBoxItems?: string[];

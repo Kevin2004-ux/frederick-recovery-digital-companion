@@ -321,3 +321,24 @@ model SecurityAudit {
   @@index([actorUserId])
   @@index([clinicTag])
 }
+
+model RecoveryLibraryModule {
+  id               String   @id
+  title            String
+  summary          String   @db.Text
+  body             String   @db.Text
+  moduleType       String
+  videoUrl         String?
+  thumbnailUrl     String?
+  categories       String[]
+  procedureNames   String[]
+  boxItemKeys      String[]
+  redFlags         String[]
+  requiredBoxItems String[]
+  active           Boolean  @default(true)
+  displayOrder     Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([active, displayOrder])
+}

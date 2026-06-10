@@ -1,6 +1,7 @@
 // app/backend/scripts/testPlanEngine.ts
 
 import { generatePlan } from "../src/services/plan/generatePlan.js";
+import type { PlanConfiguration } from "../src/services/plan/rules.js";
 
 type PlanDay = {
   day: number;
@@ -70,18 +71,38 @@ function logSection(name: string) {
   console.log(`\n=== ${name} ===`);
 }
 
+const BASE_CONFIG: PlanConfiguration = {
+  recovery_region: "leg_foot",
+  recovery_duration: "standard_8_14",
+  mobility_impact: "non_weight_bearing",
+  incision_status: "sutures_staples",
+  discomfort_pattern: "sharp_intermittent",
+  follow_up_expectation: "within_14_days",
+};
+
+const OPEN_WOUND_CONFIG: PlanConfiguration = {
+  recovery_region: "leg_foot",
+  recovery_duration: "standard_15_21",
+  mobility_impact: "limited",
+  incision_status: "open_wound",
+  discomfort_pattern: "expected_soreness",
+  follow_up_expectation: "within_7_days",
+};
+
+const TEMPLATE_COMPATIBILITY_CONFIG: PlanConfiguration = {
+  recovery_region: "general",
+  recovery_duration: "standard_0_7",
+  mobility_impact: "none",
+  incision_status: "none_visible",
+  discomfort_pattern: "expected_soreness",
+  follow_up_expectation: "within_14_days",
+};
+
 function testBasePlan() {
   logSection("Base plan generation");
 
   const result = generatePlan({
-    config: {
-      recovery_region: "lower_body",
-      recovery_duration: "medium_term_14",
-      mobility_impact: "non_weight_bearing",
-      incision_status: "sutures_staples",
-      discomfort_pattern: "movement_based",
-      follow_up_expectation: "standard_2_weeks",
-    },
+    config: BASE_CONFIG,
     engineVersion: "test",
     category: "test",
   });
@@ -128,14 +149,7 @@ function testOpenPackingPlan() {
   logSection("Open packing plan");
 
   const result = generatePlan({
-    config: {
-      recovery_region: "lower_body",
-      recovery_duration: "long_term_21",
-      mobility_impact: "restricted_movement",
-      incision_status: "open_packing",
-      discomfort_pattern: "constant",
-      follow_up_expectation: "phone_check",
-    },
+    config: OPEN_WOUND_CONFIG,
     engineVersion: "test",
     category: "test",
   });
@@ -143,7 +157,8 @@ function testOpenPackingPlan() {
   const plan = getPlanJson(result);
 
   const day0 = getDay(plan, 0);
-  const day7 = getDay(plan, 7);
+  const day5 = getDay(plan, 5);
+  const day6 = getDay(plan, 6);
   const day20 = getDay(plan, 20);
 
   includesAll(
@@ -159,7 +174,8 @@ function testOpenPackingPlan() {
     "open packing day 0 modules"
   );
 
-  includesAll(day7.moduleIds, ["milestone_follow_up_prep"], "open packing day 7 modules");
+  includesAll(day5.moduleIds, ["milestone_follow_up_prep"], "open wound day 5 modules");
+  includesAll(day6.moduleIds, ["milestone_follow_up_prep"], "open wound day 6 modules");
   includesAll(day20.moduleIds, ["task_gauze_change", "task_check_incision", "track_pain_daily"], "open packing day 20 modules");
 
   includesAll(day0.boxItems, ["gloves", "gauze", "tape", "wipes", "icepack"], "open packing day 0 box items");
@@ -172,14 +188,7 @@ function testClinicOverrides() {
   logSection("Clinic overrides");
 
   const result = generatePlan({
-    config: {
-      recovery_region: "lower_body",
-      recovery_duration: "medium_term_14",
-      mobility_impact: "non_weight_bearing",
-      incision_status: "sutures_staples",
-      discomfort_pattern: "movement_based",
-      follow_up_expectation: "standard_2_weeks",
-    },
+    config: BASE_CONFIG,
     clinicOverridesJson: {
       version: 1,
       note: "test overrides",
@@ -242,14 +251,7 @@ function testTemplateCompatibility() {
         }
       ]
     },
-    config: {
-      recovery_region: "core",
-      recovery_duration: "short_term_7",
-      mobility_impact: "none",
-      incision_status: "none",
-      discomfort_pattern: "intermittent",
-      follow_up_expectation: "none",
-    },
+    config: TEMPLATE_COMPATIBILITY_CONFIG,
     engineVersion: "test",
     category: "template-test",
   });
