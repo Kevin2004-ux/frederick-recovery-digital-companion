@@ -173,11 +173,33 @@ export type RecoveryLibraryCategory = {
   featuredGuides: RecoveryLibraryGuideSummary[];
 };
 
+export type RecoveryLibraryProductMode = "kit_only" | "full_platform";
+
+export type RecoveryLibraryAssignmentSummary = {
+  activationCode: string | null;
+  productMode: RecoveryLibraryProductMode;
+  educationBundle: {
+    id: string;
+    name: string;
+    slug: string;
+    procedureName: string | null;
+  } | null;
+  boxTemplate: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  hasCodeEducationOverrides: boolean;
+  hasCodeBoxItemOverrides: boolean;
+};
+
 export type RecoveryLibraryHomePayload = {
   recommendedGuides: RecoveryLibraryGuideSummary[];
   categories: RecoveryLibraryCategory[];
   sections: Record<RecoveryLibraryCategoryKey, RecoveryLibraryGuideSummary[]>;
   personalized: {
+    productMode: RecoveryLibraryProductMode;
+    assignment: RecoveryLibraryAssignmentSummary | null;
     procedureName: string | null;
     boxItems: Array<{ key: string | null; label: string }>;
     procedureGuides: RecoveryLibraryGuideSummary[];

@@ -1,8 +1,14 @@
-import { ArrowLeft, Building2, Download, Loader2, TableProperties } from "lucide-react";
+import { ArrowLeft, Building2, Download, Loader2, Save, TableProperties } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { api, ApiError } from "@/api/client";
+import type {
+  ActivationCodeDetail,
+  ActivationCodeDetailResponse,
+  RecoveryLibraryAdminPayload,
+  RecoveryLibraryProductMode,
+} from "@/types";
 
 type OwnerClinicDetailResponse = {
   clinic: {
@@ -30,6 +36,10 @@ type OwnerClinicDetailResponse = {
     clinicTag?: string | null;
     quantity: number;
     boxType?: string | null;
+    educationBundleId?: string | null;
+    boxTemplateId?: string | null;
+    productMode?: RecoveryLibraryProductMode;
+    procedureName?: string | null;
     createdAt?: string;
     createdByUserId?: string | null;
     codeCounts: {
@@ -59,6 +69,15 @@ type OwnerClinicCodeRow = {
   clinicTag?: string | null;
   batchId?: string | null;
   boxType?: string | null;
+  educationBundleId?: string | null;
+  boxTemplateId?: string | null;
+  productMode?: RecoveryLibraryProductMode;
+  procedureName?: string | null;
+  assignedBoxItems?: Array<{ key?: string | null; label: string }>;
+  assignedEducation?: {
+    guideIds: string[];
+    recommendedGuideIds: string[];
+  };
   createdAt?: string;
   claimedAt?: string | null;
   claimedByUserId?: string | null;
@@ -67,6 +86,26 @@ type OwnerClinicCodeRow = {
 type OwnerClinicCodesResponse = {
   clinicTag: string;
   codes?: OwnerClinicCodeRow[];
+};
+
+type CodeAssignmentForm = {
+  educationBundleId: string;
+  boxTemplateId: string;
+  procedureName: string;
+  productMode: RecoveryLibraryProductMode;
+  assignedBoxItemsText: string;
+  guideIdsText: string;
+  recommendedGuideIdsText: string;
+};
+
+const EMPTY_CODE_ASSIGNMENT_FORM: CodeAssignmentForm = {
+  educationBundleId: "",
+  boxTemplateId: "",
+  procedureName: "",
+  productMode: "full_platform",
+  assignedBoxItemsText: "",
+  guideIdsText: "",
+  recommendedGuideIdsText: "",
 };
 
 type OwnerClinicUserMutationResponse = {
@@ -170,6 +209,61 @@ function formatClinicError(error: unknown, fallback: string) {
   return fallback;
 }
 
+function idsToText(ids: string[] = []) {
+  return ids.join("\n");
+}
+
+function parseIdsText(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function boxItemsToText(items: Array<{ key?: string | null; label: string }> = []) {
+  return items
+    .map((item) => (item.key ? `${item.key}|${item.label}` : item.label))
+    .join("\n");
+}
+
+function parseBoxItemsText(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [rawKey, ...labelParts] = line.split("|");
+      const label = labelParts.join("|").trim();
+
+      if (label) {
+        return {
+          key: rawKey.trim() || null,
+          label,
+        };
+      }
+
+      return {
+        label: line,
+      };
+    });
+}
+
+function codeDetailToForm(code: ActivationCodeDetail): CodeAssignmentForm {
+  return {
+    educationBundleId: code.educationBundleId ?? code.effectiveEducationBundleId ?? "",
+    boxTemplateId: code.boxTemplateId ?? code.effectiveBoxTemplateId ?? "",
+    procedureName: code.procedureName ?? code.effectiveProcedureName ?? "",
+    productMode: code.productMode ?? code.effectiveProductMode ?? "full_platform",
+    assignedBoxItemsText: boxItemsToText(code.assignedBoxItems),
+    guideIdsText: idsToText(code.assignedEducation.guideIds),
+    recommendedGuideIdsText: idsToText(code.assignedEducation.recommendedGuideIds),
+  };
+}
+
 function getUserStatus(user: OwnerClinicDetailResponse["adminUsers"][number]) {
   if (user.isBanned) return "Disabled";
 
@@ -190,11 +284,22 @@ export default function OwnerClinicDetailPage() {
   const [detail, setDetail] = useState<OwnerClinicDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [libraryPayload, setLibraryPayload] = useState<RecoveryLibraryAdminPayload | null>(null);
+  const [libraryError, setLibraryError] = useState("");
   const [codes, setCodes] = useState<OwnerClinicCodeRow[]>([]);
   const [codesLoading, setCodesLoading] = useState(false);
   const [codesLoaded, setCodesLoaded] = useState(false);
   const [codesError, setCodesError] = useState("");
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [selectedCode, setSelectedCode] = useState<ActivationCodeDetail | null>(null);
+  const [codeEditorForm, setCodeEditorForm] = useState<CodeAssignmentForm>(
+    EMPTY_CODE_ASSIGNMENT_FORM,
+  );
+  const [codeEditorLoading, setCodeEditorLoading] = useState(false);
+  const [codeEditorSaving, setCodeEditorSaving] = useState(false);
+  const [codeEditorError, setCodeEditorError] = useState("");
+  const [codeEditorSuccess, setCodeEditorSuccess] = useState("");
+  const [guidePickId, setGuidePickId] = useState("");
   const [downloadingClinic, setDownloadingClinic] = useState(false);
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null);
   const [adminForm, setAdminForm] = useState({
@@ -234,6 +339,29 @@ export default function OwnerClinicDetailPage() {
     void loadDetail();
   }, [loadDetail]);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadLibraryOptions() {
+      setLibraryError("");
+
+      try {
+        const payload = await api.get<RecoveryLibraryAdminPayload>("/education/library/admin");
+        if (!active) return;
+        setLibraryPayload(payload);
+      } catch (nextError) {
+        if (!active) return;
+        setLibraryError(formatClinicError(nextError, "We couldn’t load library assignment options."));
+      }
+    }
+
+    void loadLibraryOptions();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   async function loadCodes(nextBatchId?: string | null) {
     setCodesLoading(true);
     setCodesError("");
@@ -248,6 +376,88 @@ export default function OwnerClinicDetailPage() {
     } finally {
       setCodesLoading(false);
     }
+  }
+
+  async function handleOpenCode(code: string) {
+    setCodeEditorLoading(true);
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+
+    try {
+      const payload = await api.get<ActivationCodeDetailResponse>(
+        `/owner/activation-codes/${encodeURIComponent(code)}`,
+      );
+      setSelectedCode(payload.activationCode);
+      setCodeEditorForm(codeDetailToForm(payload.activationCode));
+      setGuidePickId("");
+    } catch (nextError) {
+      setCodeEditorError(formatClinicError(nextError, "We couldn’t load that activation code."));
+    } finally {
+      setCodeEditorLoading(false);
+    }
+  }
+
+  async function handleSaveCodeAssignment(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCode) return;
+
+    setCodeEditorSaving(true);
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+
+    try {
+      const payload = await api.put<ActivationCodeDetailResponse>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}`,
+        {
+          educationBundleId: codeEditorForm.educationBundleId || null,
+          boxTemplateId: codeEditorForm.boxTemplateId || null,
+          procedureName: codeEditorForm.procedureName.trim() || null,
+          productMode: codeEditorForm.productMode,
+          assignedBoxItems: parseBoxItemsText(codeEditorForm.assignedBoxItemsText),
+          assignedEducation: {
+            guideIds: parseIdsText(codeEditorForm.guideIdsText),
+            recommendedGuideIds: parseIdsText(codeEditorForm.recommendedGuideIdsText),
+          },
+        },
+      );
+
+      setSelectedCode(payload.activationCode);
+      setCodeEditorForm(codeDetailToForm(payload.activationCode));
+      setCodeEditorSuccess(`Saved assignments for ${payload.activationCode.code}.`);
+      setCodes((current) =>
+        current.map((codeRow) =>
+          codeRow.code === payload.activationCode.code
+            ? {
+                ...codeRow,
+                educationBundleId: payload.activationCode.effectiveEducationBundleId,
+                boxTemplateId: payload.activationCode.effectiveBoxTemplateId,
+                productMode: payload.activationCode.effectiveProductMode,
+                procedureName: payload.activationCode.effectiveProcedureName,
+                assignedBoxItems: payload.activationCode.assignedBoxItems,
+                assignedEducation: payload.activationCode.assignedEducation,
+              }
+            : codeRow,
+        ),
+      );
+    } catch (nextError) {
+      setCodeEditorError(formatClinicError(nextError, "We couldn’t save that activation code."));
+    } finally {
+      setCodeEditorSaving(false);
+    }
+  }
+
+  function addGuideToCodeField(field: "guideIdsText" | "recommendedGuideIdsText") {
+    if (!guidePickId) return;
+
+    setCodeEditorForm((current) => {
+      const nextIds = parseIdsText(current[field]);
+      if (!nextIds.includes(guidePickId)) nextIds.push(guidePickId);
+
+      return {
+        ...current,
+        [field]: idsToText(nextIds),
+      };
+    });
   }
 
   async function handleDownloadClinicCsv() {
@@ -434,6 +644,21 @@ export default function OwnerClinicDetailPage() {
     return codes.filter((code) => code.batchId === activeBatchId);
   }, [activeBatchId, codes]);
 
+  const bundleNameById = useMemo(() => {
+    return new Map((libraryPayload?.bundles ?? []).map((bundle) => [bundle.id, bundle.name]));
+  }, [libraryPayload?.bundles]);
+
+  const templateNameById = useMemo(() => {
+    return new Map(
+      (libraryPayload?.boxTemplates ?? []).map((template) => [template.id, template.name]),
+    );
+  }, [libraryPayload?.boxTemplates]);
+
+  const selectedFormBundle =
+    libraryPayload?.bundles.find((bundle) => bundle.id === codeEditorForm.educationBundleId) ?? null;
+  const selectedFormTemplate =
+    libraryPayload?.boxTemplates.find((template) => template.id === codeEditorForm.boxTemplateId) ?? null;
+
   if (loading) {
     return (
       <div className="page-shell">
@@ -590,6 +815,239 @@ export default function OwnerClinicDetailPage() {
             ))}
           </div>
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Activation code education</p>
+            <h2>Code assignment editor</h2>
+            <p className="muted">
+              Select a generated code to adjust its bundle, box template, procedure, product mode,
+              and code-level guide overrides.
+            </p>
+          </div>
+        </div>
+
+        {libraryError ? <div className="alert error">{libraryError}</div> : null}
+        {codeEditorError ? <div className="alert error">{codeEditorError}</div> : null}
+        {codeEditorSuccess ? <div className="alert success">{codeEditorSuccess}</div> : null}
+
+        {codeEditorLoading ? (
+          <div className="info-card">
+            <Loader2 size={18} className="spin" />
+            <p className="muted">Loading activation code assignment.</p>
+          </div>
+        ) : selectedCode ? (
+          <form className="form-stack" onSubmit={handleSaveCodeAssignment}>
+            <div className="grid-two">
+              <div className="info-card">
+                <h3>{selectedCode.code}</h3>
+                <dl className="meta-list">
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{selectedCode.status}</dd>
+                  </div>
+                  <div>
+                    <dt>Clinic</dt>
+                    <dd>{selectedCode.clinicTag || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Claimed</dt>
+                    <dd>{formatDateTime(selectedCode.claimedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Claimed by</dt>
+                    <dd>{selectedCode.claimedByUserId || "—"}</dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div className="info-card">
+                <h3>Selected preview</h3>
+                <p className="muted">
+                  {selectedFormBundle
+                    ? `${selectedFormBundle.name} · ${selectedFormBundle.moduleCount} guide(s)`
+                    : "No education bundle selected."}
+                </p>
+                <p className="muted">
+                  {selectedFormTemplate
+                    ? `${selectedFormTemplate.name} · ${selectedFormTemplate.boxItemKeys.length} item key(s)`
+                    : "No box template selected."}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid-two">
+              <label className="field">
+                <span>Education bundle</span>
+                <select
+                  value={codeEditorForm.educationBundleId}
+                  onChange={(event) =>
+                    setCodeEditorForm((current) => ({
+                      ...current,
+                      educationBundleId: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">No bundle</option>
+                  {(libraryPayload?.bundles ?? []).map((bundle) => (
+                    <option key={bundle.id} value={bundle.id}>
+                      {bundle.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Box template</span>
+                <select
+                  value={codeEditorForm.boxTemplateId}
+                  onChange={(event) =>
+                    setCodeEditorForm((current) => ({
+                      ...current,
+                      boxTemplateId: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">No template</option>
+                  {(libraryPayload?.boxTemplates ?? []).map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Procedure name</span>
+                <input
+                  type="text"
+                  value={codeEditorForm.procedureName}
+                  onChange={(event) =>
+                    setCodeEditorForm((current) => ({
+                      ...current,
+                      procedureName: event.target.value,
+                    }))
+                  }
+                  placeholder="Knee Replacement"
+                />
+              </label>
+
+              <label className="field">
+                <span>Product mode</span>
+                <select
+                  value={codeEditorForm.productMode}
+                  onChange={(event) =>
+                    setCodeEditorForm((current) => ({
+                      ...current,
+                      productMode: event.target.value as RecoveryLibraryProductMode,
+                    }))
+                  }
+                >
+                  <option value="kit_only">Kit-only</option>
+                  <option value="full_platform">Full platform</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="field">
+              <span>Code-level box item overrides</span>
+              <textarea
+                value={codeEditorForm.assignedBoxItemsText}
+                onChange={(event) =>
+                  setCodeEditorForm((current) => ({
+                    ...current,
+                    assignedBoxItemsText: event.target.value,
+                  }))
+                }
+                placeholder={"icepack|Ice Pack\ncompression_socks|Compression Socks"}
+                rows={4}
+              />
+            </label>
+
+            <div className="info-card form-stack">
+              <h3>Guide overrides</h3>
+              <div className="grid-two">
+                <label className="field">
+                  <span>Select an existing guide</span>
+                  <select value={guidePickId} onChange={(event) => setGuidePickId(event.target.value)}>
+                    <option value="">Choose a guide</option>
+                    {(libraryPayload?.modules ?? []).map((module) => (
+                      <option key={module.id} value={module.id}>
+                        {module.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="action-stack">
+                  <button
+                    className="button secondary action-button"
+                    type="button"
+                    onClick={() => addGuideToCodeField("guideIdsText")}
+                    disabled={!guidePickId}
+                  >
+                    Add selected
+                  </button>
+                  <button
+                    className="button secondary action-button"
+                    type="button"
+                    onClick={() => addGuideToCodeField("recommendedGuideIdsText")}
+                    disabled={!guidePickId}
+                  >
+                    Add recommended
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid-two">
+                <label className="field">
+                  <span>Selected guide IDs</span>
+                  <textarea
+                    value={codeEditorForm.guideIdsText}
+                    onChange={(event) =>
+                      setCodeEditorForm((current) => ({
+                        ...current,
+                        guideIdsText: event.target.value,
+                      }))
+                    }
+                    rows={4}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Recommended guide IDs</span>
+                  <textarea
+                    value={codeEditorForm.recommendedGuideIdsText}
+                    onChange={(event) =>
+                      setCodeEditorForm((current) => ({
+                        ...current,
+                        recommendedGuideIdsText: event.target.value,
+                      }))
+                    }
+                    rows={4}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <button className="button primary" type="submit" disabled={codeEditorSaving}>
+              {codeEditorSaving ? (
+                <>
+                  <Loader2 size={16} className="spin" />
+                  Saving
+                </>
+              ) : (
+                <>
+                  <Save size={16} />
+                  Save code assignment
+                </>
+              )}
+            </button>
+          </form>
+        ) : (
+          <p className="muted">Open a generated code to edit its education assignment.</p>
+        )}
       </section>
 
       <section className="panel">
@@ -768,6 +1226,7 @@ export default function OwnerClinicDetailPage() {
                   <th>Batch</th>
                   <th>Quantity</th>
                   <th>Box type</th>
+                  <th>Education</th>
                   <th>Created</th>
                   <th>Created by</th>
                   <th>Code counts</th>
@@ -783,6 +1242,21 @@ export default function OwnerClinicDetailPage() {
                     </td>
                     <td>{batch.quantity}</td>
                     <td>{batch.boxType || "—"}</td>
+                    <td>
+                      <div className="cell-strong">
+                        {batch.productMode === "kit_only" ? "Kit-only" : "Full platform"}
+                      </div>
+                      <div className="cell-muted">
+                        {batch.educationBundleId
+                          ? bundleNameById.get(batch.educationBundleId) ?? "Bundle assigned"
+                          : "No bundle"}
+                      </div>
+                      <div className="cell-muted">
+                        {batch.boxTemplateId
+                          ? templateNameById.get(batch.boxTemplateId) ?? "Template assigned"
+                          : "No template"}
+                      </div>
+                    </td>
                     <td>{formatDateTime(batch.createdAt)}</td>
                     <td>{batch.createdByUserId || "—"}</td>
                     <td>
@@ -857,26 +1331,53 @@ export default function OwnerClinicDetailPage() {
                   <th>Code</th>
                   <th>Status</th>
                   <th>Clinic tag</th>
-                  <th>Batch ID</th>
-                  <th>Box type</th>
-                  <th>Created</th>
-                  <th>Claimed</th>
-                  <th>Claimed by</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleCodes.map((code) => (
+	                  <th>Batch ID</th>
+	                  <th>Box type</th>
+	                  <th>Education</th>
+	                  <th>Created</th>
+	                  <th>Claimed</th>
+	                  <th>Claimed by</th>
+	                  <th>Actions</th>
+	                </tr>
+	              </thead>
+	              <tbody>
+	                {visibleCodes.map((code) => (
                   <tr key={`${code.code}-${code.batchId || "none"}`}>
                     <td>{code.code}</td>
                     <td>{code.status}</td>
-                    <td>{code.clinicTag || "—"}</td>
-                    <td>{code.batchId || "—"}</td>
-                    <td>{code.boxType || "—"}</td>
-                    <td>{formatDateTime(code.createdAt)}</td>
-                    <td>{formatDateTime(code.claimedAt)}</td>
-                    <td>{code.claimedByUserId || "—"}</td>
-                  </tr>
-                ))}
+	                    <td>{code.clinicTag || "—"}</td>
+	                    <td>{code.batchId || "—"}</td>
+	                    <td>{code.boxType || "—"}</td>
+	                    <td>
+	                      <div className="cell-strong">
+	                        {code.productMode === "kit_only" ? "Kit-only" : "Full platform"}
+	                      </div>
+	                      <div className="cell-muted">
+	                        {code.educationBundleId
+	                          ? bundleNameById.get(code.educationBundleId) ?? "Bundle assigned"
+	                          : "No bundle"}
+	                      </div>
+	                      <div className="cell-muted">
+	                        {code.boxTemplateId
+	                          ? templateNameById.get(code.boxTemplateId) ?? "Template assigned"
+	                          : "No template"}
+	                      </div>
+	                    </td>
+	                    <td>{formatDateTime(code.createdAt)}</td>
+	                    <td>{formatDateTime(code.claimedAt)}</td>
+	                    <td>{code.claimedByUserId || "—"}</td>
+	                    <td>
+	                      <button
+	                        className="button secondary action-button"
+	                        type="button"
+	                        onClick={() => void handleOpenCode(code.code)}
+	                        disabled={codeEditorLoading}
+	                      >
+	                        Edit
+	                      </button>
+	                    </td>
+	                  </tr>
+	                ))}
               </tbody>
             </table>
           )}

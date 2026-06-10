@@ -32,6 +32,11 @@ import {
   syncOperationalAlertsForPatients,
 } from "../../services/operationalAlerts.js";
 import { generatePlan } from "../../services/plan/generatePlan.js";
+import {
+  getBoxTemplateById,
+  getEducationBundleById,
+  RECOVERY_LIBRARY_PRODUCT_MODES,
+} from "../../services/recoveryLibraryService.js";
 import { decryptJsonPHI } from "../../utils/encryption.js";
 import { toCsv } from "../../utils/csv.js";
 
@@ -123,6 +128,10 @@ clinicRouter.get("/batches", async (req: Request, res: Response) => {
       quantity: true,
       boxType: true,
       includedItemsJson: true,
+      educationBundleId: true,
+      boxTemplateId: true,
+      productMode: true,
+      procedureName: true,
       createdAt: true,
       createdByUserId: true,
     },
@@ -194,6 +203,10 @@ clinicRouter.get("/batches", async (req: Request, res: Response) => {
       ...b,
       boxType: b.boxType ?? null,
       includedItems: Array.isArray(b.includedItemsJson) ? b.includedItemsJson : [],
+      educationBundleId: b.educationBundleId ?? null,
+      boxTemplateId: b.boxTemplateId ?? null,
+      productMode: b.productMode,
+      procedureName: b.procedureName ?? null,
       codeCounts: {
         total,
         unused,
@@ -228,6 +241,19 @@ const CreateBatchSchema = z.object({
   clinicTag: z.string().min(2).max(64),
   quantity: z.number().int().min(1).max(5000),
   boxType: z.string().trim().min(1).max(120).optional(),
+  educationBundleId: z.preprocess(
+    (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+    z.string().trim().min(1).max(160).optional()
+  ),
+  boxTemplateId: z.preprocess(
+    (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+    z.string().trim().min(1).max(160).optional()
+  ),
+  productMode: z.enum(RECOVERY_LIBRARY_PRODUCT_MODES).optional(),
+  procedureName: z.preprocess(
+    (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+    z.string().trim().min(1).max(120).optional()
+  ),
   includedItems: z
     .array(
       z.object({
@@ -238,6 +264,38 @@ const CreateBatchSchema = z.object({
     .max(100)
     .optional(),
 });
+
+async function validateActivationEducationTargets(args: {
+  educationBundleId?: string;
+  boxTemplateId?: string;
+}) {
+  const [bundle, boxTemplate] = await Promise.all([
+    args.educationBundleId
+      ? getEducationBundleById(args.educationBundleId, { includeInactive: true })
+      : Promise.resolve(null),
+    args.boxTemplateId
+      ? getBoxTemplateById(args.boxTemplateId, { includeInactive: true })
+      : Promise.resolve(null),
+  ]);
+
+  if (args.educationBundleId && !bundle) {
+    return {
+      ok: false as const,
+      code: "EDUCATION_BUNDLE_NOT_FOUND",
+      message: "Selected education bundle was not found.",
+    };
+  }
+
+  if (args.boxTemplateId && !boxTemplate) {
+    return {
+      ok: false as const,
+      code: "BOX_TEMPLATE_NOT_FOUND",
+      message: "Selected box template was not found.",
+    };
+  }
+
+  return { ok: true as const };
+}
 
 const PlanConfigSchema = z.object({
   recovery_region: z.enum(["leg_foot", "arm_hand", "torso", "face_neck", "general"]),
@@ -272,7 +330,16 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
     return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
   }
 
-  const { clinicTag, quantity, boxType, includedItems } = parsed.data;
+  const {
+    clinicTag,
+    quantity,
+    boxType,
+    educationBundleId,
+    boxTemplateId,
+    productMode = "full_platform",
+    procedureName,
+    includedItems,
+  } = parsed.data;
 
   // SECURITY FIX: Enforce that CLINIC users can only create batches for themselves
   if (userRole === UserRole.CLINIC) {
@@ -284,6 +351,17 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
       });
       return res.status(403).json({ code: "FORBIDDEN", message: "Cannot create batches for another clinic." });
     }
+  }
+
+  const educationTargets = await validateActivationEducationTargets({
+    educationBundleId,
+    boxTemplateId,
+  });
+  if (!educationTargets.ok) {
+    return res.status(400).json({
+      code: educationTargets.code,
+      message: educationTargets.message,
+    });
   }
 
   try {
@@ -308,6 +386,10 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
           includedItemsJson: includedItems
             ? (includedItems as unknown as Prisma.InputJsonValue)
             : undefined,
+          educationBundleId,
+          boxTemplateId,
+          productMode,
+          procedureName,
           createdByUserId: userId,
         },
       });
@@ -326,6 +408,10 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
           code: makeActivationCode(),
           clinicTag,
           batchId: createdBatch.id,
+          educationBundleId,
+          boxTemplateId,
+          productMode,
+          procedureName,
         }));
 
         const created = await tx.activationCode.createMany({
@@ -349,6 +435,10 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
         quantity,
         boxType: boxType ?? null,
         includedItemCount: includedItems?.length ?? 0,
+        educationBundleId: educationBundleId ?? null,
+        boxTemplateId: boxTemplateId ?? null,
+        productMode,
+        procedureName: procedureName ?? null,
       }
     });
 
@@ -359,6 +449,10 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
         quantity: batch.quantity,
         boxType: batch.boxType ?? null,
         includedItems: Array.isArray(batch.includedItemsJson) ? batch.includedItemsJson : [],
+        educationBundleId: batch.educationBundleId ?? null,
+        boxTemplateId: batch.boxTemplateId ?? null,
+        productMode: batch.productMode,
+        procedureName: batch.procedureName ?? null,
         createdAt: batch.createdAt,
       },
     });
@@ -383,6 +477,10 @@ clinicRouter.get("/batches/:id/codes", async (req: Request, res: Response) => {
       clinicTag: true,
       boxType: true,
       includedItemsJson: true,
+      educationBundleId: true,
+      boxTemplateId: true,
+      productMode: true,
+      procedureName: true,
     },
   });
 
@@ -402,6 +500,12 @@ clinicRouter.get("/batches/:id/codes", async (req: Request, res: Response) => {
       code: true,
       status: true,
       clinicTag: true,
+      educationBundleId: true,
+      boxTemplateId: true,
+      productMode: true,
+      procedureName: true,
+      assignedBoxItemsJson: true,
+      assignedEducationJson: true,
       claimedAt: true,
       claimedByUserId: true,
     },
@@ -416,8 +520,23 @@ clinicRouter.get("/batches/:id/codes", async (req: Request, res: Response) => {
       quantity: batch.quantity,
       boxType: batch.boxType ?? null,
       includedItems: Array.isArray(batch.includedItemsJson) ? batch.includedItemsJson : [],
+      educationBundleId: batch.educationBundleId ?? null,
+      boxTemplateId: batch.boxTemplateId ?? null,
+      productMode: batch.productMode,
+      procedureName: batch.procedureName ?? null,
     },
-    codes,
+    codes: codes.map((code) => ({
+      ...code,
+      educationBundleId: code.educationBundleId ?? null,
+      boxTemplateId: code.boxTemplateId ?? null,
+      procedureName: code.procedureName ?? null,
+      assignedBoxItems: Array.isArray(code.assignedBoxItemsJson)
+        ? code.assignedBoxItemsJson
+        : [],
+      assignedEducation: code.assignedEducationJson ?? null,
+      assignedBoxItemsJson: undefined,
+      assignedEducationJson: undefined,
+    })),
   });
 });
 

@@ -12,7 +12,12 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { api } from "@/api/client";
 import { clearSession, getStoredUser } from "@/lib/session";
-import type { ActivationBatch, CreateBatchResponse } from "@/types";
+import type {
+  ActivationBatch,
+  CreateBatchResponse,
+  RecoveryLibraryAdminPayload,
+  RecoveryLibraryProductMode,
+} from "@/types";
 
 type BatchesResponse = {
   batches: ActivationBatch[];
@@ -27,13 +32,21 @@ export default function DashboardPage() {
   const user = getStoredUser();
   const [batches, setBatches] = useState<ActivationBatch[]>([]);
   const [batchesLoading, setBatchesLoading] = useState(true);
+  const [libraryPayload, setLibraryPayload] = useState<RecoveryLibraryAdminPayload | null>(null);
+  const [libraryLoading, setLibraryLoading] = useState(true);
   const [batchError, setBatchError] = useState("");
+  const [libraryError, setLibraryError] = useState("");
   const [createError, setCreateError] = useState("");
   const [createdBatch, setCreatedBatch] = useState<ActivationBatch | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [clinicTag, setClinicTag] = useState("");
   const [quantity, setQuantity] = useState("25");
   const [boxType, setBoxType] = useState("");
+  const [educationBundleId, setEducationBundleId] = useState("");
+  const [boxTemplateId, setBoxTemplateId] = useState("");
+  const [procedureName, setProcedureName] = useState("");
+  const [productMode, setProductMode] =
+    useState<RecoveryLibraryProductMode>("full_platform");
 
   const cards = useMemo(
     () => [
@@ -97,6 +110,32 @@ export default function DashboardPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadLibraryAssignments() {
+      setLibraryLoading(true);
+      setLibraryError("");
+
+      try {
+        const response = await api.get<RecoveryLibraryAdminPayload>("/education/library/admin");
+        if (!active) return;
+        setLibraryPayload(response);
+      } catch (error) {
+        if (!active) return;
+        setLibraryError(error instanceof Error ? error.message : "Unable to load library options.");
+      } finally {
+        if (active) setLibraryLoading(false);
+      }
+    }
+
+    void loadLibraryAssignments();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   function handleLogout() {
     clearSession();
     navigate("/login", { replace: true });
@@ -112,12 +151,20 @@ export default function DashboardPage() {
         clinicTag: clinicTag.trim(),
         quantity: Number(quantity),
         ...(boxType.trim() ? { boxType: boxType.trim() } : {}),
+        ...(educationBundleId ? { educationBundleId } : {}),
+        ...(boxTemplateId ? { boxTemplateId } : {}),
+        ...(procedureName.trim() ? { procedureName: procedureName.trim() } : {}),
+        productMode,
       });
 
       setCreatedBatch(response.batch);
       setClinicTag("");
       setQuantity("25");
       setBoxType("");
+      setEducationBundleId("");
+      setBoxTemplateId("");
+      setProcedureName("");
+      setProductMode("full_platform");
       setBatches((current) => [response.batch, ...current].slice(0, 12));
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : "Unable to create activation batch.");
@@ -125,6 +172,10 @@ export default function DashboardPage() {
       setSubmitting(false);
     }
   }
+
+  const selectedBundle = libraryPayload?.bundles.find((bundle) => bundle.id === educationBundleId) ?? null;
+  const selectedBoxTemplate =
+    libraryPayload?.boxTemplates.find((template) => template.id === boxTemplateId) ?? null;
 
   return (
     <div className="page-shell">
@@ -220,6 +271,79 @@ export default function DashboardPage() {
               />
             </label>
 
+            <label className="field">
+              <span>Education bundle</span>
+              <select
+                value={educationBundleId}
+                onChange={(event) => setEducationBundleId(event.target.value)}
+                disabled={libraryLoading}
+              >
+                <option value="">No bundle selected</option>
+                {(libraryPayload?.bundles ?? []).map((bundle) => (
+                  <option key={bundle.id} value={bundle.id}>
+                    {bundle.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field">
+              <span>Box template</span>
+              <select
+                value={boxTemplateId}
+                onChange={(event) => setBoxTemplateId(event.target.value)}
+                disabled={libraryLoading}
+              >
+                <option value="">No template selected</option>
+                {(libraryPayload?.boxTemplates ?? []).map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field">
+              <span>Procedure name</span>
+              <input
+                type="text"
+                value={procedureName}
+                onChange={(event) => setProcedureName(event.target.value)}
+                placeholder="Knee Replacement"
+              />
+            </label>
+
+            <label className="field">
+              <span>Product mode</span>
+              <select
+                value={productMode}
+                onChange={(event) =>
+                  setProductMode(event.target.value as RecoveryLibraryProductMode)
+                }
+              >
+                <option value="kit_only">Kit-only</option>
+                <option value="full_platform">Full platform</option>
+              </select>
+            </label>
+
+            {libraryError ? <div className="alert error">{libraryError}</div> : null}
+
+            {selectedBundle || selectedBoxTemplate ? (
+              <div className="info-card compact-card">
+                {selectedBundle ? (
+                  <p className="muted">
+                    Bundle: {selectedBundle.name} · {selectedBundle.moduleCount} guide(s)
+                  </p>
+                ) : null}
+                {selectedBoxTemplate ? (
+                  <p className="muted">
+                    Box template: {selectedBoxTemplate.name} ·{" "}
+                    {selectedBoxTemplate.boxItemKeys.length} item key(s)
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             {createError ? <div className="alert error">{createError}</div> : null}
 
             <button className="button primary" type="submit" disabled={submitting}>
@@ -247,6 +371,18 @@ export default function DashboardPage() {
                   <dt>Box type</dt>
                   <dd>{createdBatch.boxType ?? "Not set"}</dd>
                 </div>
+                <div>
+                  <dt>Education bundle</dt>
+                  <dd>{createdBatch.educationBundleId ?? "Not set"}</dd>
+                </div>
+                <div>
+                  <dt>Box template</dt>
+                  <dd>{createdBatch.boxTemplateId ?? "Not set"}</dd>
+                </div>
+                <div>
+                  <dt>Product mode</dt>
+                  <dd>{createdBatch.productMode ?? "full_platform"}</dd>
+                </div>
               </dl>
             ) : (
               <p className="muted">Create a batch to show its result here.</p>
@@ -268,6 +404,7 @@ export default function DashboardPage() {
                   <th>Clinic</th>
                   <th>Quantity</th>
                   <th>Box type</th>
+                  <th>Education</th>
                   <th>Counts</th>
                   <th>Created</th>
                 </tr>
@@ -281,6 +418,15 @@ export default function DashboardPage() {
                     </td>
                     <td>{batch.quantity}</td>
                     <td>{batch.boxType ?? "Not set"}</td>
+                    <td>
+                      <div className="cell-strong">
+                        {batch.productMode === "kit_only" ? "Kit-only" : "Full platform"}
+                      </div>
+                      <div className="cell-muted">
+                        {batch.educationBundleId ? "Bundle assigned" : "No bundle"} ·{" "}
+                        {batch.boxTemplateId ? "Template assigned" : "No template"}
+                      </div>
+                    </td>
                     <td>
                       {batch.codeCounts
                         ? `${batch.codeCounts.unused} unused / ${batch.codeCounts.claimed} claimed`
