@@ -145,9 +145,10 @@ export const api = {
       body,
     });
   },
-  delete<T>(path: string) {
+  delete<T>(path: string, body?: unknown) {
     return request<T>(path, {
       method: "DELETE",
+      body,
     });
   },
   blob(path: string, options: RequestOptions = {}) {

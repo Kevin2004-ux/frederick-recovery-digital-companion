@@ -1,4 +1,4 @@
-import { ArrowLeft, Building2, Download, Loader2, Save, TableProperties } from "lucide-react";
+import { ArrowLeft, Building2, Download, Loader2, PlusCircle, Save, TableProperties } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -6,6 +6,7 @@ import { api, ApiError } from "@/api/client";
 import type {
   ActivationCodeDetail,
   ActivationCodeDetailResponse,
+  CreateBatchResponse,
   RecoveryLibraryAdminPayload,
   RecoveryLibraryProductMode,
 } from "@/types";
@@ -98,6 +99,14 @@ type CodeAssignmentForm = {
   recommendedGuideIdsText: string;
 };
 
+type GenerateCodesForm = {
+  quantity: string;
+  educationBundleId: string;
+  boxTemplateId: string;
+  procedureName: string;
+  productMode: RecoveryLibraryProductMode;
+};
+
 const EMPTY_CODE_ASSIGNMENT_FORM: CodeAssignmentForm = {
   educationBundleId: "",
   boxTemplateId: "",
@@ -106,6 +115,14 @@ const EMPTY_CODE_ASSIGNMENT_FORM: CodeAssignmentForm = {
   assignedBoxItemsText: "",
   guideIdsText: "",
   recommendedGuideIdsText: "",
+};
+
+const EMPTY_GENERATE_CODES_FORM: GenerateCodesForm = {
+  quantity: "10",
+  educationBundleId: "",
+  boxTemplateId: "",
+  procedureName: "",
+  productMode: "full_platform",
 };
 
 type OwnerClinicUserMutationResponse = {
@@ -168,6 +185,22 @@ function formatDateTime(value?: string | null) {
   }).format(parsed);
 }
 
+function formatActivationCodeStatus(status: string) {
+  if (status === "CLAIMED") return "Claimed";
+  if (status === "INVALIDATED") return "Invalidated";
+  if (status === "ISSUED" || status === "DRAFT" || status === "APPROVED") {
+    return "Unused";
+  }
+
+  return status.toLowerCase().replace(/(^|_)([a-z])/g, (_match, prefix: string, letter: string) =>
+    `${prefix ? " " : ""}${letter.toUpperCase()}`
+  );
+}
+
+function formatProductMode(productMode?: RecoveryLibraryProductMode | null) {
+  return productMode === "kit_only" ? "Kit-only" : "Full platform";
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -200,6 +233,10 @@ function formatClinicError(error: unknown, fallback: string) {
 
   if (apiError?.code === "CLINIC_HAS_ACTIVITY") {
     return "This clinic has activity. Use Deactivate instead.";
+  }
+
+  if (apiError?.code === "CLINIC_DELETE_CONFIRMATION_MISMATCH") {
+    return "Type the clinic tag exactly before deleting this clinic.";
   }
 
   if (apiError?.code === "VALIDATION_ERROR") {
@@ -291,6 +328,12 @@ export default function OwnerClinicDetailPage() {
   const [codesLoaded, setCodesLoaded] = useState(false);
   const [codesError, setCodesError] = useState("");
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [generateCodesForm, setGenerateCodesForm] = useState<GenerateCodesForm>(
+    EMPTY_GENERATE_CODES_FORM,
+  );
+  const [generateCodesLoading, setGenerateCodesLoading] = useState(false);
+  const [generateCodesError, setGenerateCodesError] = useState("");
+  const [generateCodesSuccess, setGenerateCodesSuccess] = useState("");
   const [selectedCode, setSelectedCode] = useState<ActivationCodeDetail | null>(null);
   const [codeEditorForm, setCodeEditorForm] = useState<CodeAssignmentForm>(
     EMPTY_CODE_ASSIGNMENT_FORM,
@@ -318,6 +361,8 @@ export default function OwnerClinicDetailPage() {
   const [clinicActionLoading, setClinicActionLoading] = useState<"deactivate" | "delete" | null>(null);
   const [clinicActionError, setClinicActionError] = useState("");
   const [clinicActionSuccess, setClinicActionSuccess] = useState("");
+  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const [deleteConfirmationTag, setDeleteConfirmationTag] = useState("");
   const [deleteBlockedActivity, setDeleteBlockedActivity] = useState<DeleteClinicBlockedResponse["activity"] | null>(null);
 
   const loadDetail = useCallback(async (showPageLoader = true) => {
@@ -362,7 +407,7 @@ export default function OwnerClinicDetailPage() {
     };
   }, []);
 
-  async function loadCodes(nextBatchId?: string | null) {
+  const loadCodes = useCallback(async (nextBatchId?: string | null) => {
     setCodesLoading(true);
     setCodesError("");
 
@@ -375,6 +420,56 @@ export default function OwnerClinicDetailPage() {
       setCodesError(formatClinicError(nextError, "We couldn’t load clinic codes right now."));
     } finally {
       setCodesLoading(false);
+    }
+  }, [clinicTag]);
+
+  useEffect(() => {
+    void loadCodes(null);
+  }, [loadCodes]);
+
+  async function handleGenerateCodes(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const quantity = Number(generateCodesForm.quantity);
+
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 500) {
+      setGenerateCodesError("Enter a whole number from 1 to 500 activation codes.");
+      setGenerateCodesSuccess("");
+      return;
+    }
+
+    setGenerateCodesLoading(true);
+    setGenerateCodesError("");
+    setGenerateCodesSuccess("");
+    setCodesError("");
+
+    try {
+      const payload = await api.post<CreateBatchResponse>("/clinic/batches", {
+        clinicTag,
+        quantity,
+        ...(generateCodesForm.educationBundleId
+          ? { educationBundleId: generateCodesForm.educationBundleId }
+          : {}),
+        ...(generateCodesForm.boxTemplateId
+          ? { boxTemplateId: generateCodesForm.boxTemplateId }
+          : {}),
+        ...(generateCodesForm.procedureName.trim()
+          ? { procedureName: generateCodesForm.procedureName.trim() }
+          : {}),
+        productMode: generateCodesForm.productMode,
+      });
+
+      setGenerateCodesSuccess(
+        `Generated ${payload.batch.quantity} activation code(s) for ${clinicTag}.`,
+      );
+      setGenerateCodesForm(EMPTY_GENERATE_CODES_FORM);
+      await loadDetail(false);
+      await loadCodes(null);
+    } catch (nextError) {
+      setGenerateCodesError(
+        formatClinicError(nextError, "We couldn’t generate activation codes right now."),
+      );
+    } finally {
+      setGenerateCodesLoading(false);
     }
   }
 
@@ -390,6 +485,11 @@ export default function OwnerClinicDetailPage() {
       setSelectedCode(payload.activationCode);
       setCodeEditorForm(codeDetailToForm(payload.activationCode));
       setGuidePickId("");
+      window.setTimeout(() => {
+        document
+          .getElementById("code-assignment-editor")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
     } catch (nextError) {
       setCodeEditorError(formatClinicError(nextError, "We couldn’t load that activation code."));
     } finally {
@@ -606,11 +706,14 @@ export default function OwnerClinicDetailPage() {
     }
   }
 
-  async function handleDeleteClinic() {
-    const confirmed = window.confirm(
-      "Hard delete is only for empty test clinics. Clinics with claimed patients, logs, recovery plans, alerts, or reminder history will be blocked.",
-    );
-    if (!confirmed) return;
+  async function handleDeleteClinic(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const confirmationClinicTag = deleteConfirmationTag.trim();
+
+    if (confirmationClinicTag !== clinicTag) {
+      setClinicActionError("Type the clinic tag exactly before deleting this clinic.");
+      return;
+    }
 
     setClinicActionLoading("delete");
     setClinicActionError("");
@@ -618,10 +721,14 @@ export default function OwnerClinicDetailPage() {
     setDeleteBlockedActivity(null);
 
     try {
-      const payload = await api.delete<DeleteClinicResponse>(`/owner/clinics/${clinicTag}`);
+      const payload = await api.delete<DeleteClinicResponse>(`/owner/clinics/${clinicTag}`, {
+        confirmationClinicTag,
+      });
       setClinicActionSuccess(
         `Deleted test clinic ${payload.clinicTag}. Removed ${payload.deleted.clinicUsers} clinic user(s), ${payload.deleted.activationCodes} activation code(s), and ${payload.deleted.activationBatches} batch(es).`,
       );
+      setDeleteConfirmationOpen(false);
+      setDeleteConfirmationTag("");
       window.setTimeout(() => {
         navigate("/owner/clinics", { replace: true });
       }, 250);
@@ -747,6 +854,8 @@ export default function OwnerClinicDetailPage() {
       {clinicActionError ? <div className="alert error">{clinicActionError}</div> : null}
       {clinicActionSuccess ? <div className="alert success">{clinicActionSuccess}</div> : null}
       {codesError ? <div className="alert error">{codesError}</div> : null}
+      {generateCodesError ? <div className="alert error">{generateCodesError}</div> : null}
+      {generateCodesSuccess ? <div className="alert success">{generateCodesSuccess}</div> : null}
 
       {deleteBlockedActivity ? (
         <div className="alert error">
@@ -817,7 +926,7 @@ export default function OwnerClinicDetailPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="code-assignment-editor">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Activation code education</p>
@@ -846,7 +955,7 @@ export default function OwnerClinicDetailPage() {
                 <dl className="meta-list">
                   <div>
                     <dt>Status</dt>
-                    <dd>{selectedCode.status}</dd>
+                    <dd>{formatActivationCodeStatus(selectedCode.status)}</dd>
                   </div>
                   <div>
                     <dt>Clinic</dt>
@@ -1244,7 +1353,7 @@ export default function OwnerClinicDetailPage() {
                     <td>{batch.boxType || "—"}</td>
                     <td>
                       <div className="cell-strong">
-                        {batch.productMode === "kit_only" ? "Kit-only" : "Full platform"}
+                        {formatProductMode(batch.productMode)}
                       </div>
                       <div className="cell-muted">
                         {batch.educationBundleId
@@ -1300,12 +1409,12 @@ export default function OwnerClinicDetailPage() {
       <section className="panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Generated codes</p>
-            <h2>Code viewer</h2>
+            <p className="eyebrow">Activation Codes</p>
+            <h2>Generate and configure codes</h2>
             <p className="muted">
               {activeBatchId
                 ? `Showing codes for batch ${activeBatchId}.`
-                : "Showing clinic-wide code activity."}
+                : "Generate codes for this clinic, then configure each code before placing it in a recovery box."}
             </p>
           </div>
 
@@ -1317,67 +1426,174 @@ export default function OwnerClinicDetailPage() {
           ) : null}
         </div>
 
+        <div className="info-card owner-form-card">
+          <h3>Generate codes for this clinic</h3>
+          <form className="form-stack" onSubmit={handleGenerateCodes}>
+            <div className="grid-two">
+              <label className="field">
+                <span>Quantity</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={generateCodesForm.quantity}
+                  onChange={(event) =>
+                    setGenerateCodesForm((current) => ({
+                      ...current,
+                      quantity: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </label>
+
+              <label className="field">
+                <span>Default education bundle</span>
+                <select
+                  value={generateCodesForm.educationBundleId}
+                  onChange={(event) =>
+                    setGenerateCodesForm((current) => ({
+                      ...current,
+                      educationBundleId: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">No default bundle</option>
+                  {(libraryPayload?.bundles ?? []).map((bundle) => (
+                    <option key={bundle.id} value={bundle.id}>
+                      {bundle.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Default box template</span>
+                <select
+                  value={generateCodesForm.boxTemplateId}
+                  onChange={(event) =>
+                    setGenerateCodesForm((current) => ({
+                      ...current,
+                      boxTemplateId: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">No default template</option>
+                  {(libraryPayload?.boxTemplates ?? []).map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Default procedure name</span>
+                <input
+                  type="text"
+                  value={generateCodesForm.procedureName}
+                  onChange={(event) =>
+                    setGenerateCodesForm((current) => ({
+                      ...current,
+                      procedureName: event.target.value,
+                    }))
+                  }
+                  placeholder="Knee Replacement"
+                />
+              </label>
+
+              <label className="field">
+                <span>Product mode</span>
+                <select
+                  value={generateCodesForm.productMode}
+                  onChange={(event) =>
+                    setGenerateCodesForm((current) => ({
+                      ...current,
+                      productMode: event.target.value as RecoveryLibraryProductMode,
+                    }))
+                  }
+                >
+                  <option value="kit_only">Kit-only</option>
+                  <option value="full_platform">Full platform</option>
+                </select>
+              </label>
+            </div>
+
+            <button className="button primary" type="submit" disabled={generateCodesLoading}>
+              {generateCodesLoading ? (
+                <>
+                  <Loader2 size={16} className="spin" />
+                  Generating codes
+                </>
+              ) : (
+                <>
+                  <PlusCircle size={16} />
+                  Generate codes
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+
         <div className="table-wrap">
           {!codesLoaded && !codesLoading ? (
-            <p className="muted">Select View Codes to load clinic or batch codes.</p>
+            <p className="muted">Clinic codes will load automatically.</p>
           ) : codesLoading ? (
             <p className="muted">Loading codes...</p>
           ) : visibleCodes.length === 0 ? (
-            <p className="muted">No codes yet.</p>
+            <p className="muted">No codes yet. Generate the first set above.</p>
           ) : (
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Code</th>
+                  <th>Activation code</th>
                   <th>Status</th>
-                  <th>Clinic tag</th>
-	                  <th>Batch ID</th>
-	                  <th>Box type</th>
-	                  <th>Education</th>
-	                  <th>Created</th>
-	                  <th>Claimed</th>
-	                  <th>Claimed by</th>
-	                  <th>Actions</th>
-	                </tr>
-	              </thead>
-	              <tbody>
-	                {visibleCodes.map((code) => (
+                  <th>Claimed patient</th>
+                  <th>Box template</th>
+                  <th>Education bundle</th>
+                  <th>Procedure</th>
+                  <th>Product mode</th>
+                  <th>Created</th>
+                  <th>Configure</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleCodes.map((code) => (
                   <tr key={`${code.code}-${code.batchId || "none"}`}>
-                    <td>{code.code}</td>
-                    <td>{code.status}</td>
-	                    <td>{code.clinicTag || "—"}</td>
-	                    <td>{code.batchId || "—"}</td>
-	                    <td>{code.boxType || "—"}</td>
-	                    <td>
-	                      <div className="cell-strong">
-	                        {code.productMode === "kit_only" ? "Kit-only" : "Full platform"}
-	                      </div>
-	                      <div className="cell-muted">
-	                        {code.educationBundleId
-	                          ? bundleNameById.get(code.educationBundleId) ?? "Bundle assigned"
-	                          : "No bundle"}
-	                      </div>
-	                      <div className="cell-muted">
-	                        {code.boxTemplateId
-	                          ? templateNameById.get(code.boxTemplateId) ?? "Template assigned"
-	                          : "No template"}
-	                      </div>
-	                    </td>
-	                    <td>{formatDateTime(code.createdAt)}</td>
-	                    <td>{formatDateTime(code.claimedAt)}</td>
-	                    <td>{code.claimedByUserId || "—"}</td>
-	                    <td>
-	                      <button
-	                        className="button secondary action-button"
-	                        type="button"
-	                        onClick={() => void handleOpenCode(code.code)}
-	                        disabled={codeEditorLoading}
-	                      >
-	                        Edit
-	                      </button>
-	                    </td>
-	                  </tr>
-	                ))}
+                    <td>
+                      <div className="cell-strong">{code.code}</div>
+                      <div className="cell-muted">Batch: {code.batchId || "—"}</div>
+                    </td>
+                    <td>{formatActivationCodeStatus(code.status)}</td>
+                    <td>
+                      <div className="cell-strong">{code.claimedByUserId || "—"}</div>
+                      <div className="cell-muted">{formatDateTime(code.claimedAt)}</div>
+                    </td>
+                    <td>
+                      {code.boxTemplateId
+                        ? templateNameById.get(code.boxTemplateId) ?? "Template assigned"
+                        : "No template"}
+                    </td>
+                    <td>
+                      {code.educationBundleId
+                        ? bundleNameById.get(code.educationBundleId) ?? "Bundle assigned"
+                        : "No bundle"}
+                    </td>
+                    <td>{code.procedureName || "—"}</td>
+                    <td>{formatProductMode(code.productMode)}</td>
+                    <td>{formatDateTime(code.createdAt)}</td>
+                    <td>
+                      <button
+                        className="button secondary action-button"
+                        type="button"
+                        onClick={() => void handleOpenCode(code.code)}
+                        disabled={codeEditorLoading}
+                      >
+                        Configure
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
@@ -1414,14 +1630,59 @@ export default function OwnerClinicDetailPage() {
             <p className="muted">
               Hard delete is only for empty test clinics. Clinics with claimed patients, logs, recovery plans, alerts, or reminder history will be blocked.
             </p>
-            <button
-              className="button danger"
-              type="button"
-              onClick={() => void handleDeleteClinic()}
-              disabled={clinicActionLoading === "delete"}
-            >
-              {clinicActionLoading === "delete" ? "Deleting..." : "Delete Test Clinic"}
-            </button>
+            {deleteConfirmationOpen ? (
+              <form className="form-stack" onSubmit={handleDeleteClinic}>
+                <label className="field">
+                  <span>Type {clinicTag} to confirm</span>
+                  <input
+                    type="text"
+                    value={deleteConfirmationTag}
+                    onChange={(event) => setDeleteConfirmationTag(event.target.value)}
+                    placeholder={clinicTag}
+                    autoComplete="off"
+                  />
+                </label>
+                <div className="action-row">
+                  <button
+                    className="button danger"
+                    type="submit"
+                    disabled={
+                      clinicActionLoading === "delete" ||
+                      deleteConfirmationTag.trim() !== clinicTag
+                    }
+                  >
+                    {clinicActionLoading === "delete" ? "Deleting..." : "Delete Test Clinic"}
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => {
+                      setDeleteConfirmationOpen(false);
+                      setDeleteConfirmationTag("");
+                      setDeleteBlockedActivity(null);
+                    }}
+                    disabled={clinicActionLoading === "delete"}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <button
+                className="button danger"
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmationOpen(true);
+                  setDeleteConfirmationTag("");
+                  setClinicActionError("");
+                  setClinicActionSuccess("");
+                  setDeleteBlockedActivity(null);
+                }}
+                disabled={clinicActionLoading === "delete"}
+              >
+                Delete Test Clinic
+              </button>
+            )}
           </div>
         </div>
       </section>
