@@ -80,6 +80,32 @@ export type RecoveryLibraryModuleSummary = Pick<
   | "frequency"
 >;
 
+export const RECOVERY_LIBRARY_PRODUCT_MODES = [
+  "kit_only",
+  "full_platform",
+] as const;
+
+export type RecoveryLibraryProductMode =
+  (typeof RECOVERY_LIBRARY_PRODUCT_MODES)[number];
+
+export type RecoveryLibraryAssignmentSummary = {
+  activationCode: string | null;
+  productMode: RecoveryLibraryProductMode;
+  educationBundle: {
+    id: string;
+    name: string;
+    slug: string;
+    procedureName: string | null;
+  } | null;
+  boxTemplate: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  hasCodeEducationOverrides: boolean;
+  hasCodeBoxItemOverrides: boolean;
+};
+
 export type RecoveryLibraryHomePayload = {
   recommendedGuides: RecoveryLibraryModuleSummary[];
   categories: Array<
@@ -90,6 +116,8 @@ export type RecoveryLibraryHomePayload = {
   >;
   sections: Record<LibraryCategoryKey, RecoveryLibraryModuleSummary[]>;
   personalized: {
+    productMode: RecoveryLibraryProductMode;
+    assignment: RecoveryLibraryAssignmentSummary | null;
     procedureName: string | null;
     boxItems: Array<{ key: string | null; label: string }>;
     procedureGuides: RecoveryLibraryModuleSummary[];
@@ -228,6 +256,22 @@ type BoxTemplateUpsertInput = {
   active?: boolean;
   displayOrder?: number;
   modules?: BoxTemplateModuleAssignmentInput[];
+};
+
+type AssignedEducationOverrides = {
+  guideIds: string[];
+  recommendedGuideIds: string[];
+};
+
+type PatientLibraryContext = {
+  activationCode: string | null;
+  productMode: RecoveryLibraryProductMode;
+  procedureName: string | null;
+  boxItems: Array<{ key: string | null; label: string }>;
+  educationBundle: EducationBundle | null;
+  boxTemplate: BoxTemplate | null;
+  assignedEducation: AssignedEducationOverrides;
+  hasCodeBoxItemOverrides: boolean;
 };
 
 type StaticLibraryMetadata = {
@@ -445,6 +489,10 @@ function normalizeText(value: string): string {
     .trim();
 }
 
+function normalizeProductMode(value: string | null | undefined): RecoveryLibraryProductMode {
+  return value === "kit_only" ? "kit_only" : "full_platform";
+}
+
 function normalizeBody(value: string): string {
   return value
     .replace(/\r/g, "")
@@ -524,6 +572,91 @@ function normalizeBoxItemKeys(values: Array<string | null | undefined>): string[
         .filter(Boolean)
     )
   );
+}
+
+function boxItemLabelFromKey(key: string): string {
+  const normalized = key
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return key;
+
+  return normalized.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function boxItemKeysToItems(keys: string[]): Array<{ key: string | null; label: string }> {
+  return normalizeBoxItemKeys(keys).map((key) => ({
+    key,
+    label: boxItemLabelFromKey(key),
+  }));
+}
+
+function mergeBoxItems(
+  ...groups: Array<Array<{ key: string | null; label: string }>>
+): Array<{ key: string | null; label: string }> {
+  const byKey = new Map<string, { key: string | null; label: string }>();
+
+  for (const group of groups) {
+    for (const item of group) {
+      const label = item.label.trim();
+      if (!label) continue;
+
+      const normalizedKey = item.key ? normalizeBoxItemKey(item.key) : null;
+      const dedupeKey = normalizedKey ?? normalizeBoxItemKey(label);
+      if (!dedupeKey || byKey.has(dedupeKey)) continue;
+
+      byKey.set(dedupeKey, {
+        key: normalizedKey,
+        label,
+      });
+    }
+  }
+
+  return Array.from(byKey.values());
+}
+
+function readStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return uniqueStrings(
+    value.map((entry) => (typeof entry === "string" ? entry : null))
+  );
+}
+
+function parseAssignedEducationOverrides(
+  value: Prisma.JsonValue | null | undefined
+): AssignedEducationOverrides {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { guideIds: [], recommendedGuideIds: [] };
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return {
+    guideIds: uniqueStrings([
+      ...readStringList(record.guideIds),
+      ...readStringList(record.selectedGuideIds),
+      ...readStringList(record.moduleIds),
+    ]),
+    recommendedGuideIds: readStringList(record.recommendedGuideIds),
+  };
+}
+
+function emptyPatientLibraryContext(): PatientLibraryContext {
+  return {
+    activationCode: null,
+    productMode: "full_platform",
+    procedureName: null,
+    boxItems: [],
+    educationBundle: null,
+    boxTemplate: null,
+    assignedEducation: {
+      guideIds: [],
+      recommendedGuideIds: [],
+    },
+    hasCodeBoxItemOverrides: false,
+  };
 }
 
 function normalizeCategories(
@@ -792,6 +925,36 @@ function toBoxTemplateGuideSummary(
   };
 }
 
+function toCodeAssignedGuideSummary(
+  module: RecoveryLibraryModule,
+  args: {
+    recommended: boolean;
+    order: number;
+  }
+): RecoveryLibraryModuleSummary {
+  return {
+    ...toSummary(module),
+    recommended: args.recommended,
+    featured: false,
+    recommendationLabel: args.recommended ? "Assigned to you" : "Selected for you",
+    recommendationOrder: args.order,
+    displayOrder: args.order,
+  };
+}
+
+function appendUniqueGuides(
+  target: RecoveryLibraryModuleSummary[],
+  guides: RecoveryLibraryModuleSummary[]
+) {
+  const existingIds = new Set(target.map((guide) => guide.id));
+
+  for (const guide of guides) {
+    if (existingIds.has(guide.id)) continue;
+    target.push(guide);
+    existingIds.add(guide.id);
+  }
+}
+
 function matchesProcedure(module: RecoveryLibraryModule, procedureName: string | null): boolean {
   if (!procedureName) return false;
 
@@ -1013,10 +1176,7 @@ export function getLibraryCategory(key: string): RecoveryLibraryCategory | null 
   return CATEGORY_DEFINITIONS.find((category) => category.key === key) ?? null;
 }
 
-export async function getPatientLibraryContext(userId: string): Promise<{
-  procedureName: string | null;
-  boxItems: Array<{ key: string | null; label: string }>;
-}> {
+export async function getPatientLibraryContext(userId: string): Promise<PatientLibraryContext> {
   const [user, activation] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
@@ -1029,18 +1189,62 @@ export async function getPatientLibraryContext(userId: string): Promise<{
       },
       orderBy: { claimedAt: "desc" },
       select: {
+        code: true,
+        educationBundleId: true,
+        boxTemplateId: true,
+        productMode: true,
+        procedureName: true,
+        assignedBoxItemsJson: true,
+        assignedEducationJson: true,
         batch: {
           select: {
             includedItemsJson: true,
+            educationBundleId: true,
+            boxTemplateId: true,
+            productMode: true,
+            procedureName: true,
           },
         },
       },
     }),
   ]);
 
+  const educationBundleId =
+    activation?.educationBundleId ?? activation?.batch?.educationBundleId ?? null;
+  const boxTemplateId =
+    activation?.boxTemplateId ?? activation?.batch?.boxTemplateId ?? null;
+  const [educationBundle, boxTemplate] = await Promise.all([
+    educationBundleId ? getEducationBundleById(educationBundleId) : Promise.resolve(null),
+    boxTemplateId ? getBoxTemplateById(boxTemplateId) : Promise.resolve(null),
+  ]);
+
+  const assignedEducation = parseAssignedEducationOverrides(
+    activation?.assignedEducationJson
+  );
+  const codeBoxItems = normalizeIncludedItems(activation?.assignedBoxItemsJson);
+  const templateBoxItems = boxTemplate
+    ? boxItemKeysToItems(boxTemplate.boxItemKeys)
+    : [];
+  const batchBoxItems = normalizeIncludedItems(activation?.batch?.includedItemsJson);
+  const procedureName =
+    normalizeOptionalText(activation?.procedureName) ??
+    normalizeOptionalText(activation?.batch?.procedureName) ??
+    educationBundle?.procedureName ??
+    user?.procedureName ??
+    user?.procedureCode ??
+    null;
+
   return {
-    procedureName: user?.procedureName ?? user?.procedureCode ?? null,
-    boxItems: normalizeIncludedItems(activation?.batch?.includedItemsJson),
+    activationCode: activation?.code ?? null,
+    productMode: normalizeProductMode(
+      activation?.productMode ?? activation?.batch?.productMode
+    ),
+    procedureName,
+    boxItems: mergeBoxItems(codeBoxItems, templateBoxItems, batchBoxItems),
+    educationBundle,
+    boxTemplate,
+    assignedEducation,
+    hasCodeBoxItemOverrides: codeBoxItems.length > 0,
   };
 }
 
@@ -1049,11 +1253,49 @@ export async function getLibraryHomePayload(args: {
 }): Promise<RecoveryLibraryHomePayload> {
   const [modules, patientContext] = await Promise.all([
     listLibraryModules(),
-    args.userId ? getPatientLibraryContext(args.userId) : Promise.resolve({
-      procedureName: null,
-      boxItems: [] as Array<{ key: string | null; label: string }>,
-    }),
+    args.userId
+      ? getPatientLibraryContext(args.userId)
+      : Promise.resolve(emptyPatientLibraryContext()),
   ]);
+
+  const modulesById = new Map(modules.map((module) => [module.id, module]));
+  const recommendedOverrideIds = new Set(
+    patientContext.assignedEducation.recommendedGuideIds
+  );
+  const codeAssignedGuideIds = uniqueStrings([
+    ...patientContext.assignedEducation.recommendedGuideIds,
+    ...patientContext.assignedEducation.guideIds,
+  ]);
+  const codeAssignedGuides = codeAssignedGuideIds
+    .map((moduleId, index) => {
+      const module = modulesById.get(moduleId);
+      if (!module) return null;
+      return toCodeAssignedGuideSummary(module, {
+        recommended: recommendedOverrideIds.has(moduleId),
+        order: index,
+      });
+    })
+    .filter((guide): guide is RecoveryLibraryModuleSummary => Boolean(guide));
+  const bundleGuides = patientContext.educationBundle
+    ? patientContext.educationBundle.modules
+        .map((assignment) => {
+          const module = modulesById.get(assignment.moduleId);
+          if (!module) return null;
+          return toBundleGuideSummary(module, assignment);
+        })
+        .filter((guide): guide is RecoveryLibraryModuleSummary => Boolean(guide))
+        .sort(compareRecommendedSummaries)
+    : [];
+  const boxTemplateGuides = patientContext.boxTemplate
+    ? patientContext.boxTemplate.modules
+        .map((assignment) => {
+          const module = modulesById.get(assignment.moduleId);
+          if (!module) return null;
+          return toBoxTemplateGuideSummary(module, assignment);
+        })
+        .filter((guide): guide is RecoveryLibraryModuleSummary => Boolean(guide))
+        .sort(compareRecommendedSummaries)
+    : [];
 
   const categories = CATEGORY_DEFINITIONS.map((category) => {
     const categoryModules = modules.filter((module) =>
@@ -1077,30 +1319,76 @@ export async function getLibraryHomePayload(args: {
     ])
   ) as RecoveryLibraryHomePayload["sections"];
 
-  const procedureGuides = patientContext.procedureName
-    ? modules
+  const procedureGuides: RecoveryLibraryModuleSummary[] = [];
+  appendUniqueGuides(procedureGuides, bundleGuides);
+  if (patientContext.procedureName) {
+    appendUniqueGuides(
+      procedureGuides,
+      modules
         .filter((module) => matchesProcedure(module, patientContext.procedureName))
+        .sort(compareModules)
         .slice(0, 8)
         .map(toSummary)
-    : [];
+    );
+  }
 
-  const boxItemGuides = patientContext.boxItems.length
-    ? modules
+  const boxItemGuides: RecoveryLibraryModuleSummary[] = [];
+  appendUniqueGuides(boxItemGuides, boxTemplateGuides);
+  if (patientContext.boxItems.length) {
+    appendUniqueGuides(
+      boxItemGuides,
+      modules
         .filter((module) => matchesBoxItems(module, patientContext.boxItems))
+        .sort(compareModules)
         .slice(0, 8)
         .map(toSummary)
-    : [];
+    );
+  }
 
-  const recommendedGuides = modules
-    .filter(isRecommendedModule)
-    .sort(compareRecommendedModules)
-    .map(toSummary);
+  const recommendedGuides: RecoveryLibraryModuleSummary[] = [];
+  appendUniqueGuides(recommendedGuides, codeAssignedGuides);
+  appendUniqueGuides(recommendedGuides, bundleGuides);
+  appendUniqueGuides(recommendedGuides, boxTemplateGuides);
+  appendUniqueGuides(
+    recommendedGuides,
+    modules
+      .filter(isRecommendedModule)
+      .sort(compareRecommendedModules)
+      .map(toSummary)
+  );
+  const hasCodeEducationOverrides =
+    codeAssignedGuideIds.length > 0 ||
+    patientContext.assignedEducation.recommendedGuideIds.length > 0;
 
   return {
     recommendedGuides,
     categories,
     sections,
     personalized: {
+      productMode: patientContext.productMode,
+      assignment: patientContext.activationCode
+        ? {
+            activationCode: patientContext.activationCode,
+            productMode: patientContext.productMode,
+            educationBundle: patientContext.educationBundle
+              ? {
+                  id: patientContext.educationBundle.id,
+                  name: patientContext.educationBundle.name,
+                  slug: patientContext.educationBundle.slug,
+                  procedureName: patientContext.educationBundle.procedureName,
+                }
+              : null,
+            boxTemplate: patientContext.boxTemplate
+              ? {
+                  id: patientContext.boxTemplate.id,
+                  name: patientContext.boxTemplate.name,
+                  slug: patientContext.boxTemplate.slug,
+                }
+              : null,
+            hasCodeEducationOverrides,
+            hasCodeBoxItemOverrides: patientContext.hasCodeBoxItemOverrides,
+          }
+        : null,
       procedureName: patientContext.procedureName,
       boxItems: patientContext.boxItems,
       procedureGuides,
@@ -1115,10 +1403,9 @@ export async function getLibraryCategoryPayload(args: {
 }): Promise<RecoveryLibraryCategoryPayload> {
   const [modules, patientContext] = await Promise.all([
     listLibraryModules(),
-    args.userId ? getPatientLibraryContext(args.userId) : Promise.resolve({
-      procedureName: null,
-      boxItems: [] as Array<{ key: string | null; label: string }>,
-    }),
+    args.userId
+      ? getPatientLibraryContext(args.userId)
+      : Promise.resolve(emptyPatientLibraryContext()),
   ]);
 
   const category = getLibraryCategory(args.categoryKey);

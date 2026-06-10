@@ -187,6 +187,41 @@ function GuideSection(args: {
   );
 }
 
+function BoxItemsSection({
+  items,
+}: {
+  items: Array<{ key: string | null; label: string }>;
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <section className="space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
+          Your Box Items
+        </h2>
+        <p className="text-sm leading-6 text-muted-foreground">
+          Supplies assigned to your recovery kit, based on your activation code.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map((item) => (
+          <Card
+            key={item.key ?? item.label}
+            className="rounded-[24px] border border-black/5 bg-white/95 p-4 shadow-[0_12px_34px_rgba(15,23,42,0.05)]"
+          >
+            <div className="text-sm font-semibold text-foreground">{item.label}</div>
+            {item.key ? (
+              <div className="mt-1 text-xs text-muted-foreground">{item.key}</div>
+            ) : null}
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function MedicalHub() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -264,6 +299,7 @@ export default function MedicalHub() {
   const recommendedGuides = libraryHome?.recommendedGuides ?? [];
   const personalizedProcedureGuides = libraryHome?.personalized.procedureGuides ?? [];
   const personalizedBoxGuides = libraryHome?.personalized.boxItemGuides ?? [];
+  const personalizedBoxItems = libraryHome?.personalized.boxItems ?? [];
   const startHere = libraryHome?.sections["start-here"] ?? [];
   const commonTopics = libraryHome?.sections["common-recovery-topics"] ?? [];
   const videos = libraryHome?.sections.videos ?? [];
@@ -508,37 +544,39 @@ export default function MedicalHub() {
         </Card>
       ) : (
         <div className="space-y-7">
-          <GuideSection
-            title="Recommended for Your Recovery"
-            description="Marked guides from Frederick Recovery appear here first so the most important next reads stay easy to find."
-            guides={recommendedGuides}
-            emptyLabel="Frederick Recovery has not marked any recommended guides yet. The full library is still available below."
-          />
+	          <GuideSection
+	            title="Recommended for Your Recovery"
+	            description="Guides assigned to your activation code, bundle, and recovery kit appear first, followed by Frederick Recovery recommendations."
+	            guides={recommendedGuides}
+	            emptyLabel="Frederick Recovery has not marked any recommended guides yet. The full library is still available below."
+	          />
 
-          {personalizedProcedureGuides.length > 0 ? (
-            <GuideSection
-              title="For your procedure"
-              description="These guides are matched to the procedure on your profile."
-              guides={personalizedProcedureGuides}
-              emptyLabel=""
-            />
+	          <BoxItemsSection items={personalizedBoxItems} />
+
+	          {personalizedProcedureGuides.length > 0 ? (
+	            <GuideSection
+	              title="Procedure Guide"
+	              description="Guides matched to your assigned procedure and education bundle."
+	              guides={personalizedProcedureGuides}
+	              emptyLabel=""
+	            />
           ) : null}
 
-          {personalizedBoxGuides.length > 0 ? (
-            <GuideSection
-              title="For your recovery kit"
-              description="These instructions are tied to the supplies in your box."
-              guides={personalizedBoxGuides}
-              emptyLabel=""
-            />
-          ) : null}
+	          {personalizedBoxGuides.length > 0 ? (
+	            <GuideSection
+	              title="Box Item Instructions"
+	              description="Instructions tied to the supplies in your assigned box template."
+	              guides={personalizedBoxGuides}
+	              emptyLabel=""
+	            />
+	          ) : null}
 
           <section className="space-y-4">
-            <div className="space-y-1">
-              <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
-                Browse by category
-              </h2>
-              <p className="text-sm leading-6 text-muted-foreground">
+	            <div className="space-y-1">
+	              <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
+	                Full Recovery Library
+	              </h2>
+	              <p className="text-sm leading-6 text-muted-foreground">
                 Open the library the way patients naturally look for help: start here, box item,
                 procedure, clinic instruction, or video.
               </p>

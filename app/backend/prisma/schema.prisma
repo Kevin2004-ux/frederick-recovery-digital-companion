@@ -150,6 +150,10 @@ model ActivationBatch {
   quantity          Int
   boxType           String?
   includedItemsJson Json?
+  educationBundleId String?
+  boxTemplateId     String?
+  productMode       String  @default("full_platform")
+  procedureName     String?
 
   createdByUserId String?
   createdByUser   User?   @relation("ActivationBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
@@ -159,6 +163,9 @@ model ActivationBatch {
 
   @@index([clinicTag])
   @@index([createdByUserId])
+  @@index([educationBundleId])
+  @@index([boxTemplateId])
+  @@index([productMode])
 }
 
 model ActivationCode {
@@ -171,6 +178,13 @@ model ActivationCode {
 
   batchId String?
   batch   ActivationBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  educationBundleId     String?
+  boxTemplateId         String?
+  productMode           String  @default("full_platform")
+  procedureName         String?
+  assignedBoxItemsJson  Json?
+  assignedEducationJson Json?
 
   // Clinic flow
   configJson             Json?
@@ -199,6 +213,9 @@ model ActivationCode {
   @@index([clinicTag])
   @@index([claimedByUserId])
   @@index([batchId])
+  @@index([educationBundleId])
+  @@index([boxTemplateId])
+  @@index([productMode])
   @@index([configCapturedByUserId])
   @@index([approvedByUserId])
 }

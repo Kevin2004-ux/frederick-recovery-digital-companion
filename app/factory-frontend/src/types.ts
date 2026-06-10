@@ -29,12 +29,18 @@ export type AuthMeResponse = {
   role?: string;
 };
 
+export type RecoveryLibraryProductMode = "kit_only" | "full_platform";
+
 export type ActivationBatch = {
   id: string;
   clinicTag: string | null;
   quantity: number;
   boxType: string | null;
   includedItems?: Array<{ key?: string; label?: string }>;
+  educationBundleId?: string | null;
+  boxTemplateId?: string | null;
+  productMode?: RecoveryLibraryProductMode;
+  procedureName?: string | null;
   createdAt: string;
   createdByUserId?: string | null;
   codeCounts?: {
@@ -48,6 +54,43 @@ export type ActivationBatch = {
 
 export type CreateBatchResponse = {
   batch: ActivationBatch;
+};
+
+export type ActivationCodeEducationOverrides = {
+  guideIds: string[];
+  recommendedGuideIds: string[];
+};
+
+export type ActivationCodeDetail = {
+  id: string;
+  code: string;
+  status: string;
+  clinicTag?: string | null;
+  batchId?: string | null;
+  boxType?: string | null;
+  educationBundleId?: string | null;
+  boxTemplateId?: string | null;
+  productMode: RecoveryLibraryProductMode;
+  procedureName?: string | null;
+  effectiveEducationBundleId?: string | null;
+  effectiveBoxTemplateId?: string | null;
+  effectiveProductMode?: RecoveryLibraryProductMode;
+  effectiveProcedureName?: string | null;
+  batchDefaults?: {
+    educationBundleId?: string | null;
+    boxTemplateId?: string | null;
+    productMode?: RecoveryLibraryProductMode;
+    procedureName?: string | null;
+  } | null;
+  assignedBoxItems: Array<{ key?: string | null; label: string }>;
+  assignedEducation: ActivationCodeEducationOverrides;
+  createdAt?: string;
+  claimedAt?: string | null;
+  claimedByUserId?: string | null;
+};
+
+export type ActivationCodeDetailResponse = {
+  activationCode: ActivationCodeDetail;
 };
 
 export type RecoveryLibraryCategoryKey =
