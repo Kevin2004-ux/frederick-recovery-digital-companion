@@ -346,3 +346,62 @@ model RecoveryLibraryModule {
 
   @@index([active, displayOrder])
 }
+
+model EducationBundle {
+  id            String                  @id @default(uuid())
+  name          String
+  slug          String                  @unique
+  description   String                  @db.Text
+  clinicTag     String?
+  procedureName String?
+  active        Boolean                 @default(true)
+  displayOrder  Int                     @default(0)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  modules       EducationBundleModule[]
+
+  @@index([active, displayOrder])
+  @@index([clinicTag])
+  @@index([procedureName])
+}
+
+model EducationBundleModule {
+  bundleId             String
+  moduleId             String
+  recommended          Boolean  @default(false)
+  featured             Boolean  @default(false)
+  recommendationLabel  String?
+  recommendationOrder  Int?
+  displayOrder         Int      @default(0)
+  bundle               EducationBundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+
+  @@id([bundleId, moduleId])
+  @@index([bundleId, displayOrder])
+}
+
+model BoxTemplate {
+  id           String                     @id @default(uuid())
+  name         String
+  slug         String                     @unique
+  description  String                     @db.Text
+  boxItemKeys  String[]
+  active       Boolean                    @default(true)
+  displayOrder Int                        @default(0)
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+  modules      BoxTemplateEducationModule[]
+
+  @@index([active, displayOrder])
+}
+
+model BoxTemplateEducationModule {
+  boxTemplateId        String
+  moduleId             String
+  recommended          Boolean @default(false)
+  recommendationLabel  String?
+  recommendationOrder  Int?
+  boxTemplate          BoxTemplate @relation(fields: [boxTemplateId], references: [id], onDelete: Cascade)
+
+  @@id([boxTemplateId, moduleId])
+  @@index([boxTemplateId, recommendationOrder])
+}
