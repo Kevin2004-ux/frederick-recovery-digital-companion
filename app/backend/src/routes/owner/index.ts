@@ -96,6 +96,10 @@ const ActivationCodeEducationAssignmentSchema = z.object({
     .optional(),
 });
 
+const DeleteClinicSchema = z.object({
+  confirmationClinicTag: ClinicTagSchema,
+});
+
 type ClinicSummaryCounts = {
   adminUserCount: number;
   batchCount: number;
@@ -1164,7 +1168,18 @@ ownerRouter.delete("/clinics/:clinicTag", async (req: Request, res: Response) =>
     return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedTag.error.issues });
   }
 
+  const parsedBody = DeleteClinicSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+  }
+
   const clinicTag = parsedTag.data;
+  if (parsedBody.data.confirmationClinicTag !== clinicTag) {
+    return res.status(400).json({
+      code: "CLINIC_DELETE_CONFIRMATION_MISMATCH",
+      message: "Type the clinic tag exactly to delete this clinic.",
+    });
+  }
 
   try {
     const clinic = await getClinicOr404(clinicTag);
