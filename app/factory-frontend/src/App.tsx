@@ -6,6 +6,7 @@ import LoginPage from "@/pages/Login";
 import MfaSetupPage from "@/pages/MfaSetup";
 import OwnerClinicDetailPage from "@/pages/OwnerClinicDetail";
 import OwnerClinicsPage from "@/pages/OwnerClinics";
+import RecoveryLibraryPage from "@/pages/RecoveryLibrary";
 
 export default function App() {
   return (
@@ -41,6 +42,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <OwnerClinicDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/library"
+        element={
+          <ProtectedRoute>
+            <RecoveryLibraryPage />
           </ProtectedRoute>
         }
       />
