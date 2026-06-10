@@ -1,4 +1,4 @@
-import { ArrowRight, PlayCircle } from "lucide-react";
+import { ArrowRight, PlayCircle, Sparkles, Star } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import {
@@ -58,6 +58,23 @@ export function RecoveryGuideCard({ guide }: RecoveryGuideCardProps) {
               <span className="inline-flex items-center rounded-full bg-stone-100 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-stone-700">
                 {recoveryModuleTypeLabel(guide.type)}
               </span>
+              {guide.featured ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-amber-950">
+                  <Star className="h-3 w-3" />
+                  Starred
+                </span>
+              ) : null}
+              {guide.recommended && !guide.featured ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-950">
+                  <Sparkles className="h-3 w-3" />
+                  Recommended
+                </span>
+              ) : null}
+              {guide.recommendationLabel ? (
+                <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-[11px] font-medium text-foreground ring-1 ring-black/8">
+                  {guide.recommendationLabel}
+                </span>
+              ) : null}
             </div>
 
             <div className="space-y-1.5">
