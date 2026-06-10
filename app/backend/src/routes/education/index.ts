@@ -12,13 +12,21 @@ import {
 import { EducationService } from "../../services/educationService.js";
 import { RecoveryHelperService } from "../../services/recoveryHelperService.js";
 import {
+  createBoxTemplate,
   createCustomLibraryModule,
+  createEducationBundle,
+  getBoxTemplateById,
+  getBoxTemplatePreviewPayload,
+  getEducationBundleById,
+  getEducationBundlePreviewPayload,
   getLibraryAdminPayload,
   getLibraryCategoryPayload,
   getLibraryGuidePayload,
   getLibraryHomePayload,
   getLibraryModuleById,
   LIBRARY_CATEGORY_KEYS,
+  updateBoxTemplate,
+  updateEducationBundle,
   upsertLibraryModule,
 } from "../../services/recoveryLibraryService.js";
 
@@ -39,6 +47,14 @@ const libraryCategoryParamsSchema = z.object({
 
 const libraryGuideParamsSchema = z.object({
   guideId: z.string().trim().min(1),
+});
+
+const libraryBundleParamsSchema = z.object({
+  bundleId: z.string().trim().min(1),
+});
+
+const libraryBoxTemplateParamsSchema = z.object({
+  boxTemplateId: z.string().trim().min(1),
 });
 
 const optionalUrlSchema = z.union([
@@ -73,6 +89,41 @@ const libraryAdminModuleSchema = z.object({
   displayOrder: z.number().int().min(0).max(10000).optional(),
 });
 
+const bundleModuleAssignmentSchema = z.object({
+  moduleId: z.string().trim().min(1).max(160),
+  recommended: z.boolean().optional(),
+  featured: z.boolean().optional(),
+  recommendationLabel: optionalShortTextSchema,
+  recommendationOrder: z.number().int().min(0).max(10000).nullable().optional(),
+  displayOrder: z.number().int().min(0).max(10000).optional(),
+});
+
+const boxTemplateModuleAssignmentSchema = z.object({
+  moduleId: z.string().trim().min(1).max(160),
+  recommended: z.boolean().optional(),
+  recommendationLabel: optionalShortTextSchema,
+  recommendationOrder: z.number().int().min(0).max(10000).nullable().optional(),
+});
+
+const libraryAdminBundleSchema = z.object({
+  name: z.string().trim().min(1).max(140),
+  description: z.string().trim().max(1200).optional(),
+  clinicTag: z.string().trim().max(120).optional(),
+  procedureName: z.string().trim().max(120).optional(),
+  active: z.boolean().optional(),
+  displayOrder: z.number().int().min(0).max(10000).optional(),
+  modules: z.array(bundleModuleAssignmentSchema).max(200).optional(),
+});
+
+const libraryAdminBoxTemplateSchema = z.object({
+  name: z.string().trim().min(1).max(140),
+  description: z.string().trim().max(1200).optional(),
+  boxItemKeys: z.array(z.string().trim().min(1).max(64)).max(100).optional(),
+  active: z.boolean().optional(),
+  displayOrder: z.number().int().min(0).max(10000).optional(),
+  modules: z.array(boxTemplateModuleAssignmentSchema).max(200).optional(),
+});
+
 const RECOVERY_LIBRARY_STORAGE_NOT_READY_CODES = new Set(["P2021", "P2022"]);
 const RECOVERY_LIBRARY_DATABASE_UNAVAILABLE_CODES = new Set([
   "P1001",
@@ -81,23 +132,7 @@ const RECOVERY_LIBRARY_DATABASE_UNAVAILABLE_CODES = new Set([
   "P1017",
 ]);
 
-function classifyRecoveryLibraryAdminError(
-  error: unknown,
-  action: "create" | "update"
-) {
-  const fallback =
-    action === "create"
-      ? {
-          status: 500,
-          code: "RECOVERY_LIBRARY_MODULE_CREATE_FAILED",
-          message: "Failed to create guide",
-        }
-      : {
-          status: 500,
-          code: "RECOVERY_LIBRARY_MODULE_UPDATE_FAILED",
-          message: "Failed to save guide",
-        };
-
+function classifyRecoveryLibraryStorageError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (RECOVERY_LIBRARY_STORAGE_NOT_READY_CODES.has(error.code)) {
       return {
@@ -130,7 +165,7 @@ function classifyRecoveryLibraryAdminError(
     };
   }
 
-  return fallback;
+  return null;
 }
 
 function getRecoveryLibraryPrismaDetails(error: unknown) {
@@ -156,19 +191,29 @@ function getRecoveryLibraryPrismaDetails(error: unknown) {
 
 function logRecoveryLibraryAdminError(args: {
   action: "create" | "update";
+  targetType: string;
   req: Parameters<typeof requireAuth>[0];
-  input: z.infer<typeof libraryAdminModuleSchema>;
-  guideId?: string;
+  input: Record<string, unknown>;
+  targetId?: string;
   error: unknown;
 }) {
-  const { action, req, input, guideId, error } = args;
+  const { action, req, input, targetId, targetType, error } = args;
 
-  console.error(`[recovery-library-admin] ${action} failed`, {
+  console.error(`[recovery-library-admin] ${targetType} ${action} failed`, {
     method: req.method,
     path: req.originalUrl,
-    guideId: guideId ?? null,
+    targetId: targetId ?? null,
+    targetType,
     actorUserId: req.user?.id ?? null,
     actorRole: req.user?.role ?? null,
+    input,
+    ...getRecoveryLibraryPrismaDetails(error),
+    error,
+  });
+}
+
+function buildModuleLogInput(input: z.infer<typeof libraryAdminModuleSchema>) {
+  return {
     title: input.title,
     moduleType: input.moduleType,
     active: input.active ?? true,
@@ -184,9 +229,7 @@ function logRecoveryLibraryAdminError(args: {
     hasThumbnailUrl: Boolean(input.thumbnailUrl?.trim()),
     bodyLength: input.body.length,
     summaryLength: input.summary?.length ?? 0,
-    ...getRecoveryLibraryPrismaDetails(error),
-    error,
-  });
+  };
 }
 
 educationRouter.get("/library", async (req, res) => {
@@ -359,12 +402,19 @@ educationRouter.post(
     } catch (error) {
       logRecoveryLibraryAdminError({
         action: "create",
+        targetType: "RecoveryLibraryModule",
         req,
-        input: parsedBody.data,
+        input: buildModuleLogInput(parsedBody.data),
         error,
       });
-      const response = classifyRecoveryLibraryAdminError(error, "create");
-      return res.status(response.status).json(response);
+      const storageResponse = classifyRecoveryLibraryStorageError(error);
+      if (storageResponse) {
+        return res.status(storageResponse.status).json(storageResponse);
+      }
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_MODULE_CREATE_FAILED",
+        message: "Failed to create guide",
+      });
     }
   }
 );
@@ -421,13 +471,399 @@ educationRouter.put(
     } catch (error) {
       logRecoveryLibraryAdminError({
         action: "update",
+        targetType: "RecoveryLibraryModule",
         req,
-        guideId: parsedParams.data.guideId,
-        input: parsedBody.data,
+        targetId: parsedParams.data.guideId,
+        input: buildModuleLogInput(parsedBody.data),
         error,
       });
-      const response = classifyRecoveryLibraryAdminError(error, "update");
-      return res.status(response.status).json(response);
+      const storageResponse = classifyRecoveryLibraryStorageError(error);
+      if (storageResponse) {
+        return res.status(storageResponse.status).json(storageResponse);
+      }
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_MODULE_UPDATE_FAILED",
+        message: "Failed to save guide",
+      });
+    }
+  }
+);
+
+educationRouter.post(
+  "/library/admin/bundles",
+  requireRole([UserRole.OWNER]),
+  async (req, res) => {
+    const parsedBody = libraryAdminBundleSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+    }
+
+    const user = req.user!;
+
+    try {
+      const bundle = await createEducationBundle(parsedBody.data);
+
+      await AuditService.log({
+        req,
+        category: AuditCategory.ADMIN,
+        type: "RECOVERY_LIBRARY_BUNDLE_CREATED",
+        status: AuditStatus.SUCCESS,
+        userId: user.id,
+        role: user.role,
+        clinicTag: user.clinicTag,
+        targetId: bundle.id,
+        targetType: "EducationBundle",
+      });
+
+      return res.status(201).json({ bundle });
+    } catch (error) {
+      logRecoveryLibraryAdminError({
+        action: "create",
+        targetType: "EducationBundle",
+        req,
+        input: {
+          name: parsedBody.data.name,
+          procedureName: parsedBody.data.procedureName ?? null,
+          active: parsedBody.data.active ?? true,
+          displayOrder: parsedBody.data.displayOrder ?? 0,
+          moduleCount: parsedBody.data.modules?.length ?? 0,
+        },
+        error,
+      });
+
+      if (
+        error instanceof Error &&
+        error.message.startsWith("UNKNOWN_LIBRARY_MODULE:")
+      ) {
+        return res.status(400).json({
+          code: "RECOVERY_LIBRARY_UNKNOWN_MODULE",
+          message: "One or more selected guides are not available in the library.",
+        });
+      }
+
+      const storageResponse = classifyRecoveryLibraryStorageError(error);
+      if (storageResponse) {
+        return res.status(storageResponse.status).json(storageResponse);
+      }
+
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_BUNDLE_CREATE_FAILED",
+        message: "Failed to create education bundle",
+      });
+    }
+  }
+);
+
+educationRouter.put(
+  "/library/admin/bundles/:bundleId",
+  requireRole([UserRole.OWNER]),
+  async (req, res) => {
+    const parsedParams = libraryBundleParamsSchema.safeParse(req.params);
+    if (!parsedParams.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+    }
+
+    const parsedBody = libraryAdminBundleSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+    }
+
+    const existingBundle = await getEducationBundleById(parsedParams.data.bundleId, {
+      includeInactive: true,
+    });
+
+    if (!existingBundle) {
+      return res.status(404).json({
+        code: "RECOVERY_LIBRARY_BUNDLE_NOT_FOUND",
+      });
+    }
+
+    const user = req.user!;
+
+    try {
+      const bundle = await updateEducationBundle(
+        parsedParams.data.bundleId,
+        parsedBody.data
+      );
+
+      await AuditService.log({
+        req,
+        category: AuditCategory.ADMIN,
+        type: "RECOVERY_LIBRARY_BUNDLE_UPDATED",
+        status: AuditStatus.SUCCESS,
+        userId: user.id,
+        role: user.role,
+        clinicTag: user.clinicTag,
+        targetId: bundle.id,
+        targetType: "EducationBundle",
+      });
+
+      return res.status(200).json({ bundle });
+    } catch (error) {
+      logRecoveryLibraryAdminError({
+        action: "update",
+        targetType: "EducationBundle",
+        req,
+        targetId: parsedParams.data.bundleId,
+        input: {
+          name: parsedBody.data.name,
+          procedureName: parsedBody.data.procedureName ?? null,
+          active: parsedBody.data.active ?? true,
+          displayOrder: parsedBody.data.displayOrder ?? 0,
+          moduleCount: parsedBody.data.modules?.length ?? 0,
+        },
+        error,
+      });
+
+      if (
+        error instanceof Error &&
+        error.message.startsWith("UNKNOWN_LIBRARY_MODULE:")
+      ) {
+        return res.status(400).json({
+          code: "RECOVERY_LIBRARY_UNKNOWN_MODULE",
+          message: "One or more selected guides are not available in the library.",
+        });
+      }
+
+      const storageResponse = classifyRecoveryLibraryStorageError(error);
+      if (storageResponse) {
+        return res.status(storageResponse.status).json(storageResponse);
+      }
+
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_BUNDLE_UPDATE_FAILED",
+        message: "Failed to save education bundle",
+      });
+    }
+  }
+);
+
+educationRouter.get(
+  "/library/admin/bundles/:bundleId/preview",
+  requireRole([UserRole.OWNER]),
+  async (req, res) => {
+    const parsedParams = libraryBundleParamsSchema.safeParse(req.params);
+    if (!parsedParams.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+    }
+
+    try {
+      const payload = await getEducationBundlePreviewPayload({
+        bundleId: parsedParams.data.bundleId,
+      });
+
+      if (!payload) {
+        return res.status(404).json({
+          code: "RECOVERY_LIBRARY_BUNDLE_NOT_FOUND",
+        });
+      }
+
+      return res.status(200).json(payload);
+    } catch (error) {
+      console.error("Recovery library bundle preview failed", error);
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_BUNDLE_PREVIEW_FAILED",
+        message: "Failed to load education bundle preview",
+      });
+    }
+  }
+);
+
+educationRouter.post(
+  "/library/admin/box-templates",
+  requireRole([UserRole.OWNER]),
+  async (req, res) => {
+    const parsedBody = libraryAdminBoxTemplateSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+    }
+
+    const user = req.user!;
+
+    try {
+      const boxTemplate = await createBoxTemplate(parsedBody.data);
+
+      await AuditService.log({
+        req,
+        category: AuditCategory.ADMIN,
+        type: "RECOVERY_LIBRARY_BOX_TEMPLATE_CREATED",
+        status: AuditStatus.SUCCESS,
+        userId: user.id,
+        role: user.role,
+        clinicTag: user.clinicTag,
+        targetId: boxTemplate.id,
+        targetType: "BoxTemplate",
+      });
+
+      return res.status(201).json({ boxTemplate });
+    } catch (error) {
+      logRecoveryLibraryAdminError({
+        action: "create",
+        targetType: "BoxTemplate",
+        req,
+        input: {
+          name: parsedBody.data.name,
+          active: parsedBody.data.active ?? true,
+          displayOrder: parsedBody.data.displayOrder ?? 0,
+          boxItemKeys: parsedBody.data.boxItemKeys ?? [],
+          moduleCount: parsedBody.data.modules?.length ?? 0,
+        },
+        error,
+      });
+
+      if (
+        error instanceof Error &&
+        error.message.startsWith("UNKNOWN_LIBRARY_MODULE:")
+      ) {
+        return res.status(400).json({
+          code: "RECOVERY_LIBRARY_UNKNOWN_MODULE",
+          message: "One or more selected guides are not available in the library.",
+        });
+      }
+
+      const storageResponse = classifyRecoveryLibraryStorageError(error);
+      if (storageResponse) {
+        return res.status(storageResponse.status).json(storageResponse);
+      }
+
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_BOX_TEMPLATE_CREATE_FAILED",
+        message: "Failed to create box template",
+      });
+    }
+  }
+);
+
+educationRouter.put(
+  "/library/admin/box-templates/:boxTemplateId",
+  requireRole([UserRole.OWNER]),
+  async (req, res) => {
+    const parsedParams = libraryBoxTemplateParamsSchema.safeParse(req.params);
+    if (!parsedParams.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+    }
+
+    const parsedBody = libraryAdminBoxTemplateSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+    }
+
+    const existingTemplate = await getBoxTemplateById(
+      parsedParams.data.boxTemplateId,
+      {
+        includeInactive: true,
+      }
+    );
+
+    if (!existingTemplate) {
+      return res.status(404).json({
+        code: "RECOVERY_LIBRARY_BOX_TEMPLATE_NOT_FOUND",
+      });
+    }
+
+    const user = req.user!;
+
+    try {
+      const boxTemplate = await updateBoxTemplate(
+        parsedParams.data.boxTemplateId,
+        parsedBody.data
+      );
+
+      await AuditService.log({
+        req,
+        category: AuditCategory.ADMIN,
+        type: "RECOVERY_LIBRARY_BOX_TEMPLATE_UPDATED",
+        status: AuditStatus.SUCCESS,
+        userId: user.id,
+        role: user.role,
+        clinicTag: user.clinicTag,
+        targetId: boxTemplate.id,
+        targetType: "BoxTemplate",
+      });
+
+      return res.status(200).json({ boxTemplate });
+    } catch (error) {
+      logRecoveryLibraryAdminError({
+        action: "update",
+        targetType: "BoxTemplate",
+        req,
+        targetId: parsedParams.data.boxTemplateId,
+        input: {
+          name: parsedBody.data.name,
+          active: parsedBody.data.active ?? true,
+          displayOrder: parsedBody.data.displayOrder ?? 0,
+          boxItemKeys: parsedBody.data.boxItemKeys ?? [],
+          moduleCount: parsedBody.data.modules?.length ?? 0,
+        },
+        error,
+      });
+
+      if (
+        error instanceof Error &&
+        error.message.startsWith("UNKNOWN_LIBRARY_MODULE:")
+      ) {
+        return res.status(400).json({
+          code: "RECOVERY_LIBRARY_UNKNOWN_MODULE",
+          message: "One or more selected guides are not available in the library.",
+        });
+      }
+
+      const storageResponse = classifyRecoveryLibraryStorageError(error);
+      if (storageResponse) {
+        return res.status(storageResponse.status).json(storageResponse);
+      }
+
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_BOX_TEMPLATE_UPDATE_FAILED",
+        message: "Failed to save box template",
+      });
+    }
+  }
+);
+
+educationRouter.get(
+  "/library/admin/box-templates/:boxTemplateId/preview",
+  requireRole([UserRole.OWNER]),
+  async (req, res) => {
+    const parsedParams = libraryBoxTemplateParamsSchema.safeParse(req.params);
+    if (!parsedParams.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+    }
+
+    try {
+      const payload = await getBoxTemplatePreviewPayload({
+        boxTemplateId: parsedParams.data.boxTemplateId,
+      });
+
+      if (!payload) {
+        return res.status(404).json({
+          code: "RECOVERY_LIBRARY_BOX_TEMPLATE_NOT_FOUND",
+        });
+      }
+
+      return res.status(200).json(payload);
+    } catch (error) {
+      console.error("Recovery library box template preview failed", error);
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_BOX_TEMPLATE_PREVIEW_FAILED",
+        message: "Failed to load box template preview",
+      });
     }
   }
 );

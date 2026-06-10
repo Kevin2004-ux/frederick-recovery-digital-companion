@@ -84,6 +84,83 @@ export type RecoveryLibraryAdminModule = {
   isCustomized: boolean;
 };
 
+export type RecoveryLibraryAdminGuideSummary = Pick<
+  RecoveryLibraryAdminModule,
+  | "id"
+  | "type"
+  | "title"
+  | "summary"
+  | "videoUrl"
+  | "thumbnailUrl"
+  | "categories"
+  | "procedureNames"
+  | "boxItemKeys"
+  | "recommended"
+  | "featured"
+  | "recommendationLabel"
+  | "recommendationOrder"
+  | "displayOrder"
+  | "requiredBoxItems"
+  | "frequency"
+>;
+
+export type EducationBundleModuleAssignment = {
+  moduleId: string;
+  recommended: boolean;
+  featured: boolean;
+  recommendationLabel?: string | null;
+  recommendationOrder?: number | null;
+  displayOrder: number;
+};
+
+export type EducationBundle = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  clinicTag?: string | null;
+  procedureName?: string | null;
+  active: boolean;
+  displayOrder: number;
+  moduleCount: number;
+  modules: EducationBundleModuleAssignment[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EducationBundlePreviewPayload = {
+  bundle: EducationBundle;
+  recommendedGuides: RecoveryLibraryAdminGuideSummary[];
+  guides: RecoveryLibraryAdminGuideSummary[];
+};
+
+export type BoxTemplateModuleAssignment = {
+  moduleId: string;
+  recommended: boolean;
+  recommendationLabel?: string | null;
+  recommendationOrder?: number | null;
+};
+
+export type BoxTemplate = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  boxItemKeys: string[];
+  active: boolean;
+  displayOrder: number;
+  moduleCount: number;
+  modules: BoxTemplateModuleAssignment[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BoxTemplatePreviewPayload = {
+  boxTemplate: BoxTemplate;
+  recommendedGuides: RecoveryLibraryAdminGuideSummary[];
+  guides: RecoveryLibraryAdminGuideSummary[];
+};
+
 export type RecoveryLibraryAdminPayload = {
   categories: Array<{
     key: RecoveryLibraryCategoryKey;
@@ -91,6 +168,8 @@ export type RecoveryLibraryAdminPayload = {
     description: string;
   }>;
   modules: RecoveryLibraryAdminModule[];
+  bundles: EducationBundle[];
+  boxTemplates: BoxTemplate[];
   suggestions: {
     procedures: string[];
     boxItems: string[];

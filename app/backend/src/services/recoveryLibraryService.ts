@@ -1,5 +1,10 @@
 import {
   ActivationCodeStatus,
+  Prisma,
+  type BoxTemplate as BoxTemplateRow,
+  type BoxTemplateEducationModule as BoxTemplateEducationModuleRow,
+  type EducationBundle as EducationBundleRow,
+  type EducationBundleModule as EducationBundleModuleRow,
   type RecoveryLibraryModule as RecoveryLibraryModuleRow,
 } from "@prisma/client";
 
@@ -102,9 +107,68 @@ export type RecoveryLibraryGuidePayload = {
   relatedGuides: RecoveryLibraryModuleSummary[];
 };
 
+export type EducationBundleModuleAssignment = {
+  moduleId: string;
+  recommended: boolean;
+  featured: boolean;
+  recommendationLabel: string | null;
+  recommendationOrder: number | null;
+  displayOrder: number;
+};
+
+export type EducationBundle = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  clinicTag: string | null;
+  procedureName: string | null;
+  active: boolean;
+  displayOrder: number;
+  moduleCount: number;
+  modules: EducationBundleModuleAssignment[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EducationBundlePreviewPayload = {
+  bundle: EducationBundle;
+  recommendedGuides: RecoveryLibraryModuleSummary[];
+  guides: RecoveryLibraryModuleSummary[];
+};
+
+export type BoxTemplateModuleAssignment = {
+  moduleId: string;
+  recommended: boolean;
+  recommendationLabel: string | null;
+  recommendationOrder: number | null;
+};
+
+export type BoxTemplate = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  boxItemKeys: string[];
+  active: boolean;
+  displayOrder: number;
+  moduleCount: number;
+  modules: BoxTemplateModuleAssignment[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BoxTemplatePreviewPayload = {
+  boxTemplate: BoxTemplate;
+  recommendedGuides: RecoveryLibraryModuleSummary[];
+  guides: RecoveryLibraryModuleSummary[];
+};
+
 export type RecoveryLibraryAdminPayload = {
   categories: RecoveryLibraryCategory[];
   modules: RecoveryLibraryModule[];
+  bundles: EducationBundle[];
+  boxTemplates: BoxTemplate[];
   suggestions: {
     procedures: string[];
     boxItems: string[];
@@ -131,6 +195,41 @@ type LibraryModuleUpsertInput = {
   displayOrder?: number;
 };
 
+type EducationBundleModuleAssignmentInput = {
+  moduleId: string;
+  recommended?: boolean;
+  featured?: boolean;
+  recommendationLabel?: string | null;
+  recommendationOrder?: number | null;
+  displayOrder?: number;
+};
+
+type EducationBundleUpsertInput = {
+  name: string;
+  description?: string | null;
+  clinicTag?: string | null;
+  procedureName?: string | null;
+  active?: boolean;
+  displayOrder?: number;
+  modules?: EducationBundleModuleAssignmentInput[];
+};
+
+type BoxTemplateModuleAssignmentInput = {
+  moduleId: string;
+  recommended?: boolean;
+  recommendationLabel?: string | null;
+  recommendationOrder?: number | null;
+};
+
+type BoxTemplateUpsertInput = {
+  name: string;
+  description?: string | null;
+  boxItemKeys?: string[];
+  active?: boolean;
+  displayOrder?: number;
+  modules?: BoxTemplateModuleAssignmentInput[];
+};
+
 type StaticLibraryMetadata = {
   categories?: LibraryCategoryKey[];
   procedureNames?: string[];
@@ -142,6 +241,18 @@ type StaticLibraryMetadata = {
   recommendationLabel?: string | null;
   recommendationOrder?: number | null;
 };
+
+type EducationBundleWithModulesRow = Prisma.EducationBundleGetPayload<{
+  include: {
+    modules: true;
+  };
+}>;
+
+type BoxTemplateWithModulesRow = Prisma.BoxTemplateGetPayload<{
+  include: {
+    modules: true;
+  };
+}>;
 
 const LIBRARY_MODULE_TYPES: LibraryModuleType[] = [
   "education",
@@ -600,6 +711,35 @@ function compareRecommendedModules(
   return a.title.localeCompare(b.title);
 }
 
+function compareRecommendedSummaries(
+  a: RecoveryLibraryModuleSummary,
+  b: RecoveryLibraryModuleSummary
+): number {
+  const aOrder = a.recommendationOrder ?? Number.MAX_SAFE_INTEGER;
+  const bOrder = b.recommendationOrder ?? Number.MAX_SAFE_INTEGER;
+
+  if (aOrder !== bOrder) {
+    return aOrder - bOrder;
+  }
+
+  if (a.displayOrder !== b.displayOrder) {
+    return a.displayOrder - b.displayOrder;
+  }
+
+  return a.title.localeCompare(b.title);
+}
+
+function compareGuideSummaries(
+  a: RecoveryLibraryModuleSummary,
+  b: RecoveryLibraryModuleSummary
+): number {
+  if (a.displayOrder !== b.displayOrder) {
+    return a.displayOrder - b.displayOrder;
+  }
+
+  return a.title.localeCompare(b.title);
+}
+
 function toSummary(module: RecoveryLibraryModule): RecoveryLibraryModuleSummary {
   return {
     id: module.id,
@@ -618,6 +758,37 @@ function toSummary(module: RecoveryLibraryModule): RecoveryLibraryModuleSummary 
     displayOrder: module.displayOrder,
     requiredBoxItems: module.requiredBoxItems,
     frequency: module.frequency,
+  };
+}
+
+function toBundleGuideSummary(
+  module: RecoveryLibraryModule,
+  assignment: EducationBundleModuleAssignment
+): RecoveryLibraryModuleSummary {
+  const summary = toSummary(module);
+
+  return {
+    ...summary,
+    recommended: assignment.recommended,
+    featured: assignment.featured,
+    recommendationLabel: assignment.recommendationLabel,
+    recommendationOrder: assignment.recommendationOrder,
+    displayOrder: assignment.displayOrder,
+  };
+}
+
+function toBoxTemplateGuideSummary(
+  module: RecoveryLibraryModule,
+  assignment: BoxTemplateModuleAssignment
+): RecoveryLibraryModuleSummary {
+  const summary = toSummary(module);
+
+  return {
+    ...summary,
+    recommended: assignment.recommended,
+    featured: false,
+    recommendationLabel: assignment.recommendationLabel,
+    recommendationOrder: assignment.recommendationOrder,
   };
 }
 
@@ -662,6 +833,135 @@ async function readModuleRows(): Promise<RecoveryLibraryModuleRow[]> {
   } catch (error) {
     console.warn(
       "[recovery-library] Falling back to static content library modules:",
+      error
+    );
+    return [];
+  }
+}
+
+function mapEducationBundleModuleAssignment(
+  row: EducationBundleModuleRow
+): EducationBundleModuleAssignment {
+  return {
+    moduleId: row.moduleId,
+    recommended: row.recommended,
+    featured: row.featured,
+    recommendationLabel: normalizeOptionalText(row.recommendationLabel),
+    recommendationOrder: row.recommendationOrder ?? null,
+    displayOrder: row.displayOrder,
+  };
+}
+
+function compareEducationBundleAssignments(
+  a: EducationBundleModuleAssignment,
+  b: EducationBundleModuleAssignment
+): number {
+  if (a.displayOrder !== b.displayOrder) {
+    return a.displayOrder - b.displayOrder;
+  }
+
+  const aOrder = a.recommendationOrder ?? Number.MAX_SAFE_INTEGER;
+  const bOrder = b.recommendationOrder ?? Number.MAX_SAFE_INTEGER;
+  if (aOrder !== bOrder) {
+    return aOrder - bOrder;
+  }
+
+  return a.moduleId.localeCompare(b.moduleId);
+}
+
+function mapEducationBundle(row: EducationBundleWithModulesRow): EducationBundle {
+  const modules = row.modules
+    .map(mapEducationBundleModuleAssignment)
+    .sort(compareEducationBundleAssignments);
+
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description,
+    clinicTag: row.clinicTag ?? null,
+    procedureName: row.procedureName ?? null,
+    active: row.active,
+    displayOrder: row.displayOrder,
+    moduleCount: modules.length,
+    modules,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapBoxTemplateModuleAssignment(
+  row: BoxTemplateEducationModuleRow
+): BoxTemplateModuleAssignment {
+  return {
+    moduleId: row.moduleId,
+    recommended: row.recommended,
+    recommendationLabel: normalizeOptionalText(row.recommendationLabel),
+    recommendationOrder: row.recommendationOrder ?? null,
+  };
+}
+
+function compareBoxTemplateAssignments(
+  a: BoxTemplateModuleAssignment,
+  b: BoxTemplateModuleAssignment
+): number {
+  const aOrder = a.recommendationOrder ?? Number.MAX_SAFE_INTEGER;
+  const bOrder = b.recommendationOrder ?? Number.MAX_SAFE_INTEGER;
+  if (aOrder !== bOrder) {
+    return aOrder - bOrder;
+  }
+
+  return a.moduleId.localeCompare(b.moduleId);
+}
+
+function mapBoxTemplate(row: BoxTemplateWithModulesRow): BoxTemplate {
+  const modules = row.modules
+    .map(mapBoxTemplateModuleAssignment)
+    .sort(compareBoxTemplateAssignments);
+
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description,
+    boxItemKeys: normalizeBoxItemKeys(row.boxItemKeys),
+    active: row.active,
+    displayOrder: row.displayOrder,
+    moduleCount: modules.length,
+    modules,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function readEducationBundleRows(): Promise<EducationBundleWithModulesRow[]> {
+  try {
+    return await prisma.educationBundle.findMany({
+      include: {
+        modules: true,
+      },
+      orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
+    });
+  } catch (error) {
+    console.warn(
+      "[recovery-library] Falling back to empty education bundles:",
+      error
+    );
+    return [];
+  }
+}
+
+async function readBoxTemplateRows(): Promise<BoxTemplateWithModulesRow[]> {
+  try {
+    return await prisma.boxTemplate.findMany({
+      include: {
+        modules: true,
+      },
+      orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
+    });
+  } catch (error) {
+    console.warn(
+      "[recovery-library] Falling back to empty box templates:",
       error
     );
     return [];
@@ -887,6 +1187,110 @@ export async function getLibraryGuidePayload(args: {
   };
 }
 
+export async function listEducationBundles(args?: {
+  includeInactive?: boolean;
+}): Promise<EducationBundle[]> {
+  const bundles = (await readEducationBundleRows())
+    .map(mapEducationBundle)
+    .sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name));
+
+  if (args?.includeInactive) {
+    return bundles;
+  }
+
+  return bundles.filter((bundle) => bundle.active);
+}
+
+export async function getEducationBundleById(
+  bundleId: string,
+  args?: { includeInactive?: boolean }
+): Promise<EducationBundle | null> {
+  const bundles = await listEducationBundles({ includeInactive: args?.includeInactive });
+  return bundles.find((bundle) => bundle.id === bundleId) ?? null;
+}
+
+export async function listBoxTemplates(args?: {
+  includeInactive?: boolean;
+}): Promise<BoxTemplate[]> {
+  const boxTemplates = (await readBoxTemplateRows())
+    .map(mapBoxTemplate)
+    .sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name));
+
+  if (args?.includeInactive) {
+    return boxTemplates;
+  }
+
+  return boxTemplates.filter((boxTemplate) => boxTemplate.active);
+}
+
+export async function getBoxTemplateById(
+  boxTemplateId: string,
+  args?: { includeInactive?: boolean }
+): Promise<BoxTemplate | null> {
+  const boxTemplates = await listBoxTemplates({
+    includeInactive: args?.includeInactive,
+  });
+  return boxTemplates.find((boxTemplate) => boxTemplate.id === boxTemplateId) ?? null;
+}
+
+export async function getEducationBundlePreviewPayload(args: {
+  bundleId: string;
+}): Promise<EducationBundlePreviewPayload | null> {
+  const [bundle, libraryModules] = await Promise.all([
+    getEducationBundleById(args.bundleId, { includeInactive: true }),
+    listLibraryModules(),
+  ]);
+
+  if (!bundle) return null;
+
+  const modulesById = new Map(libraryModules.map((module) => [module.id, module]));
+  const guides = bundle.modules
+    .map((assignment) => {
+      const module = modulesById.get(assignment.moduleId);
+      if (!module) return null;
+      return toBundleGuideSummary(module, assignment);
+    })
+    .filter((guide): guide is RecoveryLibraryModuleSummary => Boolean(guide))
+    .sort(compareGuideSummaries);
+
+  return {
+    bundle,
+    recommendedGuides: guides
+      .filter((guide) => guide.recommended || guide.featured)
+      .sort(compareRecommendedSummaries),
+    guides,
+  };
+}
+
+export async function getBoxTemplatePreviewPayload(args: {
+  boxTemplateId: string;
+}): Promise<BoxTemplatePreviewPayload | null> {
+  const [boxTemplate, libraryModules] = await Promise.all([
+    getBoxTemplateById(args.boxTemplateId, { includeInactive: true }),
+    listLibraryModules(),
+  ]);
+
+  if (!boxTemplate) return null;
+
+  const modulesById = new Map(libraryModules.map((module) => [module.id, module]));
+  const guides = boxTemplate.modules
+    .map((assignment) => {
+      const module = modulesById.get(assignment.moduleId);
+      if (!module) return null;
+      return toBoxTemplateGuideSummary(module, assignment);
+    })
+    .filter((guide): guide is RecoveryLibraryModuleSummary => Boolean(guide))
+    .sort(compareGuideSummaries);
+
+  return {
+    boxTemplate,
+    recommendedGuides: guides
+      .filter((guide) => guide.recommended)
+      .sort(compareRecommendedSummaries),
+    guides,
+  };
+}
+
 async function getProcedureSuggestions(): Promise<string[]> {
   const rows = await prisma.user.findMany({
     where: {
@@ -911,14 +1315,18 @@ async function getProcedureSuggestions(): Promise<string[]> {
 }
 
 export async function getLibraryAdminPayload(): Promise<RecoveryLibraryAdminPayload> {
-  const [modules, procedures] = await Promise.all([
+  const [modules, procedures, bundles, boxTemplates] = await Promise.all([
     listLibraryModules({ includeInactive: true }),
     getProcedureSuggestions(),
+    listEducationBundles({ includeInactive: true }),
+    listBoxTemplates({ includeInactive: true }),
   ]);
 
   return {
     categories: CATEGORY_DEFINITIONS,
     modules,
+    bundles,
+    boxTemplates,
     suggestions: {
       procedures,
       boxItems: listKnownBoxItemKeys(),
@@ -963,6 +1371,130 @@ function sanitizeInput(input: LibraryModuleUpsertInput) {
   };
 }
 
+async function assertKnownLibraryModules(moduleIds: string[]) {
+  if (moduleIds.length === 0) return;
+
+  const modules = await listLibraryModules({ includeInactive: true });
+  const knownModuleIds = new Set(modules.map((module) => module.id));
+  const unknown = moduleIds.find((moduleId) => !knownModuleIds.has(moduleId));
+  if (unknown) {
+    throw new Error(`UNKNOWN_LIBRARY_MODULE:${unknown}`);
+  }
+}
+
+function sanitizeEducationBundleAssignments(
+  assignments: EducationBundleModuleAssignmentInput[]
+): EducationBundleModuleAssignment[] {
+  const byModuleId = new Map<string, EducationBundleModuleAssignment>();
+
+  for (const assignment of assignments) {
+    const moduleId = assignment.moduleId.trim();
+    if (!moduleId) continue;
+
+    byModuleId.set(moduleId, {
+      moduleId,
+      recommended: assignment.recommended ?? false,
+      featured: assignment.featured ?? false,
+      recommendationLabel: normalizeOptionalText(assignment.recommendationLabel),
+      recommendationOrder:
+        typeof assignment.recommendationOrder === "number"
+          ? assignment.recommendationOrder
+          : null,
+      displayOrder: assignment.displayOrder ?? 0,
+    });
+  }
+
+  return Array.from(byModuleId.values()).sort(compareEducationBundleAssignments);
+}
+
+async function sanitizeEducationBundleInput(input: EducationBundleUpsertInput) {
+  const modules = sanitizeEducationBundleAssignments(input.modules ?? []);
+  await assertKnownLibraryModules(modules.map((assignment) => assignment.moduleId));
+
+  return {
+    name: input.name.trim(),
+    description: normalizeBody(input.description ?? ""),
+    clinicTag: normalizeOptionalText(input.clinicTag),
+    procedureName: normalizeOptionalText(input.procedureName),
+    active: input.active ?? true,
+    displayOrder: input.displayOrder ?? 0,
+    modules,
+  };
+}
+
+function sanitizeBoxTemplateAssignments(
+  assignments: BoxTemplateModuleAssignmentInput[]
+): BoxTemplateModuleAssignment[] {
+  const byModuleId = new Map<string, BoxTemplateModuleAssignment>();
+
+  for (const assignment of assignments) {
+    const moduleId = assignment.moduleId.trim();
+    if (!moduleId) continue;
+
+    byModuleId.set(moduleId, {
+      moduleId,
+      recommended: assignment.recommended ?? false,
+      recommendationLabel: normalizeOptionalText(assignment.recommendationLabel),
+      recommendationOrder:
+        typeof assignment.recommendationOrder === "number"
+          ? assignment.recommendationOrder
+          : null,
+    });
+  }
+
+  return Array.from(byModuleId.values()).sort(compareBoxTemplateAssignments);
+}
+
+async function sanitizeBoxTemplateInput(input: BoxTemplateUpsertInput) {
+  const modules = sanitizeBoxTemplateAssignments(input.modules ?? []);
+  await assertKnownLibraryModules(modules.map((assignment) => assignment.moduleId));
+
+  return {
+    name: input.name.trim(),
+    description: normalizeBody(input.description ?? ""),
+    boxItemKeys: normalizeBoxItemKeys(input.boxItemKeys ?? []),
+    active: input.active ?? true,
+    displayOrder: input.displayOrder ?? 0,
+    modules,
+  };
+}
+
+async function ensureUniqueEducationBundleSlug(name: string): Promise<string> {
+  const baseSlug = slugify(name) || "education-bundle";
+  let slug = baseSlug;
+  let suffix = 2;
+
+  while (
+    await prisma.educationBundle.findUnique({
+      where: { slug },
+      select: { id: true },
+    })
+  ) {
+    slug = `${baseSlug}-${suffix}`;
+    suffix += 1;
+  }
+
+  return slug;
+}
+
+async function ensureUniqueBoxTemplateSlug(name: string): Promise<string> {
+  const baseSlug = slugify(name) || "box-template";
+  let slug = baseSlug;
+  let suffix = 2;
+
+  while (
+    await prisma.boxTemplate.findUnique({
+      where: { slug },
+      select: { id: true },
+    })
+  ) {
+    slug = `${baseSlug}-${suffix}`;
+    suffix += 1;
+  }
+
+  return slug;
+}
+
 export async function upsertLibraryModule(
   moduleId: string,
   input: LibraryModuleUpsertInput
@@ -1005,4 +1537,158 @@ export async function createCustomLibraryModule(
   }
 
   return upsertLibraryModule(nextId, input);
+}
+
+export async function createEducationBundle(
+  input: EducationBundleUpsertInput
+): Promise<EducationBundle> {
+  const data = await sanitizeEducationBundleInput(input);
+  const slug = await ensureUniqueEducationBundleSlug(data.name);
+
+  const bundle = await prisma.educationBundle.create({
+    data: {
+      name: data.name,
+      slug,
+      description: data.description,
+      clinicTag: data.clinicTag,
+      procedureName: data.procedureName,
+      active: data.active,
+      displayOrder: data.displayOrder,
+      modules: data.modules.length
+        ? {
+            createMany: {
+              data: data.modules,
+            },
+          }
+        : undefined,
+    },
+  });
+
+  const savedBundle = await getEducationBundleById(bundle.id, {
+    includeInactive: true,
+  });
+  if (!savedBundle) {
+    throw new Error("EDUCATION_BUNDLE_NOT_FOUND");
+  }
+
+  return savedBundle;
+}
+
+export async function updateEducationBundle(
+  bundleId: string,
+  input: EducationBundleUpsertInput
+): Promise<EducationBundle> {
+  const data = await sanitizeEducationBundleInput(input);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.educationBundle.update({
+      where: { id: bundleId },
+      data: {
+        name: data.name,
+        description: data.description,
+        clinicTag: data.clinicTag,
+        procedureName: data.procedureName,
+        active: data.active,
+        displayOrder: data.displayOrder,
+      },
+    });
+
+    await tx.educationBundleModule.deleteMany({
+      where: { bundleId },
+    });
+
+    if (data.modules.length > 0) {
+      await tx.educationBundleModule.createMany({
+        data: data.modules.map((assignment) => ({
+          bundleId,
+          ...assignment,
+        })),
+      });
+    }
+  });
+
+  const savedBundle = await getEducationBundleById(bundleId, {
+    includeInactive: true,
+  });
+  if (!savedBundle) {
+    throw new Error("EDUCATION_BUNDLE_NOT_FOUND");
+  }
+
+  return savedBundle;
+}
+
+export async function createBoxTemplate(
+  input: BoxTemplateUpsertInput
+): Promise<BoxTemplate> {
+  const data = await sanitizeBoxTemplateInput(input);
+  const slug = await ensureUniqueBoxTemplateSlug(data.name);
+
+  const boxTemplate = await prisma.boxTemplate.create({
+    data: {
+      name: data.name,
+      slug,
+      description: data.description,
+      boxItemKeys: data.boxItemKeys,
+      active: data.active,
+      displayOrder: data.displayOrder,
+      modules: data.modules.length
+        ? {
+            createMany: {
+              data: data.modules,
+            },
+          }
+        : undefined,
+    },
+  });
+
+  const savedTemplate = await getBoxTemplateById(boxTemplate.id, {
+    includeInactive: true,
+  });
+  if (!savedTemplate) {
+    throw new Error("BOX_TEMPLATE_NOT_FOUND");
+  }
+
+  return savedTemplate;
+}
+
+export async function updateBoxTemplate(
+  boxTemplateId: string,
+  input: BoxTemplateUpsertInput
+): Promise<BoxTemplate> {
+  const data = await sanitizeBoxTemplateInput(input);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.boxTemplate.update({
+      where: { id: boxTemplateId },
+      data: {
+        name: data.name,
+        description: data.description,
+        boxItemKeys: data.boxItemKeys,
+        active: data.active,
+        displayOrder: data.displayOrder,
+      },
+    });
+
+    await tx.boxTemplateEducationModule.deleteMany({
+      where: { boxTemplateId },
+    });
+
+    if (data.modules.length > 0) {
+      await tx.boxTemplateEducationModule.createMany({
+        data: data.modules.map((assignment) => ({
+          boxTemplateId,
+          ...assignment,
+        })),
+      });
+    }
+  });
+
+  const savedTemplate = await getBoxTemplateById(boxTemplateId, {
+    includeInactive: true,
+  });
+  if (!savedTemplate) {
+    throw new Error("BOX_TEMPLATE_NOT_FOUND");
+  }
+
+  return savedTemplate;
 }
