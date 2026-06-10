@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "postinstall": "prisma generate",
     "migrate:deploy": "prisma migrate deploy",
-    "start": "node dist/server.js",
+    "start": "prisma migrate deploy && node dist/server.js",
+    "start:server": "node dist/server.js",
     "test:plan": "tsx scripts/testPlanEngine.ts"
   },
   "dependencies": {
