@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { UserRole } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import { z } from "zod";
 
 import { requireAuth } from "../../middleware/requireAuth.js";
@@ -62,6 +62,118 @@ const libraryAdminModuleSchema = z.object({
   active: z.boolean().optional(),
   displayOrder: z.number().int().min(0).max(10000).optional(),
 });
+
+const RECOVERY_LIBRARY_STORAGE_NOT_READY_CODES = new Set(["P2021", "P2022"]);
+const RECOVERY_LIBRARY_DATABASE_UNAVAILABLE_CODES = new Set([
+  "P1001",
+  "P1002",
+  "P1008",
+  "P1017",
+]);
+
+function classifyRecoveryLibraryAdminError(
+  error: unknown,
+  action: "create" | "update"
+) {
+  const fallback =
+    action === "create"
+      ? {
+          status: 500,
+          code: "RECOVERY_LIBRARY_MODULE_CREATE_FAILED",
+          message: "Failed to create guide",
+        }
+      : {
+          status: 500,
+          code: "RECOVERY_LIBRARY_MODULE_UPDATE_FAILED",
+          message: "Failed to save guide",
+        };
+
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (RECOVERY_LIBRARY_STORAGE_NOT_READY_CODES.has(error.code)) {
+      return {
+        status: 503,
+        code: "RECOVERY_LIBRARY_STORAGE_NOT_READY",
+        message:
+          "Recovery library storage is not ready on this server yet. Apply Prisma migrations and restart the backend.",
+      };
+    }
+
+    if (RECOVERY_LIBRARY_DATABASE_UNAVAILABLE_CODES.has(error.code)) {
+      return {
+        status: 503,
+        code: "RECOVERY_LIBRARY_DATABASE_UNAVAILABLE",
+        message:
+          "Recovery library storage is temporarily unavailable. Please try again shortly.",
+      };
+    }
+  }
+
+  if (
+    error instanceof Prisma.PrismaClientInitializationError ||
+    error instanceof Prisma.PrismaClientRustPanicError
+  ) {
+    return {
+      status: 503,
+      code: "RECOVERY_LIBRARY_DATABASE_UNAVAILABLE",
+      message:
+        "Recovery library storage is temporarily unavailable. Please try again shortly.",
+    };
+  }
+
+  return fallback;
+}
+
+function getRecoveryLibraryPrismaDetails(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return {
+      prismaCode: error.code,
+      prismaMeta: error.meta,
+      prismaClientVersion: error.clientVersion,
+    };
+  }
+
+  if (
+    error instanceof Prisma.PrismaClientInitializationError ||
+    error instanceof Prisma.PrismaClientRustPanicError
+  ) {
+    return {
+      prismaClientVersion: error.clientVersion,
+    };
+  }
+
+  return {};
+}
+
+function logRecoveryLibraryAdminError(args: {
+  action: "create" | "update";
+  req: Parameters<typeof requireAuth>[0];
+  input: z.infer<typeof libraryAdminModuleSchema>;
+  guideId?: string;
+  error: unknown;
+}) {
+  const { action, req, input, guideId, error } = args;
+
+  console.error(`[recovery-library-admin] ${action} failed`, {
+    method: req.method,
+    path: req.originalUrl,
+    guideId: guideId ?? null,
+    actorUserId: req.user?.id ?? null,
+    actorRole: req.user?.role ?? null,
+    title: input.title,
+    moduleType: input.moduleType,
+    active: input.active ?? true,
+    displayOrder: input.displayOrder ?? 0,
+    categories: input.categories ?? [],
+    procedureNames: input.procedureNames ?? [],
+    boxItemKeys: input.boxItemKeys ?? [],
+    hasVideoUrl: Boolean(input.videoUrl?.trim()),
+    hasThumbnailUrl: Boolean(input.thumbnailUrl?.trim()),
+    bodyLength: input.body.length,
+    summaryLength: input.summary?.length ?? 0,
+    ...getRecoveryLibraryPrismaDetails(error),
+    error,
+  });
+}
 
 educationRouter.get("/library", async (req, res) => {
   const user = req.user!;
@@ -231,11 +343,14 @@ educationRouter.post(
 
       return res.status(201).json({ module });
     } catch (error) {
-      console.error("Recovery library module create failed", error);
-      return res.status(500).json({
-        code: "RECOVERY_LIBRARY_MODULE_CREATE_FAILED",
-        message: "Failed to create guide",
+      logRecoveryLibraryAdminError({
+        action: "create",
+        req,
+        input: parsedBody.data,
+        error,
       });
+      const response = classifyRecoveryLibraryAdminError(error, "create");
+      return res.status(response.status).json(response);
     }
   }
 );
@@ -290,11 +405,15 @@ educationRouter.put(
 
       return res.status(200).json({ module });
     } catch (error) {
-      console.error("Recovery library module update failed", error);
-      return res.status(500).json({
-        code: "RECOVERY_LIBRARY_MODULE_UPDATE_FAILED",
-        message: "Failed to save guide",
+      logRecoveryLibraryAdminError({
+        action: "update",
+        req,
+        guideId: parsedParams.data.guideId,
+        input: parsedBody.data,
+        error,
       });
+      const response = classifyRecoveryLibraryAdminError(error, "update");
+      return res.status(response.status).json(response);
     }
   }
 );
