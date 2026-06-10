@@ -193,6 +193,19 @@ export type RecoveryLibraryAssignmentSummary = {
   hasCodeBoxItemOverrides: boolean;
 };
 
+export type RecoveryLibraryBoxItem = {
+  key: string | null;
+  label: string;
+  name: string;
+  category?: string | null;
+  description?: string | null;
+  instructions?: string | null;
+  defaultEducationModuleId?: string | null;
+  imageUrl?: string | null;
+  note?: string | null;
+  educationGuide?: RecoveryLibraryGuideSummary | null;
+};
+
 export type RecoveryLibraryHomePayload = {
   recommendedGuides: RecoveryLibraryGuideSummary[];
   categories: RecoveryLibraryCategory[];
@@ -201,7 +214,7 @@ export type RecoveryLibraryHomePayload = {
     productMode: RecoveryLibraryProductMode;
     assignment: RecoveryLibraryAssignmentSummary | null;
     procedureName: string | null;
-    boxItems: Array<{ key: string | null; label: string }>;
+    boxItems: RecoveryLibraryBoxItem[];
     procedureGuides: RecoveryLibraryGuideSummary[];
     boxItemGuides: RecoveryLibraryGuideSummary[];
   };

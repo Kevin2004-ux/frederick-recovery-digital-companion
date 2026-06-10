@@ -9,44 +9,12 @@ import { sendVerificationEmail } from "../../utils/mailer.js"; // <--- ADDED: Im
 import { AuditService, AuditCategory, AuditStatus } from "../../services/AuditService.js";
 import { ActivationCodeStatus, UserRole } from "@prisma/client";
 import { getUserIdOrRespond } from "../../utils/requireUser.js";
-import { normalizeIncludedItems, resolveBoxItems } from "../../services/boxEducation.js";
-import { getBoxTemplateById } from "../../services/recoveryLibraryService.js";
+import {
+  getBoxTemplateById,
+  resolveActivationCodeBoxItems,
+} from "../../services/recoveryLibraryService.js";
 
 export const activationRouter = Router();
-
-function boxItemLabelFromKey(key: string) {
-  const normalized = key
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return normalized
-    ? normalized.replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
-    : key;
-}
-
-function mergeIncludedItems(
-  ...groups: Array<Array<{ key: string | null; label: string }>>
-) {
-  const byKey = new Map<string, { key: string | null; label: string }>();
-
-  for (const group of groups) {
-    for (const item of group) {
-      const label = item.label.trim();
-      if (!label) continue;
-
-      const dedupeKey = (item.key ?? label).trim().toLowerCase();
-      if (!dedupeKey || byKey.has(dedupeKey)) continue;
-
-      byKey.set(dedupeKey, {
-        key: item.key,
-        label,
-      });
-    }
-  }
-
-  return Array.from(byKey.values());
-}
 
 // POST /activation/claim
 // Patient enters code + email + password to create account
@@ -205,16 +173,13 @@ activationRouter.get(
     const boxTemplate = boxTemplateId
       ? await getBoxTemplateById(boxTemplateId)
       : null;
-    const codeItems = normalizeIncludedItems(activation?.assignedBoxItemsJson);
-    const templateItems = boxTemplate
-      ? boxTemplate.boxItemKeys.map((key) => ({
-          key,
-          label: boxItemLabelFromKey(key),
-        }))
-      : [];
-    const batchItems = normalizeIncludedItems(activation?.batch?.includedItemsJson);
-    const includedItems = mergeIncludedItems(codeItems, templateItems, batchItems);
-    const items = resolveBoxItems(includedItems);
+    const boxItemResolution = await resolveActivationCodeBoxItems({
+      assignedBoxItemsJson: activation?.assignedBoxItemsJson,
+      boxTemplateId: activation?.boxTemplateId,
+      batchBoxTemplateId: activation?.batch?.boxTemplateId ?? null,
+      batchIncludedItemsJson: activation?.batch?.includedItemsJson ?? null,
+    });
+    const items = boxItemResolution.resolvedBoxItems;
 
     return res.status(200).json({
       myBox: activation
@@ -229,7 +194,7 @@ activationRouter.get(
         type: "activation_batch",
         derivedFromClaimedActivation: Boolean(activation),
         activationStatus: activation?.status ?? null,
-        batchLinked: Boolean(activation?.batch || boxTemplate || codeItems.length),
+        batchLinked: Boolean(activation?.batch || boxTemplate || items.length),
         itemEducationSource: "plan_content_library",
       },
     });

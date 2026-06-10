@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { api } from "@/api/client";
 import type {
+  BoxItemCatalogItem,
   BoxTemplate,
   BoxTemplatePreviewPayload,
   EducationBundle,
@@ -74,6 +75,18 @@ type BoxTemplateFormState = {
   modules: BoxTemplateAssignmentFormState[];
 };
 
+type BoxItemFormState = {
+  key: string;
+  name: string;
+  category: string;
+  description: string;
+  instructions: string;
+  defaultEducationModuleId: string;
+  imageUrl: string;
+  displayOrder: string;
+  active: boolean;
+};
+
 const EMPTY_GUIDE_FORM: GuideFormState = {
   title: "",
   summary: "",
@@ -108,6 +121,18 @@ const EMPTY_BOX_TEMPLATE_FORM: BoxTemplateFormState = {
   displayOrder: "0",
   active: true,
   modules: [],
+};
+
+const EMPTY_BOX_ITEM_FORM: BoxItemFormState = {
+  key: "",
+  name: "",
+  category: "",
+  description: "",
+  instructions: "",
+  defaultEducationModuleId: "",
+  imageUrl: "",
+  displayOrder: "0",
+  active: true,
 };
 
 function toCommaSeparated(values: string[]) {
@@ -156,6 +181,15 @@ function sortBundles(bundles: EducationBundle[]) {
 
 function sortBoxTemplates(boxTemplates: BoxTemplate[]) {
   return [...boxTemplates].sort((left, right) => {
+    if (left.displayOrder !== right.displayOrder) {
+      return left.displayOrder - right.displayOrder;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function sortBoxItems(boxItems: BoxItemCatalogItem[]) {
+  return [...boxItems].sort((left, right) => {
     if (left.displayOrder !== right.displayOrder) {
       return left.displayOrder - right.displayOrder;
     }
@@ -259,6 +293,20 @@ function fromBoxTemplate(boxTemplate: BoxTemplate): BoxTemplateFormState {
             ? ""
             : String(assignment.recommendationOrder),
       })),
+  };
+}
+
+function fromBoxItem(boxItem: BoxItemCatalogItem): BoxItemFormState {
+  return {
+    key: boxItem.key,
+    name: boxItem.name,
+    category: boxItem.category ?? "",
+    description: boxItem.description ?? "",
+    instructions: boxItem.instructions ?? "",
+    defaultEducationModuleId: boxItem.defaultEducationModuleId ?? "",
+    imageUrl: boxItem.imageUrl ?? "",
+    displayOrder: String(boxItem.displayOrder),
+    active: boxItem.active,
   };
 }
 
@@ -394,6 +442,14 @@ export default function RecoveryLibraryPage() {
   const [boxTemplatePreview, setBoxTemplatePreview] = useState<BoxTemplatePreviewPayload | null>(null);
   const [boxTemplatePreviewLoading, setBoxTemplatePreviewLoading] = useState(false);
 
+  const [selectedBoxItemId, setSelectedBoxItemId] = useState<string | null>(null);
+  const [boxItemCreateMode, setBoxItemCreateMode] = useState(false);
+  const [boxItemForm, setBoxItemForm] = useState<BoxItemFormState>(EMPTY_BOX_ITEM_FORM);
+  const [boxItemListQuery, setBoxItemListQuery] = useState("");
+  const [boxItemSaving, setBoxItemSaving] = useState(false);
+  const [boxItemError, setBoxItemError] = useState("");
+  const [boxItemNotice, setBoxItemNotice] = useState("");
+
   useEffect(() => {
     let active = true;
 
@@ -408,16 +464,19 @@ export default function RecoveryLibraryPage() {
         const modules = sortModules(response.modules);
         const bundles = sortBundles(response.bundles);
         const boxTemplates = sortBoxTemplates(response.boxTemplates);
+        const boxItems = sortBoxItems(response.boxItems ?? []);
 
         setPayload({
           ...response,
           modules,
           bundles,
           boxTemplates,
+          boxItems,
         });
         setSelectedGuideId(modules[0]?.id ?? null);
         setSelectedBundleId(bundles[0]?.id ?? null);
         setSelectedBoxTemplateId(boxTemplates[0]?.id ?? null);
+        setSelectedBoxItemId(boxItems[0]?.id ?? null);
       } catch (err) {
         if (!active) return;
         setGuideError(err instanceof Error ? err.message : "Unable to load the recovery library.");
@@ -471,6 +530,20 @@ export default function RecoveryLibraryPage() {
     });
   }, [payload?.boxTemplates, boxTemplateListQuery]);
 
+  const filteredBoxItems = useMemo(() => {
+    const boxItems = payload?.boxItems ?? [];
+    const normalized = boxItemListQuery.trim().toLowerCase();
+    if (!normalized) return boxItems;
+    return boxItems.filter((boxItem) => {
+      return (
+        boxItem.name.toLowerCase().includes(normalized) ||
+        boxItem.key.toLowerCase().includes(normalized) ||
+        (boxItem.category ?? "").toLowerCase().includes(normalized) ||
+        (boxItem.defaultEducationModuleId ?? "").toLowerCase().includes(normalized)
+      );
+    });
+  }, [payload?.boxItems, boxItemListQuery]);
+
   const selectedGuide = useMemo(
     () => payload?.modules.find((module) => module.id === selectedGuideId) ?? null,
     [payload?.modules, selectedGuideId]
@@ -484,6 +557,11 @@ export default function RecoveryLibraryPage() {
   const selectedBoxTemplate = useMemo(
     () => payload?.boxTemplates.find((boxTemplate) => boxTemplate.id === selectedBoxTemplateId) ?? null,
     [payload?.boxTemplates, selectedBoxTemplateId]
+  );
+
+  const selectedBoxItem = useMemo(
+    () => payload?.boxItems.find((boxItem) => boxItem.id === selectedBoxItemId) ?? null,
+    [payload?.boxItems, selectedBoxItemId]
   );
 
   useEffect(() => {
@@ -500,6 +578,11 @@ export default function RecoveryLibraryPage() {
     if (boxTemplateCreateMode || !selectedBoxTemplate) return;
     setBoxTemplateForm(fromBoxTemplate(selectedBoxTemplate));
   }, [boxTemplateCreateMode, selectedBoxTemplate]);
+
+  useEffect(() => {
+    if (boxItemCreateMode || !selectedBoxItem) return;
+    setBoxItemForm(fromBoxItem(selectedBoxItem));
+  }, [boxItemCreateMode, selectedBoxItem]);
 
   useEffect(() => {
     let active = true;
@@ -620,6 +703,34 @@ export default function RecoveryLibraryPage() {
     setBoxTemplateCreateMode(false);
     setSelectedBoxTemplateId(boxTemplateId);
     setBoxTemplateNotice("");
+  }
+
+  function beginCreateBoxItem() {
+    const nextOrder =
+      (payload?.boxItems.reduce((max, boxItem) => Math.max(max, boxItem.displayOrder), 0) ?? 0) + 10;
+
+    setBoxItemCreateMode(true);
+    setSelectedBoxItemId(null);
+    setBoxItemNotice("");
+    setBoxItemForm({
+      ...EMPTY_BOX_ITEM_FORM,
+      displayOrder: String(nextOrder),
+    });
+  }
+
+  function beginEditBoxItem(boxItemId: string) {
+    setBoxItemCreateMode(false);
+    setSelectedBoxItemId(boxItemId);
+    setBoxItemNotice("");
+  }
+
+  function addBoxItemKeyToTemplate(key: string) {
+    setBoxTemplateForm((current) => ({
+      ...current,
+      boxItemKeys: splitInputValues(
+        [current.boxItemKeys, key].filter(Boolean).join(", ")
+      ).join(", "),
+    }));
   }
 
   function updateGuideCategory(category: RecoveryLibraryCategoryKey, checked: boolean) {
@@ -937,6 +1048,74 @@ export default function RecoveryLibraryPage() {
     }
   }
 
+  async function handleBoxItemSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBoxItemSaving(true);
+    setBoxItemError("");
+    setBoxItemNotice("");
+
+    try {
+      if (!boxItemCreateMode && !selectedBoxItemId) {
+        throw new Error("Select a box item to edit or start a new catalog item.");
+      }
+
+      const requestBody = {
+        key: boxItemForm.key.trim(),
+        name: boxItemForm.name.trim(),
+        category: boxItemForm.category.trim(),
+        description: boxItemForm.description.trim(),
+        instructions: boxItemForm.instructions.trim(),
+        defaultEducationModuleId: boxItemForm.defaultEducationModuleId || null,
+        imageUrl: boxItemForm.imageUrl.trim(),
+        displayOrder: Number(boxItemForm.displayOrder),
+        active: boxItemForm.active,
+      };
+
+      const response = boxItemCreateMode
+        ? await api.post<{ boxItem: BoxItemCatalogItem }>(
+            "/education/library/admin/box-items",
+            requestBody
+          )
+        : await api.put<{ boxItem: BoxItemCatalogItem }>(
+            `/education/library/admin/box-items/${selectedBoxItemId}`,
+            requestBody
+          );
+
+      setPayload((current) => {
+        if (!current) return current;
+
+        const nextBoxItems = sortBoxItems(
+          current.boxItems.some((boxItem) => boxItem.id === response.boxItem.id)
+            ? current.boxItems.map((boxItem) =>
+                boxItem.id === response.boxItem.id ? response.boxItem : boxItem
+              )
+            : [...current.boxItems, response.boxItem]
+        );
+        const nextSuggestionItems = splitInputValues(
+          [...current.suggestions.boxItems, response.boxItem.key].join(", ")
+        );
+
+        return {
+          ...current,
+          boxItems: nextBoxItems,
+          suggestions: {
+            ...current.suggestions,
+            boxItems: nextSuggestionItems,
+          },
+        };
+      });
+
+      setBoxItemCreateMode(false);
+      setSelectedBoxItemId(response.boxItem.id);
+      setBoxItemForm(fromBoxItem(response.boxItem));
+      setBoxItemNotice(boxItemCreateMode ? "Box item created." : "Box item saved.");
+    } catch (err) {
+      setBoxItemError(err instanceof Error ? err.message : "Unable to save box item.");
+    } finally {
+      setBoxItemSaving(false);
+    }
+  }
+
   return (
     <div className="page-shell">
       <section className="panel hero-panel">
@@ -945,8 +1124,8 @@ export default function RecoveryLibraryPage() {
             <p className="eyebrow">Recovery Library Admin</p>
             <h1>Frederick Recovery library, bundles, and box templates</h1>
             <p className="muted">
-              Manage the global guide catalog, reusable procedure bundles, and reusable recovery
-              box templates without changing activation code logic yet.
+              Manage the global guide catalog, master box item catalog, reusable procedure
+              bundles, and reusable recovery box templates.
             </p>
           </div>
           <div className="hero-actions">
@@ -958,6 +1137,10 @@ export default function RecoveryLibraryPage() {
               <FolderKanban size={16} />
               New bundle
             </button>
+            <button className="button secondary" type="button" onClick={beginCreateBoxItem}>
+              <Boxes size={16} />
+              New box item
+            </button>
             <button className="button secondary" type="button" onClick={beginCreateBoxTemplate}>
               <Boxes size={16} />
               New box template
@@ -966,8 +1149,8 @@ export default function RecoveryLibraryPage() {
         </div>
 
         <div className="inline-note">
-          <span>Guides stay reusable across the library, bundles, and box templates.</span>
-          <span>Activation-code assignment is intentionally still out of scope for this phase.</span>
+          <span>Guides stay reusable across the library, bundles, box items, and templates.</span>
+          <span>Activation codes can still override final box contents inside clinic profiles.</span>
         </div>
       </section>
 
@@ -1338,6 +1521,234 @@ export default function RecoveryLibraryPage() {
                   <button className="button secondary" type="button" onClick={beginCreateGuide}>
                     <Plus size={16} />
                     New guide
+                  </button>
+                ) : null}
+              </div>
+            </form>
+          </section>
+
+          <section className="library-admin-grid">
+            <div className="panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Box Item Catalog</p>
+                  <h2>{payload.boxItems.length} reusable box items</h2>
+                  <p className="muted">
+                    Master items Frederick Recovery can place in physical recovery boxes.
+                  </p>
+                </div>
+              </div>
+
+              <label className="field">
+                <span>Search box items</span>
+                <input
+                  type="text"
+                  value={boxItemListQuery}
+                  onChange={(event) => setBoxItemListQuery(event.target.value)}
+                  placeholder="Search by key, name, category, or guide"
+                />
+              </label>
+
+              <div className="library-module-list">
+                {filteredBoxItems.map((boxItem) => (
+                  <button
+                    key={boxItem.id}
+                    type="button"
+                    className={`library-module-row ${
+                      selectedBoxItemId === boxItem.id && !boxItemCreateMode ? "selected" : ""
+                    }`}
+                    onClick={() => beginEditBoxItem(boxItem.id)}
+                  >
+                    <div className="library-module-row-top">
+                      <div className="library-module-title">{boxItem.name}</div>
+                      <div className={`status-pill ${boxItem.active ? "active" : "inactive"}`}>
+                        {boxItem.active ? "Active" : "Inactive"}
+                      </div>
+                    </div>
+                    <div className="library-module-row-meta">
+                      <span>{boxItem.key}</span>
+                      {boxItem.category ? <span>{boxItem.category}</span> : null}
+                      {boxItem.defaultEducationModuleId ? (
+                        <span>{boxItem.defaultEducationModuleId}</span>
+                      ) : null}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <form className="panel form-stack" onSubmit={handleBoxItemSubmit}>
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">{boxItemCreateMode ? "Create" : "Edit"}</p>
+                  <h2>
+                    {boxItemCreateMode
+                      ? "New box item"
+                      : selectedBoxItem?.name ?? "Box item editor"}
+                  </h2>
+                  <p className="muted">
+                    Catalog details appear on patient “Your Box Items” cards when this key is
+                    assigned through a template or activation code.
+                  </p>
+                </div>
+              </div>
+
+              {boxItemNotice ? <div className="alert success">{boxItemNotice}</div> : null}
+              {boxItemError ? <div className="alert error">{boxItemError}</div> : null}
+
+              <div className="grid-two library-form-grid">
+                <label className="field">
+                  <span>Item key</span>
+                  <input
+                    type="text"
+                    value={boxItemForm.key}
+                    onChange={(event) =>
+                      setBoxItemForm((current) => ({ ...current, key: event.target.value }))
+                    }
+                    placeholder="compression_socks"
+                    required
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Item name</span>
+                  <input
+                    type="text"
+                    value={boxItemForm.name}
+                    onChange={(event) =>
+                      setBoxItemForm((current) => ({ ...current, name: event.target.value }))
+                    }
+                    placeholder="Compression Socks"
+                    required
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Category</span>
+                  <input
+                    type="text"
+                    value={boxItemForm.category}
+                    onChange={(event) =>
+                      setBoxItemForm((current) => ({ ...current, category: event.target.value }))
+                    }
+                    placeholder="Circulation"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Display order</span>
+                  <input
+                    type="number"
+                    value={boxItemForm.displayOrder}
+                    min={0}
+                    max={10000}
+                    onChange={(event) =>
+                      setBoxItemForm((current) => ({
+                        ...current,
+                        displayOrder: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+
+              <label className="field">
+                <span>Description</span>
+                <textarea
+                  value={boxItemForm.description}
+                  onChange={(event) =>
+                    setBoxItemForm((current) => ({
+                      ...current,
+                      description: event.target.value,
+                    }))
+                  }
+                  rows={3}
+                  placeholder="Short patient-facing description of what this item is for."
+                />
+              </label>
+
+              <label className="field">
+                <span>Instructions</span>
+                <textarea
+                  value={boxItemForm.instructions}
+                  onChange={(event) =>
+                    setBoxItemForm((current) => ({
+                      ...current,
+                      instructions: event.target.value,
+                    }))
+                  }
+                  rows={4}
+                  placeholder="Simple instructions patients can follow after opening their kit."
+                />
+              </label>
+
+              <div className="grid-two library-form-grid">
+                <label className="field">
+                  <span>Default education guide</span>
+                  <select
+                    value={boxItemForm.defaultEducationModuleId}
+                    onChange={(event) =>
+                      setBoxItemForm((current) => ({
+                        ...current,
+                        defaultEducationModuleId: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">No linked guide</option>
+                    {payload.modules.map((module) => (
+                      <option key={module.id} value={module.id}>
+                        {module.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>Image URL</span>
+                  <input
+                    type="url"
+                    value={boxItemForm.imageUrl}
+                    onChange={(event) =>
+                      setBoxItemForm((current) => ({ ...current, imageUrl: event.target.value }))
+                    }
+                    placeholder="https://example.com/item.jpg"
+                  />
+                </label>
+              </div>
+
+              <label className="library-toggle">
+                <span>Active box item</span>
+                <input
+                  type="checkbox"
+                  checked={boxItemForm.active}
+                  onChange={(event) =>
+                    setBoxItemForm((current) => ({
+                      ...current,
+                      active: event.target.checked,
+                    }))
+                  }
+                />
+              </label>
+
+              <div className="form-actions">
+                <button className="button primary" type="submit" disabled={boxItemSaving}>
+                  {boxItemSaving ? (
+                    <>
+                      <Loader2 size={16} className="spin" />
+                      Saving…
+                    </>
+                  ) : (
+                    <>
+                      <Save size={16} />
+                      {boxItemCreateMode ? "Create box item" : "Save box item"}
+                    </>
+                  )}
+                </button>
+
+                {!boxItemCreateMode ? (
+                  <button className="button secondary" type="button" onClick={beginCreateBoxItem}>
+                    <Plus size={16} />
+                    New box item
                   </button>
                 ) : null}
               </div>
@@ -1774,23 +2185,30 @@ export default function RecoveryLibraryPage() {
                     placeholder="icepack, gauze, tape, compression_socks"
                   />
                   <div className="tag-cloud">
-                    {payload.suggestions.boxItems.map((item) => (
+                    {payload.boxItems.map((item) => (
                       <button
-                        key={item}
+                        key={item.id}
                         type="button"
                         className="chip-button"
-                        onClick={() =>
-                          setBoxTemplateForm((current) => ({
-                            ...current,
-                            boxItemKeys: splitInputValues(
-                              [current.boxItemKeys, item].filter(Boolean).join(", ")
-                            ).join(", "),
-                          }))
-                        }
+                        onClick={() => addBoxItemKeyToTemplate(item.key)}
                       >
-                        {item}
+                        {item.name} · {item.key}
                       </button>
                     ))}
+                    {payload.suggestions.boxItems
+                      .filter(
+                        (item) => !payload.boxItems.some((boxItem) => boxItem.key === item)
+                      )
+                      .map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          className="chip-button"
+                          onClick={() => addBoxItemKeyToTemplate(item)}
+                        >
+                          {item}
+                        </button>
+                      ))}
                   </div>
                 </label>
 
@@ -1937,7 +2355,10 @@ export default function RecoveryLibraryPage() {
                 <div className="library-preview-stack">
                   <div className="inline-note">
                     <span>
-                      Box items: {boxTemplatePreview.boxTemplate.boxItemKeys.join(", ") || "None assigned yet"}
+                      Box items:{" "}
+                      {boxTemplatePreview.boxItems
+                        .map((item) => item.name || item.label)
+                        .join(", ") || "None assigned yet"}
                     </span>
                   </div>
                   <PreviewGuideCards

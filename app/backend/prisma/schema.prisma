@@ -414,6 +414,25 @@ model BoxTemplate {
   @@index([active, displayOrder])
 }
 
+model BoxItem {
+  id                       String   @id @default(uuid())
+  key                      String   @unique
+  name                     String
+  category                 String?
+  description              String?  @db.Text
+  instructions             String?  @db.Text
+  defaultEducationModuleId String?
+  imageUrl                 String?
+  active                   Boolean  @default(true)
+  displayOrder             Int      @default(0)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([active, displayOrder])
+  @@index([category])
+  @@index([defaultEducationModuleId])
+}
+
 model BoxTemplateEducationModule {
   boxTemplateId        String
   moduleId             String

@@ -12,8 +12,10 @@ import {
 import { EducationService } from "../../services/educationService.js";
 import { RecoveryHelperService } from "../../services/recoveryHelperService.js";
 import {
+  createBoxItem,
   createBoxTemplate,
   createCustomLibraryModule,
+  getBoxItemById,
   createEducationBundle,
   getBoxTemplateById,
   getBoxTemplatePreviewPayload,
@@ -25,6 +27,7 @@ import {
   getLibraryHomePayload,
   getLibraryModuleById,
   LIBRARY_CATEGORY_KEYS,
+  updateBoxItem,
   updateBoxTemplate,
   updateEducationBundle,
   upsertLibraryModule,
@@ -57,6 +60,10 @@ const libraryBoxTemplateParamsSchema = z.object({
   boxTemplateId: z.string().trim().min(1),
 });
 
+const libraryBoxItemParamsSchema = z.object({
+  boxItemId: z.string().trim().min(1),
+});
+
 const optionalUrlSchema = z.union([
   z.string().trim().url(),
   z.literal(""),
@@ -68,6 +75,11 @@ const optionalShortTextSchema = z.union([
   z.literal(""),
   z.undefined(),
 ]);
+
+const optionalLibraryIdSchema = z.preprocess(
+  (value) => (typeof value === "string" && !value.trim() ? null : value),
+  z.string().trim().min(1).max(160).nullable().optional()
+);
 
 const libraryAdminModuleSchema = z.object({
   title: z.string().trim().min(1).max(140),
@@ -122,6 +134,18 @@ const libraryAdminBoxTemplateSchema = z.object({
   active: z.boolean().optional(),
   displayOrder: z.number().int().min(0).max(10000).optional(),
   modules: z.array(boxTemplateModuleAssignmentSchema).max(200).optional(),
+});
+
+const libraryAdminBoxItemSchema = z.object({
+  key: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(140),
+  category: z.string().trim().max(80).optional(),
+  description: z.string().trim().max(1200).optional(),
+  instructions: z.string().trim().max(4000).optional(),
+  defaultEducationModuleId: optionalLibraryIdSchema,
+  imageUrl: optionalUrlSchema,
+  active: z.boolean().optional(),
+  displayOrder: z.number().int().min(0).max(10000).optional(),
 });
 
 const RECOVERY_LIBRARY_STORAGE_NOT_READY_CODES = new Set(["P2021", "P2022"]);
@@ -672,6 +696,183 @@ educationRouter.get(
       return res.status(500).json({
         code: "RECOVERY_LIBRARY_BUNDLE_PREVIEW_FAILED",
         message: "Failed to load education bundle preview",
+      });
+    }
+  }
+);
+
+educationRouter.post(
+  "/library/admin/box-items",
+  requireRole([UserRole.OWNER]),
+  async (req, res) => {
+    const parsedBody = libraryAdminBoxItemSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+    }
+
+    const user = req.user!;
+
+    try {
+      const boxItem = await createBoxItem(parsedBody.data);
+
+      await AuditService.log({
+        req,
+        category: AuditCategory.ADMIN,
+        type: "RECOVERY_LIBRARY_BOX_ITEM_CREATED",
+        status: AuditStatus.SUCCESS,
+        userId: user.id,
+        role: user.role,
+        clinicTag: user.clinicTag,
+        targetId: boxItem.id,
+        targetType: "BoxItem",
+      });
+
+      return res.status(201).json({ boxItem });
+    } catch (error) {
+      logRecoveryLibraryAdminError({
+        action: "create",
+        targetType: "BoxItem",
+        req,
+        input: {
+          key: parsedBody.data.key,
+          name: parsedBody.data.name,
+          active: parsedBody.data.active ?? true,
+          displayOrder: parsedBody.data.displayOrder ?? 0,
+          defaultEducationModuleId:
+            parsedBody.data.defaultEducationModuleId ?? null,
+        },
+        error,
+      });
+
+      if (
+        error instanceof Error &&
+        error.message.startsWith("UNKNOWN_LIBRARY_MODULE:")
+      ) {
+        return res.status(400).json({
+          code: "RECOVERY_LIBRARY_UNKNOWN_MODULE",
+          message: "Selected default education guide is not available in the library.",
+        });
+      }
+
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        return res.status(409).json({
+          code: "RECOVERY_LIBRARY_BOX_ITEM_KEY_EXISTS",
+          message: "A box item with that key already exists.",
+        });
+      }
+
+      const storageResponse = classifyRecoveryLibraryStorageError(error);
+      if (storageResponse) {
+        return res.status(storageResponse.status).json(storageResponse);
+      }
+
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_BOX_ITEM_CREATE_FAILED",
+        message: "Failed to create box item",
+      });
+    }
+  }
+);
+
+educationRouter.put(
+  "/library/admin/box-items/:boxItemId",
+  requireRole([UserRole.OWNER]),
+  async (req, res) => {
+    const parsedParams = libraryBoxItemParamsSchema.safeParse(req.params);
+    if (!parsedParams.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+    }
+
+    const parsedBody = libraryAdminBoxItemSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      return res
+        .status(400)
+        .json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+    }
+
+    const existingBoxItem = await getBoxItemById(parsedParams.data.boxItemId, {
+      includeInactive: true,
+    });
+
+    if (!existingBoxItem) {
+      return res.status(404).json({
+        code: "RECOVERY_LIBRARY_BOX_ITEM_NOT_FOUND",
+      });
+    }
+
+    const user = req.user!;
+
+    try {
+      const boxItem = await updateBoxItem(
+        parsedParams.data.boxItemId,
+        parsedBody.data
+      );
+
+      await AuditService.log({
+        req,
+        category: AuditCategory.ADMIN,
+        type: "RECOVERY_LIBRARY_BOX_ITEM_UPDATED",
+        status: AuditStatus.SUCCESS,
+        userId: user.id,
+        role: user.role,
+        clinicTag: user.clinicTag,
+        targetId: boxItem.id,
+        targetType: "BoxItem",
+      });
+
+      return res.status(200).json({ boxItem });
+    } catch (error) {
+      logRecoveryLibraryAdminError({
+        action: "update",
+        targetType: "BoxItem",
+        req,
+        targetId: parsedParams.data.boxItemId,
+        input: {
+          key: parsedBody.data.key,
+          name: parsedBody.data.name,
+          active: parsedBody.data.active ?? true,
+          displayOrder: parsedBody.data.displayOrder ?? 0,
+          defaultEducationModuleId:
+            parsedBody.data.defaultEducationModuleId ?? null,
+        },
+        error,
+      });
+
+      if (
+        error instanceof Error &&
+        error.message.startsWith("UNKNOWN_LIBRARY_MODULE:")
+      ) {
+        return res.status(400).json({
+          code: "RECOVERY_LIBRARY_UNKNOWN_MODULE",
+          message: "Selected default education guide is not available in the library.",
+        });
+      }
+
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        return res.status(409).json({
+          code: "RECOVERY_LIBRARY_BOX_ITEM_KEY_EXISTS",
+          message: "A box item with that key already exists.",
+        });
+      }
+
+      const storageResponse = classifyRecoveryLibraryStorageError(error);
+      if (storageResponse) {
+        return res.status(storageResponse.status).json(storageResponse);
+      }
+
+      return res.status(500).json({
+        code: "RECOVERY_LIBRARY_BOX_ITEM_UPDATE_FAILED",
+        message: "Failed to save box item",
       });
     }
   }
