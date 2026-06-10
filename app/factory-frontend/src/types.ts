@@ -61,6 +61,19 @@ export type ActivationCodeEducationOverrides = {
   recommendedGuideIds: string[];
 };
 
+export type RecoveryLibraryBoxItem = {
+  key: string | null;
+  label: string;
+  name: string;
+  category?: string | null;
+  description?: string | null;
+  instructions?: string | null;
+  defaultEducationModuleId?: string | null;
+  imageUrl?: string | null;
+  note?: string | null;
+  educationGuide?: RecoveryLibraryAdminGuideSummary | null;
+};
+
 export type ActivationCodeDetail = {
   id: string;
   code: string;
@@ -82,7 +95,10 @@ export type ActivationCodeDetail = {
     productMode?: RecoveryLibraryProductMode;
     procedureName?: string | null;
   } | null;
-  assignedBoxItems: Array<{ key?: string | null; label: string }>;
+  assignedBoxItems: RecoveryLibraryBoxItem[];
+  removedBoxItemKeys?: string[];
+  inheritedBoxItems?: RecoveryLibraryBoxItem[];
+  resolvedBoxItems?: RecoveryLibraryBoxItem[];
   assignedEducation: ActivationCodeEducationOverrides;
   createdAt?: string;
   claimedAt?: string | null;
@@ -200,8 +216,24 @@ export type BoxTemplate = {
 
 export type BoxTemplatePreviewPayload = {
   boxTemplate: BoxTemplate;
+  boxItems: RecoveryLibraryBoxItem[];
   recommendedGuides: RecoveryLibraryAdminGuideSummary[];
   guides: RecoveryLibraryAdminGuideSummary[];
+};
+
+export type BoxItemCatalogItem = {
+  id: string;
+  key: string;
+  name: string;
+  category?: string | null;
+  description?: string | null;
+  instructions?: string | null;
+  defaultEducationModuleId?: string | null;
+  imageUrl?: string | null;
+  active: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type RecoveryLibraryAdminPayload = {
@@ -213,6 +245,7 @@ export type RecoveryLibraryAdminPayload = {
   modules: RecoveryLibraryAdminModule[];
   bundles: EducationBundle[];
   boxTemplates: BoxTemplate[];
+  boxItems: BoxItemCatalogItem[];
   suggestions: {
     procedures: string[];
     boxItems: string[];

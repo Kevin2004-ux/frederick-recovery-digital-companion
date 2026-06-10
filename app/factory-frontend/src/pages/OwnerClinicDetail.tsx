@@ -8,6 +8,7 @@ import type {
   ActivationCodeDetailResponse,
   CreateBatchResponse,
   RecoveryLibraryAdminPayload,
+  RecoveryLibraryBoxItem,
   RecoveryLibraryProductMode,
 } from "@/types";
 
@@ -75,7 +76,7 @@ type OwnerClinicCodeRow = {
   boxTemplateId?: string | null;
   productMode?: RecoveryLibraryProductMode;
   procedureName?: string | null;
-  assignedBoxItems?: Array<{ key?: string | null; label: string }>;
+  assignedBoxItems?: RecoveryLibraryBoxItem[];
   assignedEducation?: {
     guideIds: string[];
     recommendedGuideIds: string[];
@@ -96,8 +97,15 @@ type CodeAssignmentForm = {
   procedureName: string;
   productMode: RecoveryLibraryProductMode;
   assignedBoxItemsText: string;
+  removedBoxItemKeysText: string;
   guideIdsText: string;
   recommendedGuideIdsText: string;
+};
+
+type ParsedBoxItemTextItem = {
+  key?: string | null;
+  label: string;
+  note?: string;
 };
 
 type GenerateCodesForm = {
@@ -114,6 +122,7 @@ const EMPTY_CODE_ASSIGNMENT_FORM: CodeAssignmentForm = {
   procedureName: "",
   productMode: "full_platform",
   assignedBoxItemsText: "",
+  removedBoxItemKeysText: "",
   guideIdsText: "",
   recommendedGuideIdsText: "",
 };
@@ -267,25 +276,31 @@ function parseIdsText(value: string) {
   );
 }
 
-function boxItemsToText(items: Array<{ key?: string | null; label: string }> = []) {
+function boxItemsToText(items: RecoveryLibraryBoxItem[] = []) {
   return items
-    .map((item) => (item.key ? `${item.key}|${item.label}` : item.label))
+    .map((item) => {
+      const label = item.name || item.label;
+      const base = item.key ? `${item.key}|${label}` : label;
+      return item.note ? `${base}|${item.note}` : base;
+    })
     .join("\n");
 }
 
-function parseBoxItemsText(value: string) {
+function parseBoxItemsText(value: string): ParsedBoxItemTextItem[] {
   return value
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [rawKey, ...labelParts] = line.split("|");
-      const label = labelParts.join("|").trim();
+      const [rawKey, rawLabel, ...noteParts] = line.split("|");
+      const label = rawLabel?.trim() ?? "";
+      const note = noteParts.join("|").trim();
 
       if (label) {
         return {
           key: rawKey.trim() || null,
           label,
+          ...(note ? { note } : {}),
         };
       }
 
@@ -302,6 +317,7 @@ function codeDetailToForm(code: ActivationCodeDetail): CodeAssignmentForm {
     procedureName: code.procedureName ?? code.effectiveProcedureName ?? "",
     productMode: code.productMode ?? code.effectiveProductMode ?? "full_platform",
     assignedBoxItemsText: boxItemsToText(code.assignedBoxItems),
+    removedBoxItemKeysText: idsToText(code.removedBoxItemKeys ?? []),
     guideIdsText: idsToText(code.assignedEducation.guideIds),
     recommendedGuideIdsText: idsToText(code.assignedEducation.recommendedGuideIds),
   };
@@ -349,6 +365,7 @@ export default function OwnerClinicDetailPage() {
   const [codeEditorError, setCodeEditorError] = useState("");
   const [codeEditorSuccess, setCodeEditorSuccess] = useState("");
   const [guidePickId, setGuidePickId] = useState("");
+  const [boxItemPickKey, setBoxItemPickKey] = useState("");
   const [downloadingClinic, setDownloadingClinic] = useState(false);
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null);
   const [adminForm, setAdminForm] = useState({
@@ -491,6 +508,7 @@ export default function OwnerClinicDetailPage() {
       setSelectedCode(payload.activationCode);
       setCodeEditorForm(codeDetailToForm(payload.activationCode));
       setGuidePickId("");
+      setBoxItemPickKey("");
       window.setTimeout(() => {
         document
           .getElementById("code-assignment-editor")
@@ -520,6 +538,7 @@ export default function OwnerClinicDetailPage() {
           procedureName: codeEditorForm.procedureName.trim() || null,
           productMode: codeEditorForm.productMode,
           assignedBoxItems: parseBoxItemsText(codeEditorForm.assignedBoxItemsText),
+          removedBoxItemKeys: parseIdsText(codeEditorForm.removedBoxItemKeysText),
           assignedEducation: {
             guideIds: parseIdsText(codeEditorForm.guideIdsText),
             recommendedGuideIds: parseIdsText(codeEditorForm.recommendedGuideIdsText),
@@ -564,6 +583,73 @@ export default function OwnerClinicDetailPage() {
         [field]: idsToText(nextIds),
       };
     });
+  }
+
+  function addCatalogBoxItemToCode() {
+    if (!boxItemPickKey) return;
+
+    const catalogItem = libraryPayload?.boxItems.find((item) => item.key === boxItemPickKey);
+    const label = catalogItem?.name ?? boxItemPickKey;
+
+    setCodeEditorForm((current) => {
+      const currentItems = parseBoxItemsText(current.assignedBoxItemsText);
+      if (currentItems.some((item) => item.key === boxItemPickKey)) {
+        return current;
+      }
+
+      return {
+        ...current,
+        assignedBoxItemsText: boxItemsToText([
+          ...currentItems.map((item) => ({
+            key: item.key ?? null,
+            label: item.label,
+            name: item.label,
+            category: null,
+            description: null,
+            instructions: null,
+            defaultEducationModuleId: null,
+            imageUrl: null,
+            note: item.note ?? null,
+            educationGuide: null,
+          })),
+          {
+            key: boxItemPickKey,
+            label,
+            name: label,
+            category: catalogItem?.category ?? null,
+            description: catalogItem?.description ?? null,
+            instructions: catalogItem?.instructions ?? null,
+            defaultEducationModuleId: catalogItem?.defaultEducationModuleId ?? null,
+            imageUrl: catalogItem?.imageUrl ?? null,
+            note: null,
+            educationGuide: null,
+          },
+        ]),
+      };
+    });
+  }
+
+  function markInheritedBoxItemRemoved(key: string | null) {
+    if (!key) return;
+
+    setCodeEditorForm((current) => {
+      const removed = parseIdsText(current.removedBoxItemKeysText);
+      if (!removed.includes(key)) removed.push(key);
+
+      return {
+        ...current,
+        removedBoxItemKeysText: idsToText(removed),
+      };
+    });
+  }
+
+  function restoreInheritedBoxItem(key: string) {
+    setCodeEditorForm((current) => ({
+      ...current,
+      removedBoxItemKeysText: idsToText(
+        parseIdsText(current.removedBoxItemKeysText).filter((itemKey) => itemKey !== key)
+      ),
+    }));
   }
 
   async function handleDownloadClinicCsv() {
@@ -771,6 +857,43 @@ export default function OwnerClinicDetailPage() {
     libraryPayload?.bundles.find((bundle) => bundle.id === codeEditorForm.educationBundleId) ?? null;
   const selectedFormTemplate =
     libraryPayload?.boxTemplates.find((template) => template.id === codeEditorForm.boxTemplateId) ?? null;
+  const catalogItemByKey = new Map((libraryPayload?.boxItems ?? []).map((boxItem) => [boxItem.key, boxItem]));
+  const formInheritedBoxItems: RecoveryLibraryBoxItem[] = selectedFormTemplate
+    ? selectedFormTemplate.boxItemKeys.map((key) => {
+        const catalogItem = catalogItemByKey.get(key);
+        const label = catalogItem?.name ?? key.replace(/[_-]+/g, " ");
+
+        return {
+          key,
+          label,
+          name: label,
+          category: catalogItem?.category ?? null,
+          description: catalogItem?.description ?? null,
+          instructions: catalogItem?.instructions ?? null,
+          defaultEducationModuleId: catalogItem?.defaultEducationModuleId ?? null,
+          imageUrl: catalogItem?.imageUrl ?? null,
+          note: null,
+          educationGuide: null,
+        };
+      })
+    : selectedCode?.inheritedBoxItems ?? [];
+  const currentRemovedBoxItemKeys = parseIdsText(codeEditorForm.removedBoxItemKeysText);
+  const removedBoxItemKeySet = new Set(currentRemovedBoxItemKeys);
+  const visibleInheritedBoxItems =
+    formInheritedBoxItems.filter((item) => !item.key || !removedBoxItemKeySet.has(item.key));
+  const codeLevelBoxItems = parseBoxItemsText(codeEditorForm.assignedBoxItemsText);
+  const finalPreviewBoxItems = [
+    ...codeLevelBoxItems.map((item) => ({
+      key: item.key ?? null,
+      label: item.label,
+      name: item.label,
+      note: item.note ?? null,
+    })),
+    ...visibleInheritedBoxItems.filter((item) => {
+      const dedupeKey = item.key ?? item.label;
+      return !codeLevelBoxItems.some((codeItem) => (codeItem.key ?? codeItem.label) === dedupeKey);
+    }),
+  ];
 
   if (loading) {
     return (
@@ -1095,20 +1218,114 @@ export default function OwnerClinicDetailPage() {
               </label>
             </div>
 
-            <label className="field">
-              <span>Code-level box item overrides</span>
-              <textarea
-                value={codeEditorForm.assignedBoxItemsText}
-                onChange={(event) =>
-                  setCodeEditorForm((current) => ({
-                    ...current,
-                    assignedBoxItemsText: event.target.value,
-                  }))
-                }
-                placeholder={"icepack|Ice Pack\ncompression_socks|Compression Socks"}
-                rows={4}
-              />
-            </label>
+            <div className="info-card form-stack">
+              <h3>Final box contents for this activation code</h3>
+              <p className="muted">
+                Add or remove items for this one code only. The master box template is not changed.
+              </p>
+
+              <div className="grid-two">
+                <label className="field">
+                  <span>Add item from catalog</span>
+                  <select
+                    value={boxItemPickKey}
+                    onChange={(event) => setBoxItemPickKey(event.target.value)}
+                  >
+                    <option value="">Choose a box item</option>
+                    {(libraryPayload?.boxItems ?? []).map((boxItem) => (
+                      <option key={boxItem.id} value={boxItem.key}>
+                        {boxItem.name} · {boxItem.key}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="action-stack">
+                  <button
+                    className="button secondary action-button"
+                    type="button"
+                    onClick={addCatalogBoxItemToCode}
+                    disabled={!boxItemPickKey}
+                  >
+                    Add to this code
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid-two">
+                <div className="info-card">
+                  <h3>Inherited from template/batch</h3>
+                  {formInheritedBoxItems.length ? (
+                    <div className="tag-cloud">
+                      {formInheritedBoxItems.map((item) => {
+                        const removed = Boolean(item.key && removedBoxItemKeySet.has(item.key));
+                        return (
+                          <button
+                            key={item.key ?? item.label}
+                            className="chip-button"
+                            type="button"
+                            onClick={() =>
+                              removed && item.key
+                                ? restoreInheritedBoxItem(item.key)
+                                : markInheritedBoxItemRemoved(item.key)
+                            }
+                          >
+                            {removed ? "Restore" : "Remove"} {item.name || item.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="muted">No inherited box items from the selected template.</p>
+                  )}
+                </div>
+
+                <div className="info-card">
+                  <h3>Final resolved contents</h3>
+                  {finalPreviewBoxItems.length ? (
+                    <div className="library-module-row-meta">
+                      {finalPreviewBoxItems.map((item) => (
+                        <span key={item.key ?? item.label}>
+                          {item.name || item.label}
+                          {item.note ? ` · ${item.note}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">No final items configured yet.</p>
+                  )}
+                </div>
+              </div>
+
+              <label className="field">
+                <span>Code-level added items and notes</span>
+                <textarea
+                  value={codeEditorForm.assignedBoxItemsText}
+                  onChange={(event) =>
+                    setCodeEditorForm((current) => ({
+                      ...current,
+                      assignedBoxItemsText: event.target.value,
+                    }))
+                  }
+                  placeholder={"icepack|Ice Pack|Use 20 minutes at a time\ncompression_socks|Compression Socks"}
+                  rows={4}
+                />
+              </label>
+
+              <label className="field">
+                <span>Removed inherited item keys</span>
+                <textarea
+                  value={codeEditorForm.removedBoxItemKeysText}
+                  onChange={(event) =>
+                    setCodeEditorForm((current) => ({
+                      ...current,
+                      removedBoxItemKeysText: event.target.value,
+                    }))
+                  }
+                  placeholder="Keys removed for this code only"
+                  rows={3}
+                />
+              </label>
+            </div>
 
             <div className="info-card form-stack">
               <h3>Guide overrides</h3>

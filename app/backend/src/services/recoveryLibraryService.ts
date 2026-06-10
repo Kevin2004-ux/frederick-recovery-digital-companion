@@ -1,6 +1,7 @@
 import {
   ActivationCodeStatus,
   Prisma,
+  type BoxItem as BoxItemRow,
   type BoxTemplate as BoxTemplateRow,
   type BoxTemplateEducationModule as BoxTemplateEducationModuleRow,
   type EducationBundle as EducationBundleRow,
@@ -13,7 +14,6 @@ import {
   ITEM_EDUCATION_MODULE_IDS,
   ITEM_KEY_ALIASES,
   listKnownBoxItemKeys,
-  normalizeIncludedItems,
 } from "./boxEducation.js";
 import {
   CONTENT_LIBRARY,
@@ -88,6 +88,34 @@ export const RECOVERY_LIBRARY_PRODUCT_MODES = [
 export type RecoveryLibraryProductMode =
   (typeof RECOVERY_LIBRARY_PRODUCT_MODES)[number];
 
+export type BoxItemCatalogItem = {
+  id: string;
+  key: string;
+  name: string;
+  category: string | null;
+  description: string | null;
+  instructions: string | null;
+  defaultEducationModuleId: string | null;
+  imageUrl: string | null;
+  active: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RecoveryLibraryBoxItem = {
+  key: string | null;
+  label: string;
+  name: string;
+  category: string | null;
+  description: string | null;
+  instructions: string | null;
+  defaultEducationModuleId: string | null;
+  imageUrl: string | null;
+  note: string | null;
+  educationGuide: RecoveryLibraryModuleSummary | null;
+};
+
 export type RecoveryLibraryAssignmentSummary = {
   activationCode: string | null;
   productMode: RecoveryLibraryProductMode;
@@ -119,7 +147,7 @@ export type RecoveryLibraryHomePayload = {
     productMode: RecoveryLibraryProductMode;
     assignment: RecoveryLibraryAssignmentSummary | null;
     procedureName: string | null;
-    boxItems: Array<{ key: string | null; label: string }>;
+    boxItems: RecoveryLibraryBoxItem[];
     procedureGuides: RecoveryLibraryModuleSummary[];
     boxItemGuides: RecoveryLibraryModuleSummary[];
   };
@@ -188,6 +216,7 @@ export type BoxTemplate = {
 
 export type BoxTemplatePreviewPayload = {
   boxTemplate: BoxTemplate;
+  boxItems: RecoveryLibraryBoxItem[];
   recommendedGuides: RecoveryLibraryModuleSummary[];
   guides: RecoveryLibraryModuleSummary[];
 };
@@ -197,6 +226,7 @@ export type RecoveryLibraryAdminPayload = {
   modules: RecoveryLibraryModule[];
   bundles: EducationBundle[];
   boxTemplates: BoxTemplate[];
+  boxItems: BoxItemCatalogItem[];
   suggestions: {
     procedures: string[];
     boxItems: string[];
@@ -258,16 +288,41 @@ type BoxTemplateUpsertInput = {
   modules?: BoxTemplateModuleAssignmentInput[];
 };
 
+type BoxItemUpsertInput = {
+  key: string;
+  name: string;
+  category?: string | null;
+  description?: string | null;
+  instructions?: string | null;
+  defaultEducationModuleId?: string | null;
+  imageUrl?: string | null;
+  active?: boolean;
+  displayOrder?: number;
+};
+
 type AssignedEducationOverrides = {
   guideIds: string[];
   recommendedGuideIds: string[];
+};
+
+export type BoxItemAssignmentRef = {
+  key: string | null;
+  label: string;
+  note: string | null;
+};
+
+export type ActivationCodeBoxItemResolution = {
+  assignedBoxItems: RecoveryLibraryBoxItem[];
+  removedBoxItemKeys: string[];
+  inheritedBoxItems: RecoveryLibraryBoxItem[];
+  resolvedBoxItems: RecoveryLibraryBoxItem[];
 };
 
 type PatientLibraryContext = {
   activationCode: string | null;
   productMode: RecoveryLibraryProductMode;
   procedureName: string | null;
-  boxItems: Array<{ key: string | null; label: string }>;
+  boxItems: RecoveryLibraryBoxItem[];
   educationBundle: EducationBundle | null;
   boxTemplate: BoxTemplate | null;
   assignedEducation: AssignedEducationOverrides;
@@ -585,17 +640,131 @@ function boxItemLabelFromKey(key: string): string {
   return normalized.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
-function boxItemKeysToItems(keys: string[]): Array<{ key: string | null; label: string }> {
+function boxItemKeysToRefs(keys: string[]): BoxItemAssignmentRef[] {
   return normalizeBoxItemKeys(keys).map((key) => ({
     key,
     label: boxItemLabelFromKey(key),
+    note: null,
   }));
 }
 
-function mergeBoxItems(
-  ...groups: Array<Array<{ key: string | null; label: string }>>
-): Array<{ key: string | null; label: string }> {
-  const byKey = new Map<string, { key: string | null; label: string }>();
+function normalizeBoxItemAssignmentRef(item: unknown): BoxItemAssignmentRef | null {
+  if (typeof item === "string") {
+    const label = item.trim();
+    if (!label) return null;
+
+    return {
+      key: normalizeBoxItemKey(label),
+      label,
+      note: null,
+    };
+  }
+
+  if (typeof item !== "object" || item === null) return null;
+
+  const record = item as Record<string, unknown>;
+  const rawKey = typeof record.key === "string" ? record.key.trim() : "";
+  const rawLabel =
+    typeof record.label === "string"
+      ? record.label.trim()
+      : typeof record.name === "string"
+        ? record.name.trim()
+        : "";
+  const key = rawKey ? normalizeBoxItemKey(rawKey) : rawLabel ? normalizeBoxItemKey(rawLabel) : null;
+  const label = rawLabel || (key ? boxItemLabelFromKey(key) : "");
+  if (!label) return null;
+
+  const note =
+    typeof record.note === "string"
+      ? normalizeBody(record.note)
+      : typeof record.customNote === "string"
+        ? normalizeBody(record.customNote)
+        : null;
+
+  return {
+    key,
+    label,
+    note: normalizeOptionalText(note),
+  };
+}
+
+function normalizeBoxItemAssignmentRefs(value: unknown): BoxItemAssignmentRef[] {
+  if (!Array.isArray(value)) return [];
+
+  const items: BoxItemAssignmentRef[] = [];
+
+  for (const item of value) {
+    const normalizedItem = normalizeBoxItemAssignmentRef(item);
+    if (normalizedItem) items.push(normalizedItem);
+  }
+
+  return items;
+}
+
+export function parseAssignedBoxItemOverrides(value: Prisma.JsonValue | null | undefined): {
+  items: BoxItemAssignmentRef[];
+  removedItemKeys: string[];
+} {
+  if (Array.isArray(value)) {
+    return {
+      items: normalizeBoxItemAssignmentRefs(value),
+      removedItemKeys: [],
+    };
+  }
+
+  if (!value || typeof value !== "object") {
+    return {
+      items: [],
+      removedItemKeys: [],
+    };
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return {
+    items: normalizeBoxItemAssignmentRefs(
+      record.items ?? record.assignedItems ?? record.boxItems
+    ),
+    removedItemKeys: normalizeBoxItemKeys(
+      Array.isArray(record.removedItemKeys)
+        ? record.removedItemKeys.map((entry) =>
+            typeof entry === "string" ? entry : null
+          )
+        : []
+    ),
+  };
+}
+
+export function serializeAssignedBoxItemOverrides(args: {
+  items?: Array<{
+    key?: string | null;
+    label?: string | null;
+    name?: string | null;
+    note?: string | null;
+  }>;
+  removedItemKeys?: string[];
+}): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  const items = normalizeBoxItemAssignmentRefs(args.items ?? []).map((item) => ({
+    key: item.key,
+    label: item.label,
+    ...(item.note ? { note: item.note } : {}),
+  }));
+  const removedItemKeys = normalizeBoxItemKeys(args.removedItemKeys ?? []);
+
+  if (items.length === 0 && removedItemKeys.length === 0) {
+    return Prisma.JsonNull;
+  }
+
+  return {
+    items,
+    removedItemKeys,
+  } as Prisma.InputJsonValue;
+}
+
+function mergeBoxItemRefs(
+  ...groups: BoxItemAssignmentRef[][]
+): BoxItemAssignmentRef[] {
+  const byKey = new Map<string, BoxItemAssignmentRef>();
 
   for (const group of groups) {
     for (const item of group) {
@@ -609,11 +778,21 @@ function mergeBoxItems(
       byKey.set(dedupeKey, {
         key: normalizedKey,
         label,
+        note: item.note ?? null,
       });
     }
   }
 
   return Array.from(byKey.values());
+}
+
+function withoutRemovedBoxItems(
+  items: BoxItemAssignmentRef[],
+  removedItemKeys: string[]
+): BoxItemAssignmentRef[] {
+  if (removedItemKeys.length === 0) return items;
+  const removed = new Set(removedItemKeys);
+  return items.filter((item) => !item.key || !removed.has(item.key));
 }
 
 function readStringList(value: unknown): string[] {
@@ -988,6 +1167,112 @@ function matchesBoxItems(
   return module.boxItemKeys.some((key) => keys.has(key));
 }
 
+function mapBoxItem(row: BoxItemRow): BoxItemCatalogItem {
+  return {
+    id: row.id,
+    key: normalizeBoxItemKey(row.key),
+    name: row.name.trim(),
+    category: normalizeOptionalText(row.category),
+    description: normalizeOptionalText(row.description),
+    instructions: normalizeOptionalText(row.instructions),
+    defaultEducationModuleId: normalizeOptionalText(row.defaultEducationModuleId),
+    imageUrl: normalizeOptionalText(row.imageUrl),
+    active: row.active,
+    displayOrder: row.displayOrder,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function readBoxItemRows(): Promise<BoxItemRow[]> {
+  try {
+    return await prisma.boxItem.findMany({
+      orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
+    });
+  } catch (error) {
+    console.warn(
+      "[recovery-library] Falling back to key-only box items:",
+      error
+    );
+    return [];
+  }
+}
+
+async function getBoxItemsByKey(
+  keys: string[]
+): Promise<Map<string, BoxItemCatalogItem>> {
+  const normalizedKeys = normalizeBoxItemKeys(keys);
+  if (normalizedKeys.length === 0) return new Map();
+
+  try {
+    const rows = await prisma.boxItem.findMany({
+      where: {
+        key: { in: normalizedKeys },
+      },
+    });
+
+    return new Map(rows.map((row) => [normalizeBoxItemKey(row.key), mapBoxItem(row)]));
+  } catch (error) {
+    console.warn(
+      "[recovery-library] Falling back to key-only box item resolution:",
+      error
+    );
+    return new Map();
+  }
+}
+
+function fallbackEducationModuleIdForBoxItem(key: string | null): string | null {
+  if (!key) return null;
+  return ITEM_EDUCATION_MODULE_IDS[key]?.[0] ?? null;
+}
+
+async function enrichBoxItemRefs(
+  refs: BoxItemAssignmentRef[]
+): Promise<RecoveryLibraryBoxItem[]> {
+  const catalogByKey = await getBoxItemsByKey(
+    refs
+      .map((item) => item.key)
+      .filter((key): key is string => Boolean(key))
+  );
+
+  return refs.map((item) => {
+    const catalogItem = item.key ? catalogByKey.get(item.key) ?? null : null;
+    const defaultEducationModuleId =
+      catalogItem?.defaultEducationModuleId ??
+      fallbackEducationModuleIdForBoxItem(item.key);
+    const label = catalogItem?.name ?? item.label;
+
+    return {
+      key: item.key,
+      label,
+      name: label,
+      category: catalogItem?.category ?? null,
+      description: catalogItem?.description ?? null,
+      instructions: catalogItem?.instructions ?? null,
+      defaultEducationModuleId,
+      imageUrl: catalogItem?.imageUrl ?? null,
+      note: item.note ?? null,
+      educationGuide: null,
+    };
+  });
+}
+
+function attachBoxItemEducationGuides(
+  boxItems: RecoveryLibraryBoxItem[],
+  modulesById: Map<string, RecoveryLibraryModule>
+): RecoveryLibraryBoxItem[] {
+  return boxItems.map((item) => {
+    if (!item.defaultEducationModuleId) return item;
+    const module = modulesById.get(item.defaultEducationModuleId);
+    if (!module) return item;
+
+    return {
+      ...item,
+      educationGuide: toSummary(module),
+    };
+  });
+}
+
 async function readModuleRows(): Promise<RecoveryLibraryModuleRow[]> {
   try {
     return await prisma.recoveryLibraryModule.findMany({
@@ -1221,11 +1506,21 @@ export async function getPatientLibraryContext(userId: string): Promise<PatientL
   const assignedEducation = parseAssignedEducationOverrides(
     activation?.assignedEducationJson
   );
-  const codeBoxItems = normalizeIncludedItems(activation?.assignedBoxItemsJson);
-  const templateBoxItems = boxTemplate
-    ? boxItemKeysToItems(boxTemplate.boxItemKeys)
-    : [];
-  const batchBoxItems = normalizeIncludedItems(activation?.batch?.includedItemsJson);
+  const assignedBoxItems = parseAssignedBoxItemOverrides(
+    activation?.assignedBoxItemsJson
+  );
+  const codeBoxItems = assignedBoxItems.items;
+  const templateBoxItems = withoutRemovedBoxItems(
+    boxTemplate ? boxItemKeysToRefs(boxTemplate.boxItemKeys) : [],
+    assignedBoxItems.removedItemKeys
+  );
+  const batchBoxItems = withoutRemovedBoxItems(
+    normalizeBoxItemAssignmentRefs(activation?.batch?.includedItemsJson),
+    assignedBoxItems.removedItemKeys
+  );
+  const boxItems = await enrichBoxItemRefs(
+    mergeBoxItemRefs(codeBoxItems, templateBoxItems, batchBoxItems)
+  );
   const procedureName =
     normalizeOptionalText(activation?.procedureName) ??
     normalizeOptionalText(activation?.batch?.procedureName) ??
@@ -1240,11 +1535,12 @@ export async function getPatientLibraryContext(userId: string): Promise<PatientL
       activation?.productMode ?? activation?.batch?.productMode
     ),
     procedureName,
-    boxItems: mergeBoxItems(codeBoxItems, templateBoxItems, batchBoxItems),
+    boxItems,
     educationBundle,
     boxTemplate,
     assignedEducation,
-    hasCodeBoxItemOverrides: codeBoxItems.length > 0,
+    hasCodeBoxItemOverrides:
+      codeBoxItems.length > 0 || assignedBoxItems.removedItemKeys.length > 0,
   };
 }
 
@@ -1259,6 +1555,10 @@ export async function getLibraryHomePayload(args: {
   ]);
 
   const modulesById = new Map(modules.map((module) => [module.id, module]));
+  const personalizedBoxItems = attachBoxItemEducationGuides(
+    patientContext.boxItems,
+    modulesById
+  );
   const recommendedOverrideIds = new Set(
     patientContext.assignedEducation.recommendedGuideIds
   );
@@ -1334,11 +1634,11 @@ export async function getLibraryHomePayload(args: {
 
   const boxItemGuides: RecoveryLibraryModuleSummary[] = [];
   appendUniqueGuides(boxItemGuides, boxTemplateGuides);
-  if (patientContext.boxItems.length) {
+  if (personalizedBoxItems.length) {
     appendUniqueGuides(
       boxItemGuides,
       modules
-        .filter((module) => matchesBoxItems(module, patientContext.boxItems))
+        .filter((module) => matchesBoxItems(module, personalizedBoxItems))
         .sort(compareModules)
         .slice(0, 8)
         .map(toSummary)
@@ -1390,7 +1690,7 @@ export async function getLibraryHomePayload(args: {
           }
         : null,
       procedureName: patientContext.procedureName,
-      boxItems: patientContext.boxItems,
+      boxItems: personalizedBoxItems,
       procedureGuides,
       boxItemGuides,
     },
@@ -1520,6 +1820,42 @@ export async function getBoxTemplateById(
   return boxTemplates.find((boxTemplate) => boxTemplate.id === boxTemplateId) ?? null;
 }
 
+export async function listBoxItems(args?: {
+  includeInactive?: boolean;
+}): Promise<BoxItemCatalogItem[]> {
+  const boxItems = (await readBoxItemRows())
+    .map(mapBoxItem)
+    .sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name));
+
+  if (args?.includeInactive) {
+    return boxItems;
+  }
+
+  return boxItems.filter((boxItem) => boxItem.active);
+}
+
+export async function getBoxItemById(
+  boxItemId: string,
+  args?: { includeInactive?: boolean }
+): Promise<BoxItemCatalogItem | null> {
+  try {
+    const row = await prisma.boxItem.findUnique({
+      where: { id: boxItemId },
+    });
+
+    if (!row) return null;
+    const boxItem = mapBoxItem(row);
+    if (!args?.includeInactive && !boxItem.active) return null;
+    return boxItem;
+  } catch (error) {
+    console.warn(
+      "[recovery-library] Unable to load box item from catalog:",
+      error
+    );
+    return null;
+  }
+}
+
 export async function getEducationBundlePreviewPayload(args: {
   bundleId: string;
 }): Promise<EducationBundlePreviewPayload | null> {
@@ -1568,9 +1904,14 @@ export async function getBoxTemplatePreviewPayload(args: {
     })
     .filter((guide): guide is RecoveryLibraryModuleSummary => Boolean(guide))
     .sort(compareGuideSummaries);
+  const boxItems = attachBoxItemEducationGuides(
+    await enrichBoxItemRefs(boxItemKeysToRefs(boxTemplate.boxItemKeys)),
+    modulesById
+  );
 
   return {
     boxTemplate,
+    boxItems,
     recommendedGuides: guides
       .filter((guide) => guide.recommended)
       .sort(compareRecommendedSummaries),
@@ -1602,11 +1943,18 @@ async function getProcedureSuggestions(): Promise<string[]> {
 }
 
 export async function getLibraryAdminPayload(): Promise<RecoveryLibraryAdminPayload> {
-  const [modules, procedures, bundles, boxTemplates] = await Promise.all([
+  const [modules, procedures, bundles, boxTemplates, boxItems] = await Promise.all([
     listLibraryModules({ includeInactive: true }),
     getProcedureSuggestions(),
     listEducationBundles({ includeInactive: true }),
     listBoxTemplates({ includeInactive: true }),
+    listBoxItems({ includeInactive: true }),
+  ]);
+  const suggestedBoxItems = uniqueStrings([
+    ...listKnownBoxItemKeys(),
+    ...boxItems.map((boxItem) => boxItem.key),
+    ...boxTemplates.flatMap((boxTemplate) => boxTemplate.boxItemKeys),
+    ...modules.flatMap((module) => module.boxItemKeys),
   ]);
 
   return {
@@ -1614,9 +1962,10 @@ export async function getLibraryAdminPayload(): Promise<RecoveryLibraryAdminPayl
     modules,
     bundles,
     boxTemplates,
+    boxItems,
     suggestions: {
       procedures,
-      boxItems: listKnownBoxItemKeys(),
+      boxItems: suggestedBoxItems,
     },
   };
 }
@@ -1743,6 +2092,34 @@ async function sanitizeBoxTemplateInput(input: BoxTemplateUpsertInput) {
     active: input.active ?? true,
     displayOrder: input.displayOrder ?? 0,
     modules,
+  };
+}
+
+async function sanitizeBoxItemInput(input: BoxItemUpsertInput) {
+  const key = normalizeBoxItemKey(input.key);
+  const name = input.name.trim();
+  const defaultEducationModuleId = normalizeOptionalText(
+    input.defaultEducationModuleId
+  );
+
+  if (!key) {
+    throw new Error("BOX_ITEM_KEY_REQUIRED");
+  }
+
+  if (defaultEducationModuleId) {
+    await assertKnownLibraryModules([defaultEducationModuleId]);
+  }
+
+  return {
+    key,
+    name,
+    category: normalizeOptionalText(input.category),
+    description: normalizeBody(input.description ?? "") || null,
+    instructions: normalizeBody(input.instructions ?? "") || null,
+    defaultEducationModuleId,
+    imageUrl: normalizeOptionalText(input.imageUrl),
+    active: input.active ?? true,
+    displayOrder: input.displayOrder ?? 0,
   };
 }
 
@@ -1978,4 +2355,72 @@ export async function updateBoxTemplate(
   }
 
   return savedTemplate;
+}
+
+export async function createBoxItem(
+  input: BoxItemUpsertInput
+): Promise<BoxItemCatalogItem> {
+  const data = await sanitizeBoxItemInput(input);
+
+  const row = await prisma.boxItem.create({
+    data,
+  });
+
+  return mapBoxItem(row);
+}
+
+export async function updateBoxItem(
+  boxItemId: string,
+  input: BoxItemUpsertInput
+): Promise<BoxItemCatalogItem> {
+  const data = await sanitizeBoxItemInput(input);
+
+  const row = await prisma.boxItem.update({
+    where: { id: boxItemId },
+    data,
+  });
+
+  return mapBoxItem(row);
+}
+
+export async function resolveActivationCodeBoxItems(args: {
+  assignedBoxItemsJson?: Prisma.JsonValue | null;
+  boxTemplateId?: string | null;
+  batchBoxTemplateId?: string | null;
+  batchIncludedItemsJson?: Prisma.JsonValue | null;
+  includeInactiveTemplate?: boolean;
+}): Promise<ActivationCodeBoxItemResolution> {
+  const assignedBoxItems = parseAssignedBoxItemOverrides(
+    args.assignedBoxItemsJson
+  );
+  const boxTemplateId = args.boxTemplateId ?? args.batchBoxTemplateId ?? null;
+  const boxTemplate = boxTemplateId
+    ? await getBoxTemplateById(boxTemplateId, {
+        includeInactive: args.includeInactiveTemplate,
+      })
+    : null;
+  const templateItems = boxTemplate ? boxItemKeysToRefs(boxTemplate.boxItemKeys) : [];
+  const batchItems = normalizeBoxItemAssignmentRefs(args.batchIncludedItemsJson);
+  const inheritedRefs = mergeBoxItemRefs(templateItems, batchItems);
+  const inheritedAfterRemovals = withoutRemovedBoxItems(
+    inheritedRefs,
+    assignedBoxItems.removedItemKeys
+  );
+  const resolvedRefs = mergeBoxItemRefs(
+    assignedBoxItems.items,
+    inheritedAfterRemovals
+  );
+
+  const [assignedItems, inheritedItems, resolvedItems] = await Promise.all([
+    enrichBoxItemRefs(assignedBoxItems.items),
+    enrichBoxItemRefs(inheritedRefs),
+    enrichBoxItemRefs(resolvedRefs),
+  ]);
+
+  return {
+    assignedBoxItems: assignedItems,
+    removedBoxItemKeys: assignedBoxItems.removedItemKeys,
+    inheritedBoxItems: inheritedItems,
+    resolvedBoxItems: resolvedItems,
+  };
 }

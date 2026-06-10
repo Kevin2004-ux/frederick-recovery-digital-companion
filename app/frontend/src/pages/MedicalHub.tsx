@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type {
+  RecoveryLibraryBoxItem,
   RecoveryLibraryGuideSummary,
   RecoveryLibraryHomePayload,
 } from "@/types";
@@ -190,7 +191,7 @@ function GuideSection(args: {
 function BoxItemsSection({
   items,
 }: {
-  items: Array<{ key: string | null; label: string }>;
+  items: RecoveryLibraryBoxItem[];
 }) {
   if (items.length === 0) return null;
 
@@ -211,9 +212,43 @@ function BoxItemsSection({
             key={item.key ?? item.label}
             className="rounded-[24px] border border-black/5 bg-white/95 p-4 shadow-[0_12px_34px_rgba(15,23,42,0.05)]"
           >
-            <div className="text-sm font-semibold text-foreground">{item.label}</div>
-            {item.key ? (
-              <div className="mt-1 text-xs text-muted-foreground">{item.key}</div>
+            {item.imageUrl ? (
+              <img
+                src={item.imageUrl}
+                alt={item.name || item.label}
+                className="mb-3 h-28 w-full rounded-[18px] object-cover"
+              />
+            ) : null}
+            <div className="text-sm font-semibold text-foreground">
+              {item.name || item.label}
+            </div>
+            <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              {item.category ? <span>{item.category}</span> : null}
+              {item.key ? <span>{item.key}</span> : null}
+            </div>
+            {item.description ? (
+              <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                {item.description}
+              </p>
+            ) : null}
+            {item.instructions ? (
+              <p className="mt-3 rounded-2xl bg-emerald-50/70 p-3 text-sm leading-6 text-emerald-950">
+                {item.instructions}
+              </p>
+            ) : null}
+            {item.note ? (
+              <p className="mt-3 rounded-2xl bg-stone-100 p-3 text-sm leading-6 text-stone-800">
+                Note: {item.note}
+              </p>
+            ) : null}
+            {item.educationGuide ? (
+              <Link
+                to={`/medical-hub/guides/${item.educationGuide.id}`}
+                className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-emerald-900"
+              >
+                Read guide: {item.educationGuide.title}
+                <ArrowRight className="h-4 w-4" />
+              </Link>
             ) : null}
           </Card>
         ))}

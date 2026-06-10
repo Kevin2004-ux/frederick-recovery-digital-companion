@@ -15,7 +15,10 @@ import {
   getBoxTemplateById,
   getEducationBundleById,
   listLibraryModules,
+  parseAssignedBoxItemOverrides,
   RECOVERY_LIBRARY_PRODUCT_MODES,
+  resolveActivationCodeBoxItems,
+  serializeAssignedBoxItemOverrides,
 } from "../../services/recoveryLibraryService.js";
 import { toCsv } from "../../utils/csv.js";
 
@@ -81,13 +84,19 @@ const ActivationCodeEducationAssignmentSchema = z.object({
   procedureName: optionalAssignmentTextSchema,
   assignedBoxItems: z
     .array(
-      z.object({
-        key: z.string().trim().min(1).max(64).nullable().optional(),
-        label: z.string().trim().min(1).max(120),
-      })
+      z
+        .object({
+          key: z.string().trim().min(1).max(64).nullable().optional(),
+          label: z.string().trim().min(1).max(120).optional(),
+          note: z.string().trim().max(500).nullable().optional(),
+        })
+        .refine((item) => item.key || item.label, {
+          message: "Each box item needs a key or label.",
+        })
     )
     .max(100)
     .optional(),
+  removedBoxItemKeys: z.array(z.string().trim().min(1).max(64)).max(100).optional(),
   assignedEducation: z
     .object({
       guideIds: z.array(z.string().trim().min(1).max(160)).max(200).optional(),
@@ -290,7 +299,7 @@ async function buildBatchCountsByBatchId(batchIds: string[]) {
 }
 
 function toIncludedItems(value: Prisma.JsonValue | null) {
-  return Array.isArray(value) ? value : [];
+  return parseAssignedBoxItemOverrides(value).items;
 }
 
 function uniqueStrings(values: Array<string | null | undefined>) {
@@ -397,6 +406,7 @@ type SafeCodeRecord = {
   claimedByUserId: string | null;
   batch: {
     boxType: string | null;
+    includedItemsJson?: Prisma.JsonValue | null;
     createdAt: Date;
     educationBundleId: string | null;
     boxTemplateId: string | null;
@@ -424,6 +434,7 @@ const ownerActivationCodeSelect = {
     select: {
       id: true,
       boxType: true,
+      includedItemsJson: true,
       educationBundleId: true,
       boxTemplateId: true,
       productMode: true,
@@ -437,7 +448,15 @@ type OwnerActivationCodeRecord = Prisma.ActivationCodeGetPayload<{
   select: typeof ownerActivationCodeSelect;
 }>;
 
-function toOwnerActivationCodeResponse(code: OwnerActivationCodeRecord) {
+async function toOwnerActivationCodeResponse(code: OwnerActivationCodeRecord) {
+  const boxItemResolution = await resolveActivationCodeBoxItems({
+    assignedBoxItemsJson: code.assignedBoxItemsJson,
+    boxTemplateId: code.boxTemplateId,
+    batchBoxTemplateId: code.batch?.boxTemplateId ?? null,
+    batchIncludedItemsJson: code.batch?.includedItemsJson ?? null,
+    includeInactiveTemplate: true,
+  });
+
   return {
     id: code.id,
     code: code.code,
@@ -462,7 +481,10 @@ function toOwnerActivationCodeResponse(code: OwnerActivationCodeRecord) {
           procedureName: code.batch.procedureName ?? null,
         }
       : null,
-    assignedBoxItems: toIncludedItems(code.assignedBoxItemsJson),
+    assignedBoxItems: boxItemResolution.assignedBoxItems,
+    removedBoxItemKeys: boxItemResolution.removedBoxItemKeys,
+    inheritedBoxItems: boxItemResolution.inheritedBoxItems,
+    resolvedBoxItems: boxItemResolution.resolvedBoxItems,
     assignedEducation: toAssignedEducationResponse(code.assignedEducationJson),
     createdAt: code.createdAt,
     claimedAt: code.claimedAt,
@@ -563,6 +585,7 @@ async function getClinicCodes(args: {
       batch: {
         select: {
           boxType: true,
+          includedItemsJson: true,
           createdAt: true,
           educationBundleId: true,
           boxTemplateId: true,
@@ -1554,7 +1577,7 @@ ownerRouter.get("/activation-codes/:code", async (req: Request, res: Response) =
     });
 
     return res.status(200).json({
-      activationCode: toOwnerActivationCodeResponse(activationCode),
+      activationCode: await toOwnerActivationCodeResponse(activationCode),
     });
   } catch (err) {
     console.error("[OWNER_ACTIVATION_CODE_DETAIL_FAILED]", {
@@ -1588,7 +1611,7 @@ ownerRouter.put("/activation-codes/:code", async (req: Request, res: Response) =
   try {
     const existing = await prisma.activationCode.findUnique({
       where: { code: parsedParams.data.code },
-      select: { id: true, code: true, clinicTag: true },
+      select: { id: true, code: true, clinicTag: true, assignedBoxItemsJson: true },
     });
 
     if (!existing) {
@@ -1610,11 +1633,23 @@ ownerRouter.put("/activation-codes/:code", async (req: Request, res: Response) =
     if (Object.prototype.hasOwnProperty.call(body, "procedureName")) {
       data.procedureName = body.procedureName ?? null;
     }
-    if (Object.prototype.hasOwnProperty.call(body, "assignedBoxItems")) {
-      data.assignedBoxItemsJson =
-        body.assignedBoxItems && body.assignedBoxItems.length > 0
-          ? (body.assignedBoxItems as Prisma.InputJsonValue)
-          : Prisma.JsonNull;
+    if (
+      Object.prototype.hasOwnProperty.call(body, "assignedBoxItems") ||
+      Object.prototype.hasOwnProperty.call(body, "removedBoxItemKeys")
+    ) {
+      const existingBoxItems = parseAssignedBoxItemOverrides(
+        existing.assignedBoxItemsJson
+      );
+      data.assignedBoxItemsJson = serializeAssignedBoxItemOverrides({
+        items:
+          body.assignedBoxItems !== undefined
+            ? body.assignedBoxItems
+            : existingBoxItems.items,
+        removedItemKeys:
+          body.removedBoxItemKeys !== undefined
+            ? body.removedBoxItemKeys
+            : existingBoxItems.removedItemKeys,
+      });
     }
     if (Object.prototype.hasOwnProperty.call(body, "assignedEducation")) {
       data.assignedEducationJson =
@@ -1655,7 +1690,7 @@ ownerRouter.put("/activation-codes/:code", async (req: Request, res: Response) =
     });
 
     return res.status(200).json({
-      activationCode: toOwnerActivationCodeResponse(updated),
+      activationCode: await toOwnerActivationCodeResponse(updated),
     });
   } catch (err) {
     console.error("[OWNER_ACTIVATION_CODE_UPDATE_FAILED]", {
