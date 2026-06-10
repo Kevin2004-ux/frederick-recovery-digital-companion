@@ -42,8 +42,8 @@ const NAV_ITEMS = [
   },
   {
     key: "medical-hub",
-    title: "Medical Hub",
-    subtitle: "Look up medications and recovery guidance.",
+    title: "Recovery Library",
+    subtitle: "Browse visual guides, box item instructions, and recovery videos.",
     icon: Stethoscope,
     href: FUTURE_PORTAL_ROUTES.medicalHub,
   },

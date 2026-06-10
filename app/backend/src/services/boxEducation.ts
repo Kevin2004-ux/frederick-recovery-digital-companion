@@ -25,7 +25,7 @@ export type ResolvedBoxItem = {
   };
 };
 
-const ITEM_KEY_ALIASES: Record<string, string> = {
+export const ITEM_KEY_ALIASES: Record<string, string> = {
   scar_gel: "scar_gel",
   "scar gel": "scar_gel",
   scargel: "scar_gel",
@@ -40,7 +40,7 @@ const ITEM_KEY_ALIASES: Record<string, string> = {
   "compression stockings": "compression_socks",
 };
 
-const ITEM_EDUCATION_MODULE_IDS: Record<string, string[]> = {
+export const ITEM_EDUCATION_MODULE_IDS: Record<string, string[]> = {
   scar_gel: ["task_scar_care"],
   icepack: ["education_ice_knee"],
   compression_socks: ["dvt_prevention_task", "knee_replacement_task"],
@@ -106,6 +106,15 @@ export function normalizeIncludedItems(raw: unknown): NormalizedBoxItem[] {
   }
 
   return normalized;
+}
+
+export function listKnownBoxItemKeys(): string[] {
+  return Array.from(
+    new Set([
+      ...Object.values(ITEM_KEY_ALIASES),
+      ...Object.keys(ITEM_EDUCATION_MODULE_IDS),
+    ])
+  ).sort();
 }
 
 function buildEducation(moduleDefs: ModuleDefinition[]): BoxItemEducation | null {

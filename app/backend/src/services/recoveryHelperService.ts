@@ -1,7 +1,9 @@
 import {
-  CONTENT_LIBRARY,
-  type ModuleDefinition,
-} from "./plan/contentLibrary.js";
+  type LibraryCategoryKey,
+  type LibraryModuleType,
+  listLibraryModules,
+  type RecoveryLibraryModule,
+} from "./recoveryLibraryService.js";
 
 export type RecoveryHelperSection = {
   title: string;
@@ -12,13 +14,16 @@ export type RecoveryHelperSection = {
 export type RecoveryHelperResult = {
   id: string;
   title: string;
-  moduleType: ModuleDefinition["type"];
+  moduleType: LibraryModuleType;
   summary: string;
   keyPoints: string[];
   sections: RecoveryHelperSection[];
   redFlags: string[];
   frequency?: string;
   requiredBoxItems: string[];
+  videoUrl?: string | null;
+  thumbnailUrl?: string | null;
+  categories: LibraryCategoryKey[];
 };
 
 export type RecoveryHelperSearchResponse = {
@@ -41,12 +46,6 @@ const BLOCKED_PATTERNS = [
   /\bmy [a-z]+ is [a-z]+ and [a-z]+\b/i,
   /\b(is|are) this a sign of\b/i,
   /\bdoes this mean\b/i,
-];
-
-const ALLOWED_MODULE_TYPES: ModuleDefinition["type"][] = [
-  "education",
-  "task",
-  "milestone",
 ];
 
 type QueryExpansionRule = {
@@ -219,10 +218,6 @@ function blockReasonForQuery(query: string): string | null {
   return null;
 }
 
-function isEligibleModule(moduleDef: ModuleDefinition): boolean {
-  return ALLOWED_MODULE_TYPES.includes(moduleDef.type);
-}
-
 function interpretQuery(query: string): InterpretedQuery {
   const normalizedQuery = normalizeQuery(query);
   const normalizedText = normalizeText(normalizedQuery);
@@ -258,7 +253,7 @@ function interpretQuery(query: string): InterpretedQuery {
 }
 
 function matchScore(
-  moduleDef: ModuleDefinition,
+  moduleDef: RecoveryLibraryModule,
   interpretedQuery: InterpretedQuery
 ): number {
   const normalizedQuery = normalizeText(interpretedQuery.normalizedQuery);
@@ -268,6 +263,8 @@ function matchScore(
   const tags = (moduleDef.medlineSearchTags ?? []).map(normalizeText);
   const redFlags = (moduleDef.redFlags ?? []).map(normalizeText);
   const boxItems = (moduleDef.requiredBoxItems ?? []).map(normalizeText);
+  const categories = moduleDef.categories.map(normalizeText);
+  const procedures = moduleDef.procedureNames.map(normalizeText);
   const expandedTerms = interpretedQuery.expandedTerms
     .map((term) => normalizeText(term))
     .filter(Boolean);
@@ -277,12 +274,16 @@ function matchScore(
   if (title.includes(normalizedQuery)) score += 120;
   if (id.includes(normalizedQuery)) score += 110;
   if (tags.some((tag) => tag.includes(normalizedQuery))) score += 100;
+  if (categories.some((category) => category.includes(normalizedQuery))) score += 70;
+  if (procedures.some((procedure) => procedure.includes(normalizedQuery))) score += 80;
   if (body.includes(normalizedQuery)) score += 45;
 
   for (const token of interpretedQuery.directTokens) {
     if (title.includes(token)) score += 20;
     if (id.includes(token)) score += 18;
     if (tags.some((tag) => tag.includes(token))) score += 16;
+    if (categories.some((category) => category.includes(token))) score += 12;
+    if (procedures.some((procedure) => procedure.includes(token))) score += 14;
     if (body.includes(token)) score += 6;
     if (redFlags.some((flag) => flag.includes(token))) score += 4;
     if (boxItems.some((item) => item.includes(token))) score += 3;
@@ -294,6 +295,8 @@ function matchScore(
     if (title.includes(term)) score += 18;
     if (id.includes(term)) score += 16;
     if (tags.some((tag) => tag.includes(term))) score += 14;
+    if (categories.some((category) => category.includes(term))) score += 12;
+    if (procedures.some((procedure) => procedure.includes(term))) score += 14;
     if (body.includes(term)) score += 7;
     if (redFlags.some((flag) => flag.includes(term))) score += 4;
     if (boxItems.some((item) => item.includes(term))) score += 4;
@@ -304,7 +307,7 @@ function matchScore(
   return score;
 }
 
-function buildSections(moduleDef: ModuleDefinition): RecoveryHelperSection[] {
+function buildSections(moduleDef: RecoveryLibraryModule): RecoveryHelperSection[] {
   const sections: RecoveryHelperSection[] = [
     {
       title: "Overview",
@@ -336,12 +339,12 @@ function buildSections(moduleDef: ModuleDefinition): RecoveryHelperSection[] {
   return sections;
 }
 
-function buildKeyPoints(moduleDef: ModuleDefinition): string[] {
+function buildKeyPoints(moduleDef: RecoveryLibraryModule): string[] {
   const points = sentenceParts(moduleDef.text).slice(0, 3);
   return uniqueStrings(points);
 }
 
-function buildResult(moduleDef: ModuleDefinition): RecoveryHelperResult {
+function buildResult(moduleDef: RecoveryLibraryModule): RecoveryHelperResult {
   return {
     id: moduleDef.id,
     title: moduleDef.title,
@@ -352,10 +355,15 @@ function buildResult(moduleDef: ModuleDefinition): RecoveryHelperResult {
     redFlags: uniqueStrings(moduleDef.redFlags ?? []),
     frequency: moduleDef.frequency?.trim() || undefined,
     requiredBoxItems: uniqueStrings(moduleDef.requiredBoxItems ?? []),
+    videoUrl: moduleDef.videoUrl ?? null,
+    thumbnailUrl: moduleDef.thumbnailUrl ?? null,
+    categories: moduleDef.categories,
   };
 }
 
-export function searchRecoveryHelper(query: string): RecoveryHelperSearchResponse {
+export async function searchRecoveryHelper(
+  query: string
+): Promise<RecoveryHelperSearchResponse> {
   const normalizedQuery = normalizeQuery(query);
   const blockedMessage = blockReasonForQuery(normalizedQuery);
 
@@ -378,9 +386,9 @@ export function searchRecoveryHelper(query: string): RecoveryHelperSearchRespons
   }
 
   const interpretedQuery = interpretQuery(normalizedQuery);
+  const libraryModules = await listLibraryModules();
 
-  const ranked = Object.values(CONTENT_LIBRARY)
-    .filter(isEligibleModule)
+  const ranked = libraryModules
     .map((moduleDef) => ({
       moduleDef,
       score: matchScore(moduleDef, interpretedQuery),

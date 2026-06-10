@@ -1,4 +1,12 @@
-import { ArrowRight, Boxes, Building2, KeyRound, LogOut, ShieldCheck } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpenText,
+  Boxes,
+  Building2,
+  KeyRound,
+  LogOut,
+  ShieldCheck,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -46,6 +54,12 @@ export default function DashboardPage() {
         description: "Create clinics, manage clinic admins, and export clinic code activity.",
         href: "/owner/clinics",
         icon: Building2,
+      },
+      {
+        title: "Recovery Library",
+        description: "Create or edit digital guides, videos, categories, and assignments.",
+        href: "/library",
+        icon: BookOpenText,
       },
       {
         title: "System status",
