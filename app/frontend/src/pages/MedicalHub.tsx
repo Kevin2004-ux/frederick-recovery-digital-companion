@@ -261,6 +261,7 @@ export default function MedicalHub() {
   }
 
   const categoryCards = useMemo(() => libraryHome?.categories ?? [], [libraryHome]);
+  const recommendedGuides = libraryHome?.recommendedGuides ?? [];
   const personalizedProcedureGuides = libraryHome?.personalized.procedureGuides ?? [];
   const personalizedBoxGuides = libraryHome?.personalized.boxItemGuides ?? [];
   const startHere = libraryHome?.sections["start-here"] ?? [];
@@ -507,6 +508,13 @@ export default function MedicalHub() {
         </Card>
       ) : (
         <div className="space-y-7">
+          <GuideSection
+            title="Recommended for Your Recovery"
+            description="Marked guides from Frederick Recovery appear here first so the most important next reads stay easy to find."
+            guides={recommendedGuides}
+            emptyLabel="Frederick Recovery has not marked any recommended guides yet. The full library is still available below."
+          />
+
           {personalizedProcedureGuides.length > 0 ? (
             <GuideSection
               title="For your procedure"

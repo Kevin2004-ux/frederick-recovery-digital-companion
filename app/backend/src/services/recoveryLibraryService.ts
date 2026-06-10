@@ -42,6 +42,10 @@ export type RecoveryLibraryModule = Omit<ModuleDefinition, "type"> & {
   categories: LibraryCategoryKey[];
   procedureNames: string[];
   boxItemKeys: string[];
+  recommended: boolean;
+  featured: boolean;
+  recommendationLabel: string | null;
+  recommendationOrder: number | null;
   active: boolean;
   displayOrder: number;
   source: "content_library" | "custom";
@@ -62,12 +66,17 @@ export type RecoveryLibraryModuleSummary = Pick<
   | "categories"
   | "procedureNames"
   | "boxItemKeys"
+  | "recommended"
+  | "featured"
+  | "recommendationLabel"
+  | "recommendationOrder"
   | "displayOrder"
   | "requiredBoxItems"
   | "frequency"
 >;
 
 export type RecoveryLibraryHomePayload = {
+  recommendedGuides: RecoveryLibraryModuleSummary[];
   categories: Array<
     RecoveryLibraryCategory & {
       moduleCount: number;
@@ -114,6 +123,10 @@ type LibraryModuleUpsertInput = {
   boxItemKeys?: string[];
   redFlags?: string[];
   requiredBoxItems?: string[];
+  recommended?: boolean;
+  featured?: boolean;
+  recommendationLabel?: string | null;
+  recommendationOrder?: number | null;
   active?: boolean;
   displayOrder?: number;
 };
@@ -124,6 +137,10 @@ type StaticLibraryMetadata = {
   boxItemKeys?: string[];
   displayOrder?: number;
   thumbnailUrl?: string | null;
+  recommended?: boolean;
+  featured?: boolean;
+  recommendationLabel?: string | null;
+  recommendationOrder?: number | null;
 };
 
 const LIBRARY_MODULE_TYPES: LibraryModuleType[] = [
@@ -373,6 +390,11 @@ function uniqueStrings(values: Array<string | null | undefined>): string[] {
   );
 }
 
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim() ?? "";
+  return normalized || null;
+}
+
 function normalizeBoxItemKey(value: string): string {
   const normalized = value
     .trim()
@@ -467,6 +489,13 @@ function buildModuleFromStatic(args: {
     row ? row.requiredBoxItems : moduleDef.requiredBoxItems ?? []
   );
   const redFlags = uniqueStrings(row ? row.redFlags : moduleDef.redFlags ?? []);
+  const recommended = row?.recommended ?? metadata.recommended ?? false;
+  const featured = row?.featured ?? metadata.featured ?? false;
+  const recommendationLabel = normalizeOptionalText(
+    row?.recommendationLabel ?? metadata.recommendationLabel ?? null
+  );
+  const recommendationOrder =
+    row?.recommendationOrder ?? metadata.recommendationOrder ?? null;
 
   return {
     id: moduleId,
@@ -484,6 +513,10 @@ function buildModuleFromStatic(args: {
     categories,
     procedureNames,
     boxItemKeys,
+    recommended,
+    featured,
+    recommendationLabel,
+    recommendationOrder,
     active: row?.active ?? true,
     displayOrder:
       row?.displayOrder ??
@@ -526,6 +559,10 @@ function buildModuleFromRow(row: RecoveryLibraryModuleRow): RecoveryLibraryModul
     categories,
     procedureNames,
     boxItemKeys,
+    recommended: row.recommended,
+    featured: row.featured,
+    recommendationLabel: normalizeOptionalText(row.recommendationLabel),
+    recommendationOrder: row.recommendationOrder ?? null,
     active: row.active,
     displayOrder: row.displayOrder,
     source: "custom",
@@ -534,6 +571,28 @@ function buildModuleFromRow(row: RecoveryLibraryModuleRow): RecoveryLibraryModul
 }
 
 function compareModules(a: RecoveryLibraryModule, b: RecoveryLibraryModule): number {
+  if (a.displayOrder !== b.displayOrder) {
+    return a.displayOrder - b.displayOrder;
+  }
+
+  return a.title.localeCompare(b.title);
+}
+
+function isRecommendedModule(module: RecoveryLibraryModule): boolean {
+  return module.recommended || module.featured;
+}
+
+function compareRecommendedModules(
+  a: RecoveryLibraryModule,
+  b: RecoveryLibraryModule
+): number {
+  const aOrder = a.recommendationOrder ?? Number.MAX_SAFE_INTEGER;
+  const bOrder = b.recommendationOrder ?? Number.MAX_SAFE_INTEGER;
+
+  if (aOrder !== bOrder) {
+    return aOrder - bOrder;
+  }
+
   if (a.displayOrder !== b.displayOrder) {
     return a.displayOrder - b.displayOrder;
   }
@@ -552,6 +611,10 @@ function toSummary(module: RecoveryLibraryModule): RecoveryLibraryModuleSummary 
     categories: module.categories,
     procedureNames: module.procedureNames,
     boxItemKeys: module.boxItemKeys,
+    recommended: module.recommended,
+    featured: module.featured,
+    recommendationLabel: module.recommendationLabel,
+    recommendationOrder: module.recommendationOrder,
     displayOrder: module.displayOrder,
     requiredBoxItems: module.requiredBoxItems,
     frequency: module.frequency,
@@ -728,7 +791,13 @@ export async function getLibraryHomePayload(args: {
         .map(toSummary)
     : [];
 
+  const recommendedGuides = modules
+    .filter(isRecommendedModule)
+    .sort(compareRecommendedModules)
+    .map(toSummary);
+
   return {
+    recommendedGuides,
     categories,
     sections,
     personalized: {
@@ -882,6 +951,13 @@ function sanitizeInput(input: LibraryModuleUpsertInput) {
     boxItemKeys: normalizeBoxItemKeys(input.boxItemKeys ?? []),
     redFlags: uniqueStrings(input.redFlags ?? []),
     requiredBoxItems: normalizeBoxItemKeys(input.requiredBoxItems ?? []),
+    recommended: input.recommended ?? false,
+    featured: input.featured ?? false,
+    recommendationLabel: normalizeOptionalText(input.recommendationLabel),
+    recommendationOrder:
+      typeof input.recommendationOrder === "number"
+        ? input.recommendationOrder
+        : null,
     active: input.active ?? true,
     displayOrder: input.displayOrder ?? 0,
   };

@@ -560,6 +560,30 @@ h3 {
   font-size: 0.86rem;
 }
 
+.library-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.library-meta-pill.featured {
+  background: rgba(191, 90, 36, 0.12);
+  color: #9a4b1f;
+}
+
+.library-meta-pill.recommended {
+  background: rgba(27, 116, 75, 0.12);
+  color: #126346;
+}
+
+.library-meta-pill.label {
+  background: rgba(36, 73, 61, 0.08);
+  color: #23493d;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;

@@ -74,6 +74,10 @@ export type RecoveryLibraryAdminModule = {
   categories: RecoveryLibraryCategoryKey[];
   procedureNames: string[];
   boxItemKeys: string[];
+  recommended: boolean;
+  featured: boolean;
+  recommendationLabel?: string | null;
+  recommendationOrder?: number | null;
   active: boolean;
   displayOrder: number;
   source: "content_library" | "custom";

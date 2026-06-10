@@ -335,6 +335,10 @@ model RecoveryLibraryModule {
   boxItemKeys      String[]
   redFlags         String[]
   requiredBoxItems String[]
+  recommended      Boolean  @default(false)
+  featured         Boolean  @default(false)
+  recommendationLabel String?
+  recommendationOrder Int?
   active           Boolean  @default(true)
   displayOrder     Int      @default(0)
   createdAt        DateTime @default(now())

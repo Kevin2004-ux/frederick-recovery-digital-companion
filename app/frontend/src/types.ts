@@ -156,6 +156,10 @@ export type RecoveryLibraryGuideSummary = {
   categories: RecoveryLibraryCategoryKey[];
   procedureNames: string[];
   boxItemKeys: string[];
+  recommended: boolean;
+  featured: boolean;
+  recommendationLabel?: string | null;
+  recommendationOrder?: number | null;
   displayOrder: number;
   requiredBoxItems: string[];
   frequency?: string | null;
@@ -170,6 +174,7 @@ export type RecoveryLibraryCategory = {
 };
 
 export type RecoveryLibraryHomePayload = {
+  recommendedGuides: RecoveryLibraryGuideSummary[];
   categories: RecoveryLibraryCategory[];
   sections: Record<RecoveryLibraryCategoryKey, RecoveryLibraryGuideSummary[]>;
   personalized: {
@@ -196,6 +201,10 @@ export type RecoveryLibraryGuide = {
   categories: RecoveryLibraryCategoryKey[];
   procedureNames: string[];
   boxItemKeys: string[];
+  recommended: boolean;
+  featured: boolean;
+  recommendationLabel?: string | null;
+  recommendationOrder?: number | null;
   active: boolean;
   displayOrder: number;
   source: "content_library" | "custom";

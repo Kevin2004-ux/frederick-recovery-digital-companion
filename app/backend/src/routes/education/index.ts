@@ -47,6 +47,12 @@ const optionalUrlSchema = z.union([
   z.undefined(),
 ]);
 
+const optionalShortTextSchema = z.union([
+  z.string().trim().max(80),
+  z.literal(""),
+  z.undefined(),
+]);
+
 const libraryAdminModuleSchema = z.object({
   title: z.string().trim().min(1).max(140),
   summary: z.string().trim().max(600).optional(),
@@ -59,6 +65,10 @@ const libraryAdminModuleSchema = z.object({
   boxItemKeys: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
   redFlags: z.array(z.string().trim().min(1).max(160)).max(25).optional(),
   requiredBoxItems: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
+  recommended: z.boolean().optional(),
+  featured: z.boolean().optional(),
+  recommendationLabel: optionalShortTextSchema,
+  recommendationOrder: z.number().int().min(0).max(10000).nullable().optional(),
   active: z.boolean().optional(),
   displayOrder: z.number().int().min(0).max(10000).optional(),
 });
@@ -166,6 +176,10 @@ function logRecoveryLibraryAdminError(args: {
     categories: input.categories ?? [],
     procedureNames: input.procedureNames ?? [],
     boxItemKeys: input.boxItemKeys ?? [],
+    recommended: input.recommended ?? false,
+    featured: input.featured ?? false,
+    recommendationLabel: input.recommendationLabel?.trim() || null,
+    recommendationOrder: input.recommendationOrder ?? null,
     hasVideoUrl: Boolean(input.videoUrl?.trim()),
     hasThumbnailUrl: Boolean(input.thumbnailUrl?.trim()),
     bodyLength: input.body.length,

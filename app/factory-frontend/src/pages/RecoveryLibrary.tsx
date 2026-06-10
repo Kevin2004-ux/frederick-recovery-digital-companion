@@ -15,6 +15,10 @@ type FormState = {
   moduleType: "education" | "task" | "milestone";
   videoUrl: string;
   thumbnailUrl: string;
+  recommended: boolean;
+  featured: boolean;
+  recommendationLabel: string;
+  recommendationOrder: string;
   displayOrder: string;
   active: boolean;
   categories: RecoveryLibraryCategoryKey[];
@@ -29,6 +33,10 @@ const EMPTY_FORM: FormState = {
   moduleType: "education",
   videoUrl: "",
   thumbnailUrl: "",
+  recommended: false,
+  featured: false,
+  recommendationLabel: "",
+  recommendationOrder: "",
   displayOrder: "0",
   active: true,
   categories: ["start-here"],
@@ -48,12 +56,30 @@ function fromModule(module: RecoveryLibraryAdminModule): FormState {
     moduleType: module.type,
     videoUrl: module.videoUrl ?? "",
     thumbnailUrl: module.thumbnailUrl ?? "",
+    recommended: module.recommended,
+    featured: module.featured,
+    recommendationLabel: module.recommendationLabel ?? "",
+    recommendationOrder:
+      module.recommendationOrder === null || module.recommendationOrder === undefined
+        ? ""
+        : String(module.recommendationOrder),
     displayOrder: String(module.displayOrder),
     active: module.active,
     categories: module.categories,
     procedureNames: toCommaSeparated(module.procedureNames),
     boxItemKeys: toCommaSeparated(module.boxItemKeys),
   };
+}
+
+function matchesGuideQuery(module: RecoveryLibraryAdminModule, normalizedQuery: string) {
+  if (!normalizedQuery) return true;
+
+  return (
+    module.title.toLowerCase().includes(normalizedQuery) ||
+    module.id.toLowerCase().includes(normalizedQuery) ||
+    module.categories.some((category) => category.includes(normalizedQuery)) ||
+    (module.recommendationLabel ?? "").toLowerCase().includes(normalizedQuery)
+  );
 }
 
 function splitInputValues(value: string) {
@@ -124,13 +150,7 @@ export default function RecoveryLibraryPage() {
 
     if (!normalized) return modules;
 
-    return modules.filter((module) => {
-      return (
-        module.title.toLowerCase().includes(normalized) ||
-        module.id.toLowerCase().includes(normalized) ||
-        module.categories.some((category) => category.includes(normalized))
-      );
-    });
+    return modules.filter((module) => matchesGuideQuery(module, normalized));
   }, [payload?.modules, query]);
 
   const selectedModule = useMemo(
@@ -190,6 +210,13 @@ export default function RecoveryLibraryPage() {
         moduleType: form.moduleType,
         videoUrl: form.videoUrl.trim(),
         thumbnailUrl: form.thumbnailUrl.trim(),
+        recommended: form.recommended,
+        featured: form.featured,
+        recommendationLabel: form.recommendationLabel.trim(),
+        recommendationOrder:
+          form.recommendationOrder.trim() === ""
+            ? null
+            : Number(form.recommendationOrder),
         displayOrder: Number(form.displayOrder),
         active: form.active,
         categories: form.categories,
@@ -227,6 +254,13 @@ export default function RecoveryLibraryPage() {
       setCreateMode(false);
       setSelectedId(response.module.id);
       setForm(fromModule(response.module));
+      if (
+        createMode &&
+        query.trim() &&
+        !matchesGuideQuery(response.module, query.trim().toLowerCase())
+      ) {
+        setQuery("");
+      }
       setNotice(
         createMode
           ? "Guide created. You can keep editing it below."
@@ -314,6 +348,13 @@ export default function RecoveryLibraryPage() {
                     <span>{module.id}</span>
                     <span>{module.type}</span>
                     <span>{module.source === "custom" ? "Custom" : module.isCustomized ? "Customized" : "Built-in"}</span>
+                    {module.featured ? <span className="library-meta-pill featured">Starred</span> : null}
+                    {module.recommended ? (
+                      <span className="library-meta-pill recommended">Recommended</span>
+                    ) : null}
+                    {module.recommendationLabel ? (
+                      <span className="library-meta-pill label">{module.recommendationLabel}</span>
+                    ) : null}
                   </div>
                 </button>
               ))}
@@ -409,6 +450,65 @@ export default function RecoveryLibraryPage() {
                     setForm((current) => ({ ...current, thumbnailUrl: event.target.value }))
                   }
                   placeholder="https://..."
+                />
+              </label>
+            </div>
+
+            <div className="grid-two library-form-grid">
+              <label className="library-toggle">
+                <span>Recommended guide</span>
+                <input
+                  type="checkbox"
+                  checked={form.recommended}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, recommended: event.target.checked }))
+                  }
+                />
+              </label>
+
+              <label className="library-toggle">
+                <span>Starred guide</span>
+                <input
+                  type="checkbox"
+                  checked={form.featured}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, featured: event.target.checked }))
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="grid-two library-form-grid">
+              <label className="field">
+                <span>Recommendation label</span>
+                <input
+                  type="text"
+                  value={form.recommendationLabel}
+                  maxLength={80}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      recommendationLabel: event.target.value,
+                    }))
+                  }
+                  placeholder="Start here, Important, For knee recovery"
+                />
+              </label>
+
+              <label className="field">
+                <span>Recommendation order</span>
+                <input
+                  type="number"
+                  value={form.recommendationOrder}
+                  min={0}
+                  max={10000}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      recommendationOrder: event.target.value,
+                    }))
+                  }
+                  placeholder="10"
                 />
               </label>
             </div>
