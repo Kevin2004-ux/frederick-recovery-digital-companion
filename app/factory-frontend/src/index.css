@@ -49,6 +49,80 @@ code {
   min-height: 100vh;
 }
 
+.owner-app-shell {
+  min-height: 100vh;
+}
+
+.owner-top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  gap: 14px;
+  padding: 14px 24px 12px;
+  border-bottom: 1px solid rgba(21, 53, 44, 0.08);
+  background: rgba(244, 247, 244, 0.92);
+  backdrop-filter: blur(18px);
+}
+
+.owner-top-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #123b30;
+}
+
+.owner-top-nav-brand strong,
+.owner-top-nav-brand span {
+  display: block;
+}
+
+.owner-top-nav-brand span {
+  color: #59756b;
+  font-size: 0.85rem;
+}
+
+.owner-top-nav-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #14513f;
+  color: #f7fbf7;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.owner-top-nav-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.owner-top-nav-tab {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 9px 13px;
+  color: #31594d;
+  font-size: 0.92rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.owner-top-nav-tab:hover {
+  background: rgba(20, 81, 63, 0.08);
+}
+
+.owner-top-nav-tab.active {
+  background: #14513f;
+  color: #f7fbf7;
+  box-shadow: 0 10px 24px rgba(20, 81, 63, 0.18);
+}
+
 .auth-shell,
 .page-shell {
   min-height: 100vh;
@@ -375,6 +449,23 @@ h3 {
 
 .info-card {
   padding: 20px;
+}
+
+.advanced-panel {
+  border: 1px solid rgba(21, 53, 44, 0.1);
+  border-radius: 20px;
+  background: rgba(20, 81, 63, 0.04);
+  padding: 14px 16px;
+}
+
+.advanced-panel summary {
+  cursor: pointer;
+  color: #23473d;
+  font-weight: 800;
+}
+
+.advanced-panel[open] summary {
+  margin-bottom: 14px;
 }
 
 .info-card h2,
@@ -926,6 +1017,19 @@ h3 {
 }
 
 @media (max-width: 720px) {
+  .owner-top-nav {
+    padding: 12px 14px 10px;
+  }
+
+  .owner-top-nav-brand {
+    align-items: flex-start;
+  }
+
+  .owner-top-nav-tab {
+    padding: 8px 11px;
+    font-size: 0.86rem;
+  }
+
   .auth-card,
   .panel {
     padding: 22px;

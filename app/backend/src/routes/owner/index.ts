@@ -63,6 +63,13 @@ const ListClinicCodesQuerySchema = z.object({
   status: z.nativeEnum(ActivationCodeStatus).optional(),
 });
 
+const ListActivationCodesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+  q: z.string().trim().max(120).optional(),
+  status: z.nativeEnum(ActivationCodeStatus).optional(),
+  productMode: z.enum(RECOVERY_LIBRARY_PRODUCT_MODES).optional(),
+});
+
 const ActivationCodeParamsSchema = z.object({
   code: z.string().trim().min(5).max(64),
 });
@@ -1540,6 +1547,110 @@ ownerRouter.get("/clinics/:clinicTag/codes", async (req: Request, res: Response)
     });
   } catch (err) {
     console.error("[OWNER_CLINIC_CODES_LIST_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.get("/activation-codes", async (req: Request, res: Response) => {
+  const parsedQuery = ListActivationCodesQuerySchema.safeParse(req.query);
+  if (!parsedQuery.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedQuery.error.issues });
+  }
+
+  const { q, status, productMode } = parsedQuery.data;
+  const limit = parsedQuery.data.limit ?? 500;
+  const normalizedQuery = q?.trim();
+  const queryFilter: Prisma.ActivationCodeWhereInput | undefined = normalizedQuery
+    ? {
+        OR: [
+          { code: { contains: normalizedQuery, mode: "insensitive" } },
+          { clinicTag: { contains: normalizedQuery, mode: "insensitive" } },
+          { procedureName: { contains: normalizedQuery, mode: "insensitive" } },
+          {
+            batch: {
+              procedureName: { contains: normalizedQuery, mode: "insensitive" },
+            },
+          },
+        ],
+      }
+    : undefined;
+
+  try {
+    const codes = await prisma.activationCode.findMany({
+      where: {
+        ...(status ? { status } : {}),
+        ...(productMode ? { productMode } : {}),
+        ...(queryFilter ?? {}),
+      },
+      take: limit,
+      orderBy: [{ createdAt: "desc" }, { code: "asc" }],
+      select: {
+        code: true,
+        status: true,
+        clinicTag: true,
+        batchId: true,
+        educationBundleId: true,
+        boxTemplateId: true,
+        productMode: true,
+        procedureName: true,
+        assignedBoxItemsJson: true,
+        assignedEducationJson: true,
+        createdAt: true,
+        claimedAt: true,
+        claimedByUserId: true,
+        batch: {
+          select: {
+            boxType: true,
+            createdAt: true,
+            educationBundleId: true,
+            boxTemplateId: true,
+            productMode: true,
+            procedureName: true,
+          },
+        },
+      },
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_ACTIVATION_CODES_SEARCHED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      metadata: {
+        resultCount: codes.length,
+        limit,
+        q: normalizedQuery ?? null,
+        status: status ?? null,
+        productMode: productMode ?? null,
+      },
+    });
+
+    return res.status(200).json({
+      codes: codes.map((code) => ({
+        code: code.code,
+        status: code.status,
+        clinicTag: code.clinicTag,
+        batchId: code.batchId,
+        boxType: code.batch?.boxType ?? null,
+        educationBundleId: code.educationBundleId ?? code.batch?.educationBundleId ?? null,
+        boxTemplateId: code.boxTemplateId ?? code.batch?.boxTemplateId ?? null,
+        productMode: code.productMode ?? code.batch?.productMode ?? "full_platform",
+        procedureName: code.procedureName ?? code.batch?.procedureName ?? null,
+        assignedBoxItems: toIncludedItems(code.assignedBoxItemsJson),
+        assignedEducation: toAssignedEducationResponse(code.assignedEducationJson),
+        createdAt: code.createdAt,
+        claimedAt: code.claimedAt,
+        claimedByUserId: code.claimedByUserId,
+      })),
+    });
+  } catch (err) {
+    console.error("[OWNER_ACTIVATION_CODES_SEARCH_FAILED]", {
       message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
       path: req.path,
       method: req.method,

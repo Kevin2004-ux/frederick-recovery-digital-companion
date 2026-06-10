@@ -209,7 +209,15 @@ function formatActivationCodeStatus(status: string) {
 }
 
 function formatProductMode(productMode?: RecoveryLibraryProductMode | null) {
-  return productMode === "kit_only" ? "Kit-only" : "Full platform";
+  return productMode === "kit_only" ? "Kit-only education" : "Full platform";
+}
+
+function productModeDescription(productMode: RecoveryLibraryProductMode) {
+  if (productMode === "kit_only") {
+    return "Kit-only education shows the patient library, box items, education guides, videos, and instructions only.";
+  }
+
+  return "Full platform codes can include the complete recovery platform, including clinic dashboard features, logs, check-ins, tracking, and alerts.";
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -1212,10 +1220,14 @@ export default function OwnerClinicDetailPage() {
                     }))
                   }
                 >
-                  <option value="kit_only">Kit-only</option>
+                  <option value="kit_only">Kit-only education</option>
                   <option value="full_platform">Full platform</option>
                 </select>
               </label>
+            </div>
+
+            <div className="inline-note">
+              <span>{productModeDescription(codeEditorForm.productMode)}</span>
             </div>
 
             <div className="info-card form-stack">
@@ -1773,7 +1785,7 @@ export default function OwnerClinicDetailPage() {
                     }))
                   }
                 >
-                  <option value="kit_only">Kit-only</option>
+                  <option value="kit_only">Kit-only education</option>
                   <option value="full_platform">Full platform</option>
                 </select>
               </label>
