@@ -321,7 +321,7 @@ export default function DashboardPage() {
                   setProductMode(event.target.value as RecoveryLibraryProductMode)
                 }
               >
-                <option value="kit_only">Kit-only</option>
+                <option value="kit_only">Kit-only education</option>
                 <option value="full_platform">Full platform</option>
               </select>
             </label>
@@ -381,7 +381,11 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <dt>Product mode</dt>
-                  <dd>{createdBatch.productMode ?? "full_platform"}</dd>
+                  <dd>
+                    {createdBatch.productMode === "kit_only"
+                      ? "Kit-only education"
+                      : "Full platform"}
+                  </dd>
                 </div>
               </dl>
             ) : (
@@ -420,7 +424,7 @@ export default function DashboardPage() {
                     <td>{batch.boxType ?? "Not set"}</td>
                     <td>
                       <div className="cell-strong">
-                        {batch.productMode === "kit_only" ? "Kit-only" : "Full platform"}
+                        {batch.productMode === "kit_only" ? "Kit-only education" : "Full platform"}
                       </div>
                       <div className="cell-muted">
                         {batch.educationBundleId ? "Bundle assigned" : "No bundle"} ·{" "}

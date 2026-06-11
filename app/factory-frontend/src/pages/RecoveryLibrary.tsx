@@ -87,6 +87,17 @@ type BoxItemFormState = {
   active: boolean;
 };
 
+export type RecoveryLibraryFocus =
+  | "all"
+  | "guides"
+  | "bundles"
+  | "box-items"
+  | "box-templates";
+
+type RecoveryLibraryPageProps = {
+  focus?: RecoveryLibraryFocus;
+};
+
 const EMPTY_GUIDE_FORM: GuideFormState = {
   title: "",
   summary: "",
@@ -409,7 +420,7 @@ function PreviewGuideCards(props: {
   );
 }
 
-export default function RecoveryLibraryPage() {
+export default function RecoveryLibraryPage({ focus = "all" }: RecoveryLibraryPageProps) {
   const [payload, setPayload] = useState<RecoveryLibraryAdminPayload | null>(null);
   const [selectedGuideId, setSelectedGuideId] = useState<string | null>(null);
   const [guideCreateMode, setGuideCreateMode] = useState(false);
@@ -563,6 +574,30 @@ export default function RecoveryLibraryPage() {
     () => payload?.boxItems.find((boxItem) => boxItem.id === selectedBoxItemId) ?? null,
     [payload?.boxItems, selectedBoxItemId]
   );
+  const showGuides = focus === "all" || focus === "guides";
+  const showBundles = focus === "all" || focus === "bundles";
+  const showBoxItems = focus === "all" || focus === "box-items";
+  const showBoxTemplates = focus === "all" || focus === "box-templates";
+  const heroTitle =
+    focus === "guides"
+      ? "Education Library"
+      : focus === "bundles"
+        ? "Education Bundles"
+        : focus === "box-items"
+          ? "Box Items"
+          : focus === "box-templates"
+            ? "Box Templates"
+            : "Frederick Recovery library, bundles, and box templates";
+  const heroDescription =
+    focus === "guides"
+      ? "Create and edit patient education guides, videos, categories, and box/procedure assignments."
+      : focus === "bundles"
+        ? "Create reusable procedure education bundles that activation codes can use later."
+        : focus === "box-items"
+          ? "Manage the master catalog of physical recovery kit items."
+          : focus === "box-templates"
+            ? "Build reusable physical box templates from the Box Item Catalog."
+            : "Manage the global guide catalog, master box item catalog, reusable procedure bundles, and reusable recovery box templates.";
 
   useEffect(() => {
     if (guideCreateMode || !selectedGuide) return;
@@ -1122,29 +1157,34 @@ export default function RecoveryLibraryPage() {
         <div className="section-heading">
           <div>
             <p className="eyebrow">Recovery Library Admin</p>
-            <h1>Frederick Recovery library, bundles, and box templates</h1>
-            <p className="muted">
-              Manage the global guide catalog, master box item catalog, reusable procedure
-              bundles, and reusable recovery box templates.
-            </p>
+            <h1>{heroTitle}</h1>
+            <p className="muted">{heroDescription}</p>
           </div>
           <div className="hero-actions">
-            <button className="button secondary" type="button" onClick={beginCreateGuide}>
-              <Plus size={16} />
-              New guide
-            </button>
-            <button className="button secondary" type="button" onClick={beginCreateBundle}>
-              <FolderKanban size={16} />
-              New bundle
-            </button>
-            <button className="button secondary" type="button" onClick={beginCreateBoxItem}>
-              <Boxes size={16} />
-              New box item
-            </button>
-            <button className="button secondary" type="button" onClick={beginCreateBoxTemplate}>
-              <Boxes size={16} />
-              New box template
-            </button>
+            {showGuides ? (
+              <button className="button secondary" type="button" onClick={beginCreateGuide}>
+                <Plus size={16} />
+                New guide
+              </button>
+            ) : null}
+            {showBundles ? (
+              <button className="button secondary" type="button" onClick={beginCreateBundle}>
+                <FolderKanban size={16} />
+                New bundle
+              </button>
+            ) : null}
+            {showBoxItems ? (
+              <button className="button secondary" type="button" onClick={beginCreateBoxItem}>
+                <Boxes size={16} />
+                New box item
+              </button>
+            ) : null}
+            {showBoxTemplates ? (
+              <button className="button secondary" type="button" onClick={beginCreateBoxTemplate}>
+                <Boxes size={16} />
+                New box template
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -1167,6 +1207,7 @@ export default function RecoveryLibraryPage() {
         </section>
       ) : payload ? (
         <div className="library-section-stack">
+          {showGuides ? (
           <section className="library-admin-grid">
             <div className="panel">
               <div className="section-heading">
@@ -1526,7 +1567,9 @@ export default function RecoveryLibraryPage() {
               </div>
             </form>
           </section>
+          ) : null}
 
+          {showBoxItems ? (
           <section className="library-admin-grid">
             <div className="panel">
               <div className="section-heading">
@@ -1754,7 +1797,9 @@ export default function RecoveryLibraryPage() {
               </div>
             </form>
           </section>
+          ) : null}
 
+          {showBundles ? (
           <section className="library-admin-grid">
             <div className="panel">
               <div className="section-heading">
@@ -2057,7 +2102,9 @@ export default function RecoveryLibraryPage() {
               ) : null}
             </form>
           </section>
+          ) : null}
 
+          {showBoxTemplates ? (
           <section className="library-admin-grid">
             <div className="panel">
               <div className="section-heading">
@@ -2375,6 +2422,7 @@ export default function RecoveryLibraryPage() {
               ) : null}
             </form>
           </section>
+          ) : null}
         </div>
       ) : null}
     </div>
