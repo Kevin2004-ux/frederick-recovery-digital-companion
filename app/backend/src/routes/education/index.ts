@@ -346,6 +346,7 @@ educationRouter.get("/library/guides/:guideId", async (req, res) => {
   try {
     const payload = await getLibraryGuidePayload({
       moduleId: parsedParams.data.guideId,
+      userId: user.role === UserRole.PATIENT ? user.id : undefined,
     });
 
     if (!payload) {

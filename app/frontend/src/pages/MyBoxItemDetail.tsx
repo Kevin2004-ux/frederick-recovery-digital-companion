@@ -198,7 +198,7 @@ export default function MyBoxItemDetail() {
           type="button"
           variant="ghost"
           className="h-9 self-start rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
-          onClick={() => navigate("/my-box")}
+          onClick={() => navigate("/medical-hub?tab=kit")}
         >
           <ArrowLeft className="h-4 w-4" />
           Back
@@ -249,7 +249,7 @@ export default function MyBoxItemDetail() {
               </h2>
               <p className="text-sm leading-6 text-muted-foreground">{error}</p>
             </div>
-            <Button type="button" variant="secondary" onClick={() => navigate("/my-box")}>
+            <Button type="button" variant="secondary" onClick={() => navigate("/medical-hub?tab=kit")}>
               Return to My Box
             </Button>
           </div>
@@ -284,7 +284,7 @@ export default function MyBoxItemDetail() {
                 This recovery item is not available in your current box details.
               </p>
             </div>
-            <Button type="button" variant="secondary" onClick={() => navigate("/my-box")}>
+            <Button type="button" variant="secondary" onClick={() => navigate("/medical-hub?tab=kit")}>
               Return to My Box
             </Button>
           </div>

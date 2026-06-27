@@ -1,7 +1,6 @@
 // app/backend/src/routes/clinic/index.ts
 import { Router, Request, Response } from "express"; // Import types
 import { z } from "zod";
-import crypto from "crypto";
 import {
   Prisma,
   ActivationCodeStatus,
@@ -16,6 +15,7 @@ import {
   AuditStatus,
   AuditSeverity,
 } from "../../services/AuditService.js";
+import { createActivationBatchWithCodes } from "../../services/activationBatchService.js";
 import { listEntries } from "../../repositories/logRepo.js";
 import { normalizeIncludedItems } from "../../services/boxEducation.js";
 import { PdfService } from "../../services/export/PdfService.js";
@@ -130,6 +130,7 @@ clinicRouter.get("/batches", async (req: Request, res: Response) => {
       includedItemsJson: true,
       educationBundleId: true,
       boxTemplateId: true,
+      clinicOrderId: true,
       productMode: true,
       procedureName: true,
       createdAt: true,
@@ -205,6 +206,7 @@ clinicRouter.get("/batches", async (req: Request, res: Response) => {
       includedItems: Array.isArray(b.includedItemsJson) ? b.includedItemsJson : [],
       educationBundleId: b.educationBundleId ?? null,
       boxTemplateId: b.boxTemplateId ?? null,
+      clinicOrderId: b.clinicOrderId ?? null,
       productMode: b.productMode,
       procedureName: b.procedureName ?? null,
       codeCounts: {
@@ -220,23 +222,6 @@ clinicRouter.get("/batches", async (req: Request, res: Response) => {
   return res.status(200).json({ batches: withCounts });
 });
 
-// Activation code generation helpers
-const CODE_PREFIX = "FR";
-const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-function randomChunk(len: number): string {
-  const bytes = crypto.randomBytes(len);
-  let out = "";
-  for (let i = 0; i < len; i++) {
-    out += CODE_CHARS[bytes[i] % CODE_CHARS.length];
-  }
-  return out;
-}
-
-function makeActivationCode(): string {
-  return `${CODE_PREFIX}-${randomChunk(4)}-${randomChunk(4)}`;
-}
-
 const CreateBatchSchema = z.object({
   clinicTag: z.string().min(2).max(64),
   quantity: z.number().int().min(1).max(5000),
@@ -248,6 +233,10 @@ const CreateBatchSchema = z.object({
   boxTemplateId: z.preprocess(
     (value) => (typeof value === "string" && !value.trim() ? undefined : value),
     z.string().trim().min(1).max(160).optional()
+  ),
+  clinicOrderId: z.preprocess(
+    (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+    z.string().uuid().optional()
   ),
   productMode: z.enum(RECOVERY_LIBRARY_PRODUCT_MODES).optional(),
   procedureName: z.preprocess(
@@ -330,13 +319,14 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
     return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsed.error.issues });
   }
 
-  const {
+  let {
     clinicTag,
     quantity,
     boxType,
     educationBundleId,
     boxTemplateId,
-    productMode = "full_platform",
+    clinicOrderId,
+    productMode,
     procedureName,
     includedItems,
   } = parsed.data;
@@ -364,6 +354,47 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
     });
   }
 
+  if (clinicOrderId) {
+    const clinicOrder = await prisma.clinicOrder.findUnique({
+      where: { id: clinicOrderId },
+      select: {
+        clinicTag: true,
+        archivedAt: true,
+        productMode: true,
+        defaultEducationBundleId: true,
+        defaultBoxTemplateId: true,
+        defaultProcedureName: true,
+      },
+    });
+
+    if (!clinicOrder) {
+      return res.status(404).json({ code: "CLINIC_ORDER_NOT_FOUND" });
+    }
+
+    if (clinicOrder.clinicTag !== clinicTag) {
+      return res.status(400).json({
+        code: "CLINIC_ORDER_CLINIC_MISMATCH",
+        message: "The clinic order does not belong to the selected clinic.",
+      });
+    }
+
+    if (clinicOrder.archivedAt) {
+      return res.status(409).json({ code: "CLINIC_ORDER_ARCHIVED" });
+    }
+
+    educationBundleId = educationBundleId ?? clinicOrder.defaultEducationBundleId ?? undefined;
+    boxTemplateId = boxTemplateId ?? clinicOrder.defaultBoxTemplateId ?? undefined;
+    const clinicOrderProductMode = RECOVERY_LIBRARY_PRODUCT_MODES.includes(
+      clinicOrder.productMode as (typeof RECOVERY_LIBRARY_PRODUCT_MODES)[number]
+    )
+      ? (clinicOrder.productMode as (typeof RECOVERY_LIBRARY_PRODUCT_MODES)[number])
+      : undefined;
+    productMode = productMode ?? clinicOrderProductMode;
+    procedureName = procedureName ?? clinicOrder.defaultProcedureName ?? undefined;
+  }
+
+  productMode = productMode ?? "full_platform";
+
   const educationTargets = await validateActivationEducationTargets({
     educationBundleId,
     boxTemplateId,
@@ -376,64 +407,17 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
   }
 
   try {
-    const batch = await prisma.$transaction(async (tx) => {
-      // Create Clinic Config if not exists
-      await tx.clinicPlanConfig.upsert({
-        where: { clinicTag },
-        update: {},
-        create: { 
-          clinicTag, 
-          defaultCategory: "general_outpatient",
-          overridesJson: Prisma.JsonNull 
-        },
-      });
-
-      const createdBatch = await tx.activationBatch.create({
-        data: {
-          id: crypto.randomUUID(),
-          clinicTag,
-          quantity,
-          boxType,
-          includedItemsJson: includedItems
-            ? (includedItems as unknown as Prisma.InputJsonValue)
-            : undefined,
-          educationBundleId,
-          boxTemplateId,
-          productMode,
-          procedureName,
-          createdByUserId: userId,
-        },
-      });
-
-      let insertedTotal = 0;
-      let safety = 0;
-
-      while (insertedTotal < quantity) {
-        safety++;
-        if (safety > 25) throw new Error("CODE_GEN_EXHAUSTED");
-
-        const remaining = quantity - insertedTotal;
-        const genCount = Math.min(remaining, 2000);
-
-        const data = Array.from({ length: genCount }).map(() => ({
-          code: makeActivationCode(),
-          clinicTag,
-          batchId: createdBatch.id,
-          educationBundleId,
-          boxTemplateId,
-          productMode,
-          procedureName,
-        }));
-
-        const created = await tx.activationCode.createMany({
-          data,
-          skipDuplicates: true,
-        });
-
-        insertedTotal += created.count;
-      }
-
-      return createdBatch;
+    const batch = await createActivationBatchWithCodes({
+      clinicTag,
+      quantity,
+      boxType,
+      includedItems,
+      educationBundleId,
+      boxTemplateId,
+      clinicOrderId,
+      productMode,
+      procedureName,
+      createdByUserId: userId,
     });
 
     // Audit the creation
@@ -443,6 +427,7 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
       status: AuditStatus.SUCCESS,
       metadata: {
         batchId: batch.id,
+        clinicOrderId: clinicOrderId ?? null,
         quantity,
         boxType: boxType ?? null,
         includedItemCount: includedItems?.length ?? 0,
@@ -459,6 +444,7 @@ clinicRouter.post("/batches", async (req: Request, res: Response) => {
         clinicTag: batch.clinicTag ?? null,
         quantity: batch.quantity,
         boxType: batch.boxType ?? null,
+        clinicOrderId: batch.clinicOrderId ?? null,
         includedItems: Array.isArray(batch.includedItemsJson) ? batch.includedItemsJson : [],
         educationBundleId: batch.educationBundleId ?? null,
         boxTemplateId: batch.boxTemplateId ?? null,
@@ -490,6 +476,7 @@ clinicRouter.get("/batches/:id/codes", async (req: Request, res: Response) => {
       includedItemsJson: true,
       educationBundleId: true,
       boxTemplateId: true,
+      clinicOrderId: true,
       productMode: true,
       procedureName: true,
     },
@@ -533,6 +520,7 @@ clinicRouter.get("/batches/:id/codes", async (req: Request, res: Response) => {
       includedItems: Array.isArray(batch.includedItemsJson) ? batch.includedItemsJson : [],
       educationBundleId: batch.educationBundleId ?? null,
       boxTemplateId: batch.boxTemplateId ?? null,
+      clinicOrderId: batch.clinicOrderId ?? null,
       productMode: batch.productMode,
       procedureName: batch.procedureName ?? null,
     },

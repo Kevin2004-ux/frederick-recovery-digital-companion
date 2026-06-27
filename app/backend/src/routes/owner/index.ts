@@ -8,10 +8,22 @@ import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   AuditCategory,
+  AuditSeverity,
   AuditService,
   AuditStatus,
 } from "../../services/AuditService.js";
 import {
+  previewTier1ActivationSnapshot,
+  finalizeTier1ActivationCode,
+  markTier1ActivationCodePacked,
+  resetTier1ActivationCodeForReissue,
+  Tier1ActivationError,
+  validateTier1ActivationSnapshot,
+} from "../../services/tier1ActivationService.js";
+import { createActivationBatchWithCodes } from "../../services/activationBatchService.js";
+import {
+  createBoxItem,
+  createCustomLibraryModule,
   getBoxTemplateById,
   getEducationBundleById,
   listLibraryModules,
@@ -50,6 +62,12 @@ const CreateClinicUserSchema = z.object({
   requireMfa: z.boolean().optional(),
 });
 
+const ListClinicOrdersQuerySchema = z.object({
+  clinicTag: ClinicTagSchema.optional(),
+  status: z.string().trim().min(1).max(80).optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+});
+
 const ResetClinicUserPasswordSchema = z.object({
   temporaryPassword: z.string().min(8),
 });
@@ -84,6 +102,110 @@ const optionalAssignmentTextSchema = z.preprocess(
   z.string().trim().min(1).max(160).nullable().optional()
 );
 
+const CreateClinicOrderSchema = z.object({
+  clinicTag: ClinicTagSchema,
+  orderNumber: z.string().trim().min(1).max(120).optional(),
+  externalRef: z.string().trim().min(1).max(160).optional(),
+  requestedBoxCount: z.number().int().min(1).max(5000).optional(),
+  productMode: z.literal("kit_only").optional(),
+  defaultEducationBundleId: optionalAssignmentIdSchema,
+  defaultBoxTemplateId: optionalAssignmentIdSchema,
+  defaultProcedureName: optionalAssignmentTextSchema,
+  requestedByName: z.string().trim().min(1).max(160).optional(),
+  requestedByEmail: z.string().trim().toLowerCase().email().optional(),
+  notes: z.string().trim().max(4000).optional(),
+});
+
+const ClinicOrderParamsSchema = z.object({
+  orderId: z.string().uuid(),
+});
+
+const UpdateClinicOrderSchema = z.object({
+  orderNumber: z.string().trim().min(1).max(120).nullable().optional(),
+  externalRef: z.string().trim().min(1).max(160).nullable().optional(),
+  status: z.string().trim().min(1).max(80).optional(),
+  requestedBoxCount: z.number().int().min(1).max(5000).nullable().optional(),
+  productMode: z.literal("kit_only").optional(),
+  defaultEducationBundleId: optionalAssignmentIdSchema,
+  defaultBoxTemplateId: optionalAssignmentIdSchema,
+  defaultProcedureName: optionalAssignmentTextSchema,
+  requestedByName: z.string().trim().min(1).max(160).nullable().optional(),
+  requestedByEmail: z.string().trim().toLowerCase().email().nullable().optional(),
+  notes: z.string().trim().max(4000).nullable().optional(),
+});
+
+const GenerateOrderCodesSchema = z.object({
+  quantity: z.number().int().min(1).max(5000).optional(),
+  boxType: z.string().trim().min(1).max(120).optional(),
+  educationBundleId: optionalAssignmentIdSchema,
+  boxTemplateId: optionalAssignmentIdSchema,
+  procedureName: optionalAssignmentTextSchema,
+  includedItems: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1).max(64).optional(),
+        label: z.string().trim().min(1).max(120),
+        note: z.string().trim().max(500).nullable().optional(),
+      })
+    )
+    .max(100)
+    .optional(),
+});
+
+const ApplyBoxTemplateSchema = z.object({
+  boxTemplateId: z.string().trim().min(1).max(160),
+});
+
+const ApplyEducationBundleSchema = z.object({
+  educationBundleId: z.string().trim().min(1).max(160),
+});
+
+const InlineBoxItemAssignmentSchema = z.object({
+  key: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(140),
+  category: z.string().trim().max(80).optional(),
+  description: z.string().trim().max(1200).optional(),
+  instructions: z.string().trim().max(4000).optional(),
+  defaultEducationModuleId: optionalAssignmentIdSchema,
+  imageUrl: z.union([z.string().trim().url(), z.literal(""), z.undefined()]),
+  active: z.boolean().optional(),
+  displayOrder: z.number().int().min(0).max(10000).optional(),
+  note: z.string().trim().max(500).nullable().optional(),
+});
+
+const InlineGuideAssignmentSchema = z.object({
+  title: z.string().trim().min(1).max(140),
+  summary: z.string().trim().max(600).optional(),
+  body: z.string().trim().min(1).max(12000),
+  moduleType: z.enum(["education", "task", "milestone"]).default("education"),
+  videoUrl: z.union([z.string().trim().url(), z.literal(""), z.undefined()]),
+  thumbnailUrl: z.union([z.string().trim().url(), z.literal(""), z.undefined()]),
+  categories: z
+    .array(
+      z.enum([
+        "start-here",
+        "common-recovery-topics",
+        "procedure-guides",
+        "box-item-instructions",
+        "videos",
+        "clinic-instructions",
+      ])
+    )
+    .max(12)
+    .optional(),
+  procedureNames: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
+  boxItemKeys: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
+  redFlags: z.array(z.string().trim().min(1).max(160)).max(25).optional(),
+  requiredBoxItems: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
+  recommended: z.boolean().optional(),
+  featured: z.boolean().optional(),
+  recommendationLabel: z.string().trim().max(80).nullable().optional(),
+  recommendationOrder: z.number().int().min(0).max(10000).nullable().optional(),
+  active: z.boolean().optional(),
+  displayOrder: z.number().int().min(0).max(10000).optional(),
+  assignAsRecommended: z.boolean().optional(),
+});
+
 const ActivationCodeEducationAssignmentSchema = z.object({
   educationBundleId: optionalAssignmentIdSchema,
   boxTemplateId: optionalAssignmentIdSchema,
@@ -115,6 +237,28 @@ const ActivationCodeEducationAssignmentSchema = z.object({
 const DeleteClinicSchema = z.object({
   confirmationClinicTag: ClinicTagSchema,
 });
+
+const ActivationLifecycleReasonSchema = z.object({
+  reason: z.string().trim().min(5).max(1000),
+});
+
+const TIER1_SNAPSHOT_LOCKED_STATUSES = new Set<ActivationCodeStatus>([
+  ActivationCodeStatus.FINALIZED,
+  ActivationCodeStatus.PACKED,
+  ActivationCodeStatus.CLAIMED,
+]);
+
+const TIER1_PACKING_LIST_STATUSES = new Set<ActivationCodeStatus>([
+  ActivationCodeStatus.FINALIZED,
+  ActivationCodeStatus.PACKED,
+  ActivationCodeStatus.CLAIMED,
+]);
+
+const OWNER_ASSIGNMENT_CONFIGURABLE_STATUSES = new Set<ActivationCodeStatus>([
+  ActivationCodeStatus.ISSUED,
+  ActivationCodeStatus.DRAFT,
+  ActivationCodeStatus.RESET_FOR_REISSUE,
+]);
 
 type ClinicSummaryCounts = {
   adminUserCount: number;
@@ -335,6 +479,23 @@ function toAssignedEducationResponse(value: Prisma.JsonValue | null) {
   };
 }
 
+function readJsonRecord(value: Prisma.JsonValue | null | undefined) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readJsonArray(value: Prisma.JsonValue | null | undefined, key: string) {
+  const list = readJsonRecord(value)[key];
+  return Array.isArray(list) ? list : [];
+}
+
+function readJsonStringList(value: Prisma.JsonValue | null | undefined, key: string) {
+  return uniqueStrings(
+    readJsonArray(value, key).map((entry) => (typeof entry === "string" ? entry : null))
+  );
+}
+
 async function validateActivationCodeAssignment(input: z.infer<typeof ActivationCodeEducationAssignmentSchema>) {
   const [bundle, boxTemplate, modules] = await Promise.all([
     input.educationBundleId
@@ -413,6 +574,7 @@ type SafeCodeRecord = {
   claimedByUserId: string | null;
   batch: {
     boxType: string | null;
+    clinicOrderId: string | null;
     includedItemsJson?: Prisma.JsonValue | null;
     createdAt: Date;
     educationBundleId: string | null;
@@ -441,11 +603,25 @@ const ownerActivationCodeSelect = {
     select: {
       id: true,
       boxType: true,
+      clinicOrderId: true,
       includedItemsJson: true,
       educationBundleId: true,
       boxTemplateId: true,
       productMode: true,
       procedureName: true,
+      createdAt: true,
+    },
+  },
+  patientSnapshots: {
+    where: {
+      isCurrent: true,
+    },
+    orderBy: { version: "desc" },
+    take: 1,
+    select: {
+      id: true,
+      version: true,
+      productMode: true,
       createdAt: true,
     },
   },
@@ -471,6 +647,7 @@ async function toOwnerActivationCodeResponse(code: OwnerActivationCodeRecord) {
     clinicTag: code.clinicTag,
     batchId: code.batchId,
     boxType: code.batch?.boxType ?? null,
+    clinicOrderId: code.batch?.clinicOrderId ?? null,
     educationBundleId: code.educationBundleId ?? null,
     boxTemplateId: code.boxTemplateId ?? null,
     productMode: code.productMode,
@@ -484,6 +661,7 @@ async function toOwnerActivationCodeResponse(code: OwnerActivationCodeRecord) {
       ? {
           educationBundleId: code.batch.educationBundleId ?? null,
           boxTemplateId: code.batch.boxTemplateId ?? null,
+          clinicOrderId: code.batch.clinicOrderId ?? null,
           productMode: code.batch.productMode,
           procedureName: code.batch.procedureName ?? null,
         }
@@ -493,10 +671,61 @@ async function toOwnerActivationCodeResponse(code: OwnerActivationCodeRecord) {
     inheritedBoxItems: boxItemResolution.inheritedBoxItems,
     resolvedBoxItems: boxItemResolution.resolvedBoxItems,
     assignedEducation: toAssignedEducationResponse(code.assignedEducationJson),
+    currentSnapshot: code.patientSnapshots[0]
+      ? {
+          id: code.patientSnapshots[0].id,
+          version: code.patientSnapshots[0].version,
+          productMode: code.patientSnapshots[0].productMode,
+          createdAt: code.patientSnapshots[0].createdAt,
+        }
+      : null,
     createdAt: code.createdAt,
     claimedAt: code.claimedAt,
     claimedByUserId: code.claimedByUserId,
   };
+}
+
+function ensureActivationCodeCanBeAssigned(code: {
+  status: ActivationCodeStatus;
+  productMode: string;
+}) {
+  if (
+    code.productMode === "kit_only" &&
+    TIER1_SNAPSHOT_LOCKED_STATUSES.has(code.status)
+  ) {
+    throw new Tier1ActivationError("TIER1_SNAPSHOT_LOCKED", 409);
+  }
+}
+
+function markConfiguredIfEditable(
+  status: ActivationCodeStatus,
+  data: Prisma.ActivationCodeUpdateInput,
+) {
+  if (OWNER_ASSIGNMENT_CONFIGURABLE_STATUSES.has(status)) {
+    data.status = ActivationCodeStatus.CONFIGURED;
+  }
+}
+
+async function loadAssignableActivationCode(code: string) {
+  const activationCode = await prisma.activationCode.findUnique({
+    where: { code },
+    select: {
+      id: true,
+      code: true,
+      clinicTag: true,
+      status: true,
+      productMode: true,
+      assignedBoxItemsJson: true,
+      assignedEducationJson: true,
+    },
+  });
+
+  if (!activationCode) {
+    throw new Tier1ActivationError("ACTIVATION_CODE_NOT_FOUND", 404);
+  }
+
+  ensureActivationCodeCanBeAssigned(activationCode);
+  return activationCode;
 }
 
 function sortCodeRecords(records: SafeCodeRecord[]) {
@@ -592,6 +821,7 @@ async function getClinicCodes(args: {
       batch: {
         select: {
           boxType: true,
+          clinicOrderId: true,
           includedItemsJson: true,
           createdAt: true,
           educationBundleId: true,
@@ -667,6 +897,451 @@ async function getClinicActivitySummary(clinicTag: string) {
     reminderOutboxCount,
   };
 }
+
+function toClinicOrderResponse(order: {
+  id: string;
+  clinicTag: string;
+  orderNumber: string | null;
+  externalRef: string | null;
+  status: string;
+  requestedBoxCount: number | null;
+  productMode: string;
+  defaultEducationBundleId: string | null;
+  defaultBoxTemplateId: string | null;
+  defaultProcedureName: string | null;
+  requestedByName: string | null;
+  requestedByEmail: string | null;
+  notes: string | null;
+  archivedAt: Date | null;
+  createdByUserId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  _count?: { activationBatches: number };
+}) {
+  return {
+    id: order.id,
+    clinicTag: order.clinicTag,
+    orderNumber: order.orderNumber,
+    externalRef: order.externalRef,
+    status: order.status,
+    requestedBoxCount: order.requestedBoxCount,
+    productMode: order.productMode,
+    defaultEducationBundleId: order.defaultEducationBundleId,
+    defaultBoxTemplateId: order.defaultBoxTemplateId,
+    defaultProcedureName: order.defaultProcedureName,
+    requestedByName: order.requestedByName,
+    requestedByEmail: order.requestedByEmail,
+    notes: order.notes,
+    archivedAt: order.archivedAt,
+    createdByUserId: order.createdByUserId,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    batchCount: order._count?.activationBatches ?? 0,
+  };
+}
+
+ownerRouter.get("/clinic-orders", async (req: Request, res: Response) => {
+  const parsedQuery = ListClinicOrdersQuerySchema.safeParse(req.query);
+  if (!parsedQuery.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedQuery.error.issues });
+  }
+
+  const { clinicTag, status } = parsedQuery.data;
+  const limit = parsedQuery.data.limit ?? 250;
+
+  try {
+    const where: Prisma.ClinicOrderWhereInput = {
+      archivedAt: null,
+      ...(clinicTag ? { clinicTag } : {}),
+      ...(status ? { status } : {}),
+    };
+
+    const orders = await prisma.clinicOrder.findMany({
+      where,
+      take: limit,
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+      include: {
+        _count: {
+          select: {
+            activationBatches: true,
+          },
+        },
+      },
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_CLINIC_ORDERS_LISTED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: clinicTag ?? null,
+      metadata: {
+        count: orders.length,
+        status: status ?? null,
+        limit,
+      },
+    });
+
+    return res.status(200).json({
+      orders: orders.map(toClinicOrderResponse),
+    });
+  } catch (err) {
+    console.error("[OWNER_CLINIC_ORDERS_LIST_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.post("/clinic-orders", async (req: Request, res: Response) => {
+  const parsedBody = CreateClinicOrderSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+  }
+
+  const input = parsedBody.data;
+
+  try {
+    const clinic = await getClinicOr404(input.clinicTag);
+    if (!clinic) {
+      return res.status(404).json({ code: "CLINIC_NOT_FOUND" });
+    }
+
+    if (clinic.archivedAt) {
+      return res.status(409).json({ code: "CLINIC_ARCHIVED" });
+    }
+
+    const [bundle, boxTemplate] = await Promise.all([
+      input.defaultEducationBundleId
+        ? getEducationBundleById(input.defaultEducationBundleId, { includeInactive: true })
+        : Promise.resolve(null),
+      input.defaultBoxTemplateId
+        ? getBoxTemplateById(input.defaultBoxTemplateId, { includeInactive: true })
+        : Promise.resolve(null),
+    ]);
+
+    if (input.defaultEducationBundleId && !bundle) {
+      return res.status(400).json({ code: "EDUCATION_BUNDLE_NOT_FOUND" });
+    }
+
+    if (input.defaultBoxTemplateId && !boxTemplate) {
+      return res.status(400).json({ code: "BOX_TEMPLATE_NOT_FOUND" });
+    }
+
+    const order = await prisma.clinicOrder.create({
+      data: {
+        clinicTag: input.clinicTag,
+        orderNumber: input.orderNumber ?? null,
+        externalRef: input.externalRef ?? null,
+        status: "open",
+        requestedBoxCount: input.requestedBoxCount ?? null,
+        productMode: "kit_only",
+        defaultEducationBundleId: input.defaultEducationBundleId ?? null,
+        defaultBoxTemplateId: input.defaultBoxTemplateId ?? null,
+        defaultProcedureName: input.defaultProcedureName ?? null,
+        requestedByName: input.requestedByName ?? null,
+        requestedByEmail: input.requestedByEmail ?? null,
+        notes: input.notes ?? null,
+        createdByUserId: req.user!.id,
+      },
+      include: {
+        _count: {
+          select: {
+            activationBatches: true,
+          },
+        },
+      },
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_CLINIC_ORDER_CREATED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: input.clinicTag,
+      targetId: order.id,
+      targetType: "ClinicOrder",
+      metadata: {
+        requestedBoxCount: order.requestedBoxCount,
+        defaultEducationBundleId: order.defaultEducationBundleId,
+        defaultBoxTemplateId: order.defaultBoxTemplateId,
+        defaultProcedureName: order.defaultProcedureName,
+      },
+    });
+
+    return res.status(201).json({ order: toClinicOrderResponse(order) });
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return res.status(409).json({ code: "CLINIC_ORDER_CONFLICT" });
+    }
+
+    console.error("[OWNER_CLINIC_ORDER_CREATE_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.put("/clinic-orders/:orderId", async (req: Request, res: Response) => {
+  const parsedParams = ClinicOrderParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  const parsedBody = UpdateClinicOrderSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+  }
+
+  const input = parsedBody.data;
+
+  try {
+    const existing = await prisma.clinicOrder.findUnique({
+      where: { id: parsedParams.data.orderId },
+      select: {
+        id: true,
+        clinicTag: true,
+        archivedAt: true,
+      },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ code: "CLINIC_ORDER_NOT_FOUND" });
+    }
+
+    if (existing.archivedAt) {
+      return res.status(409).json({ code: "CLINIC_ORDER_ARCHIVED" });
+    }
+
+    const [bundle, boxTemplate] = await Promise.all([
+      input.defaultEducationBundleId
+        ? getEducationBundleById(input.defaultEducationBundleId, { includeInactive: true })
+        : Promise.resolve(null),
+      input.defaultBoxTemplateId
+        ? getBoxTemplateById(input.defaultBoxTemplateId, { includeInactive: true })
+        : Promise.resolve(null),
+    ]);
+
+    if (input.defaultEducationBundleId && !bundle) {
+      return res.status(400).json({ code: "EDUCATION_BUNDLE_NOT_FOUND" });
+    }
+
+    if (input.defaultBoxTemplateId && !boxTemplate) {
+      return res.status(400).json({ code: "BOX_TEMPLATE_NOT_FOUND" });
+    }
+
+    const data: Prisma.ClinicOrderUpdateInput = {};
+
+    if (Object.prototype.hasOwnProperty.call(input, "orderNumber")) {
+      data.orderNumber = input.orderNumber ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, "externalRef")) {
+      data.externalRef = input.externalRef ?? null;
+    }
+    if (input.status) data.status = input.status;
+    if (Object.prototype.hasOwnProperty.call(input, "requestedBoxCount")) {
+      data.requestedBoxCount = input.requestedBoxCount ?? null;
+    }
+    if (input.productMode) data.productMode = "kit_only";
+    if (Object.prototype.hasOwnProperty.call(input, "defaultEducationBundleId")) {
+      data.defaultEducationBundleId = input.defaultEducationBundleId ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, "defaultBoxTemplateId")) {
+      data.defaultBoxTemplateId = input.defaultBoxTemplateId ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, "defaultProcedureName")) {
+      data.defaultProcedureName = input.defaultProcedureName ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, "requestedByName")) {
+      data.requestedByName = input.requestedByName ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, "requestedByEmail")) {
+      data.requestedByEmail = input.requestedByEmail ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, "notes")) {
+      data.notes = input.notes ?? null;
+    }
+
+    const order = await prisma.clinicOrder.update({
+      where: { id: existing.id },
+      data,
+      include: {
+        _count: {
+          select: {
+            activationBatches: true,
+          },
+        },
+      },
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_CLINIC_ORDER_UPDATED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: order.clinicTag,
+      targetId: order.id,
+      targetType: "ClinicOrder",
+      metadata: {
+        status: order.status,
+        requestedBoxCount: order.requestedBoxCount,
+        defaultEducationBundleId: order.defaultEducationBundleId,
+        defaultBoxTemplateId: order.defaultBoxTemplateId,
+        defaultProcedureName: order.defaultProcedureName,
+      },
+    });
+
+    return res.status(200).json({ order: toClinicOrderResponse(order) });
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return res.status(409).json({ code: "CLINIC_ORDER_CONFLICT" });
+    }
+
+    console.error("[OWNER_CLINIC_ORDER_UPDATE_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.post("/clinic-orders/:orderId/generate-codes", async (req: Request, res: Response) => {
+  const parsedParams = ClinicOrderParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  const parsedBody = GenerateOrderCodesSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+  }
+
+  const input = parsedBody.data;
+
+  try {
+    const order = await prisma.clinicOrder.findUnique({
+      where: { id: parsedParams.data.orderId },
+      select: {
+        id: true,
+        clinicTag: true,
+        archivedAt: true,
+        requestedBoxCount: true,
+        defaultEducationBundleId: true,
+        defaultBoxTemplateId: true,
+        defaultProcedureName: true,
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ code: "CLINIC_ORDER_NOT_FOUND" });
+    }
+
+    if (order.archivedAt) {
+      return res.status(409).json({ code: "CLINIC_ORDER_ARCHIVED" });
+    }
+
+    const quantity = input.quantity ?? order.requestedBoxCount ?? 1;
+    const educationBundleId =
+      input.educationBundleId ?? order.defaultEducationBundleId ?? null;
+    const boxTemplateId =
+      input.boxTemplateId ?? order.defaultBoxTemplateId ?? null;
+    const procedureName =
+      input.procedureName ?? order.defaultProcedureName ?? null;
+
+    const validation = await validateActivationCodeAssignment({
+      educationBundleId,
+      boxTemplateId,
+      productMode: "kit_only",
+      procedureName,
+    });
+
+    if (!validation.ok) {
+      return res.status(400).json({
+        code: validation.code,
+        message: validation.message,
+      });
+    }
+
+    const batch = await createActivationBatchWithCodes({
+      clinicTag: order.clinicTag,
+      quantity,
+      boxType: input.boxType ?? null,
+      includedItems: input.includedItems ?? null,
+      educationBundleId,
+      boxTemplateId,
+      clinicOrderId: order.id,
+      productMode: "kit_only",
+      procedureName,
+      createdByUserId: req.user!.id,
+    });
+
+    await prisma.clinicOrder.update({
+      where: { id: order.id },
+      data: {
+        status: "in_fulfillment",
+      },
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_CLINIC_ORDER_CODES_GENERATED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: order.clinicTag,
+      targetId: order.id,
+      targetType: "ClinicOrder",
+      metadata: {
+        batchId: batch.id,
+        quantity,
+        educationBundleId,
+        boxTemplateId,
+        procedureName,
+      },
+    });
+
+    return res.status(201).json({
+      batch: {
+        id: batch.id,
+        clinicTag: batch.clinicTag,
+        quantity: batch.quantity,
+        boxType: batch.boxType,
+        clinicOrderId: batch.clinicOrderId,
+        includedItems: Array.isArray(batch.includedItemsJson) ? batch.includedItemsJson : [],
+        educationBundleId: batch.educationBundleId,
+        boxTemplateId: batch.boxTemplateId,
+        productMode: batch.productMode,
+        procedureName: batch.procedureName,
+        createdAt: batch.createdAt,
+      },
+    });
+  } catch (err) {
+    console.error("[OWNER_CLINIC_ORDER_CODE_GENERATION_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
 
 ownerRouter.post("/clinics", async (req: Request, res: Response) => {
   const parsed = CreateOwnerClinicSchema.safeParse(req.body);
@@ -1150,7 +1825,11 @@ ownerRouter.post("/clinics/:clinicTag/deactivate", async (req: Request, res: Res
             in: [
               ActivationCodeStatus.ISSUED,
               ActivationCodeStatus.DRAFT,
+              ActivationCodeStatus.CONFIGURED,
               ActivationCodeStatus.APPROVED,
+              ActivationCodeStatus.FINALIZED,
+              ActivationCodeStatus.PACKED,
+              ActivationCodeStatus.RESET_FOR_REISSUE,
             ],
           },
         },
@@ -1291,6 +1970,9 @@ ownerRouter.delete("/clinics/:clinicTag", async (req: Request, res: Response) =>
       const activationBatches = await tx.activationBatch.deleteMany({
         where: { clinicTag },
       });
+      const clinicOrders = await tx.clinicOrder.deleteMany({
+        where: { clinicTag },
+      });
       const recoveryTemplates = await tx.recoveryPlanTemplate.deleteMany({
         where: { clinicTag },
       });
@@ -1306,6 +1988,7 @@ ownerRouter.delete("/clinics/:clinicTag", async (req: Request, res: Response) =>
 
       return {
         clinicUsers: clinicUsers.count,
+        clinicOrders: clinicOrders.count,
         activationCodes: activationCodes.count,
         activationBatches: activationBatches.count,
         recoveryTemplates: recoveryTemplates.count,
@@ -1401,6 +2084,7 @@ ownerRouter.get("/clinics/:clinicTag", async (req: Request, res: Response) => {
           clinicTag: true,
           quantity: true,
           boxType: true,
+          clinicOrderId: true,
           includedItemsJson: true,
           educationBundleId: true,
           boxTemplateId: true,
@@ -1445,6 +2129,7 @@ ownerRouter.get("/clinics/:clinicTag", async (req: Request, res: Response) => {
           clinicTag: batch.clinicTag,
           quantity: batch.quantity,
           boxType: batch.boxType,
+          clinicOrderId: batch.clinicOrderId ?? null,
           includedItems: toIncludedItems(batch.includedItemsJson),
           educationBundleId: batch.educationBundleId ?? null,
           boxTemplateId: batch.boxTemplateId ?? null,
@@ -1533,6 +2218,7 @@ ownerRouter.get("/clinics/:clinicTag/codes", async (req: Request, res: Response)
         status: code.status,
         clinicTag: code.clinicTag,
         batchId: code.batchId,
+        clinicOrderId: code.batch?.clinicOrderId ?? null,
         boxType: code.batch?.boxType ?? null,
         educationBundleId: code.educationBundleId ?? code.batch?.educationBundleId ?? null,
         boxTemplateId: code.boxTemplateId ?? code.batch?.boxTemplateId ?? null,
@@ -1605,6 +2291,7 @@ ownerRouter.get("/activation-codes", async (req: Request, res: Response) => {
         batch: {
           select: {
             boxType: true,
+            clinicOrderId: true,
             createdAt: true,
             educationBundleId: true,
             boxTemplateId: true,
@@ -1637,6 +2324,7 @@ ownerRouter.get("/activation-codes", async (req: Request, res: Response) => {
         status: code.status,
         clinicTag: code.clinicTag,
         batchId: code.batchId,
+        clinicOrderId: code.batch?.clinicOrderId ?? null,
         boxType: code.batch?.boxType ?? null,
         educationBundleId: code.educationBundleId ?? code.batch?.educationBundleId ?? null,
         boxTemplateId: code.boxTemplateId ?? code.batch?.boxTemplateId ?? null,
@@ -1654,6 +2342,773 @@ ownerRouter.get("/activation-codes", async (req: Request, res: Response) => {
       message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
       path: req.path,
       method: req.method,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.post("/activation-codes/:code/finalize", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  try {
+    const result = await finalizeTier1ActivationCode({
+      code: parsedParams.data.code,
+      actorUserId: req.user!.id,
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_TIER1_ACTIVATION_FINALIZED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: result.activationCode.clinicTag,
+      targetId: result.activationCode.code,
+      targetType: "ActivationCode",
+      metadata: {
+        snapshotId: result.snapshot.id,
+        snapshotVersion: result.snapshot.version,
+        productMode: result.activationCode.productMode,
+      },
+    });
+
+    return res.status(200).json({
+      activationCode: result.activationCode,
+      snapshot: {
+        id: result.snapshot.id,
+        version: result.snapshot.version,
+        isCurrent: result.snapshot.isCurrent,
+        productMode: result.snapshot.productMode,
+        clinicTag: result.snapshot.clinicTag,
+        procedureName: result.snapshot.procedureName,
+        educationBundleId: result.snapshot.educationBundleId,
+        boxTemplateId: result.snapshot.boxTemplateId,
+        createdAt: result.snapshot.createdAt,
+      },
+    });
+  } catch (err) {
+    if (err instanceof Tier1ActivationError) {
+      return res.status(err.statusCode).json({ code: err.code });
+    }
+
+    console.error("[OWNER_TIER1_ACTIVATION_FINALIZE_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.post("/activation-codes/:code/pack", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  try {
+    const activationCode = await markTier1ActivationCodePacked({
+      code: parsedParams.data.code,
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_TIER1_ACTIVATION_PACKED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: activationCode.clinicTag,
+      targetId: activationCode.code,
+      targetType: "ActivationCode",
+      metadata: {
+        productMode: activationCode.productMode,
+        packedAt: activationCode.packedAt,
+      },
+    });
+
+    return res.status(200).json({ activationCode });
+  } catch (err) {
+    if (err instanceof Tier1ActivationError) {
+      return res.status(err.statusCode).json({ code: err.code });
+    }
+
+    console.error("[OWNER_TIER1_ACTIVATION_PACK_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.post("/activation-codes/:code/reset-for-reissue", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  const parsedBody = ActivationLifecycleReasonSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+  }
+
+  try {
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_TIER1_ACTIVATION_RESET_FOR_REISSUE_REQUESTED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      targetId: parsedParams.data.code,
+      targetType: "ActivationCode",
+      metadata: {
+        reason: parsedBody.data.reason,
+      },
+      severity: AuditSeverity.CRITICAL,
+    });
+
+    const activationCode = await resetTier1ActivationCodeForReissue({
+      code: parsedParams.data.code,
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_TIER1_ACTIVATION_RESET_FOR_REISSUE_COMPLETED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: activationCode.clinicTag,
+      targetId: activationCode.code,
+      targetType: "ActivationCode",
+      metadata: {
+        reason: parsedBody.data.reason,
+        resetForReissueAt: activationCode.resetForReissueAt,
+      },
+    });
+
+    return res.status(200).json({ activationCode });
+  } catch (err) {
+    if (err instanceof Tier1ActivationError) {
+      return res.status(err.statusCode).json({ code: err.code });
+    }
+
+    console.error("[OWNER_TIER1_ACTIVATION_RESET_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.get("/activation-codes/:code/packing-list", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  try {
+    const activationCode = await prisma.activationCode.findUnique({
+      where: { code: parsedParams.data.code },
+      select: {
+        id: true,
+        code: true,
+        status: true,
+        clinicTag: true,
+        batchId: true,
+        educationBundleId: true,
+        boxTemplateId: true,
+        productMode: true,
+        procedureName: true,
+        finalizedAt: true,
+        packedAt: true,
+        claimedAt: true,
+        claimedByUserId: true,
+        createdAt: true,
+        batch: {
+          select: {
+            id: true,
+            boxType: true,
+            clinicOrderId: true,
+            educationBundleId: true,
+            boxTemplateId: true,
+            productMode: true,
+            procedureName: true,
+            createdAt: true,
+            clinicOrder: {
+              select: {
+                id: true,
+                orderNumber: true,
+                externalRef: true,
+                status: true,
+                requestedBoxCount: true,
+                createdAt: true,
+              },
+            },
+          },
+        },
+        clinicConfig: {
+          select: {
+            clinicTag: true,
+            name: true,
+          },
+        },
+        patientSnapshots: {
+          where: { isCurrent: true },
+          orderBy: { version: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            version: true,
+            isCurrent: true,
+            productMode: true,
+            clinicTag: true,
+            procedureName: true,
+            educationBundleId: true,
+            boxTemplateId: true,
+            boxItemsJson: true,
+            guidesJson: true,
+            clinicNotesJson: true,
+            videosJson: true,
+            sourceMetadataJson: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!activationCode) {
+      return res.status(404).json({ code: "NOT_FOUND" });
+    }
+
+    if (activationCode.productMode !== "kit_only") {
+      return res.status(400).json({ code: "NOT_TIER1_ACTIVATION_CODE" });
+    }
+
+    if (!TIER1_PACKING_LIST_STATUSES.has(activationCode.status)) {
+      return res.status(409).json({
+        code: "PACKING_LIST_NOT_READY",
+        message: "Finalize this Tier 1 code before generating a fulfillment packing list.",
+      });
+    }
+
+    const snapshot = activationCode.patientSnapshots[0];
+    if (!snapshot) {
+      return res.status(409).json({
+        code: "PATIENT_SNAPSHOT_NOT_FOUND",
+        message: "This code is finalized but does not have a current PatientSnapshot.",
+      });
+    }
+
+    const boxItems = readJsonArray(snapshot.boxItemsJson, "items");
+    const guides = readJsonArray(snapshot.guidesJson, "libraryModules");
+    const videos = readJsonArray(snapshot.videosJson, "videos");
+    const assignedGuideIds = readJsonStringList(snapshot.guidesJson, "assignedGuideIds");
+    const recommendedGuideIds = readJsonStringList(snapshot.guidesJson, "recommendedGuideIds");
+    const procedureGuideIds = readJsonStringList(snapshot.guidesJson, "procedureGuideIds");
+    const boxItemGuideIds = readJsonStringList(snapshot.guidesJson, "boxItemGuideIds");
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_TIER1_PACKING_LIST_VIEWED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: activationCode.clinicTag,
+      targetId: activationCode.code,
+      targetType: "ActivationCode",
+      metadata: {
+        snapshotId: snapshot.id,
+        snapshotVersion: snapshot.version,
+        boxItemCount: boxItems.length,
+        guideCount: guides.length,
+      },
+    });
+
+    return res.status(200).json({
+      source: "patient_snapshot",
+      activationCode: {
+        id: activationCode.id,
+        code: activationCode.code,
+        status: activationCode.status,
+        clinicTag: activationCode.clinicTag,
+        clinicName: activationCode.clinicConfig?.name ?? null,
+        batchId: activationCode.batchId,
+        clinicOrderId: activationCode.batch?.clinicOrderId ?? null,
+        productMode: activationCode.productMode,
+        procedureName: snapshot.procedureName ?? activationCode.procedureName ?? null,
+        educationBundleId: snapshot.educationBundleId ?? activationCode.educationBundleId ?? activationCode.batch?.educationBundleId ?? null,
+        boxTemplateId: snapshot.boxTemplateId ?? activationCode.boxTemplateId ?? activationCode.batch?.boxTemplateId ?? null,
+        finalizedAt: activationCode.finalizedAt,
+        packedAt: activationCode.packedAt,
+        claimedAt: activationCode.claimedAt,
+        claimedByUserId: activationCode.claimedByUserId,
+        createdAt: activationCode.createdAt,
+      },
+      clinicOrder: activationCode.batch?.clinicOrder
+        ? {
+            id: activationCode.batch.clinicOrder.id,
+            orderNumber: activationCode.batch.clinicOrder.orderNumber,
+            externalRef: activationCode.batch.clinicOrder.externalRef,
+            status: activationCode.batch.clinicOrder.status,
+            requestedBoxCount: activationCode.batch.clinicOrder.requestedBoxCount,
+            createdAt: activationCode.batch.clinicOrder.createdAt,
+          }
+        : null,
+      batch: activationCode.batch
+        ? {
+            id: activationCode.batch.id,
+            boxType: activationCode.batch.boxType,
+            clinicOrderId: activationCode.batch.clinicOrderId,
+            educationBundleId: activationCode.batch.educationBundleId,
+            boxTemplateId: activationCode.batch.boxTemplateId,
+            productMode: activationCode.batch.productMode,
+            procedureName: activationCode.batch.procedureName,
+            createdAt: activationCode.batch.createdAt,
+          }
+        : null,
+      snapshot: {
+        id: snapshot.id,
+        version: snapshot.version,
+        isCurrent: snapshot.isCurrent,
+        status: snapshot.isCurrent ? "current" : "archived",
+        productMode: snapshot.productMode,
+        clinicTag: snapshot.clinicTag,
+        procedureName: snapshot.procedureName,
+        educationBundleId: snapshot.educationBundleId,
+        boxTemplateId: snapshot.boxTemplateId,
+        createdAt: snapshot.createdAt,
+      },
+      fulfillment: {
+        boxItems,
+        guides,
+        assignedGuideIds,
+        recommendedGuideIds,
+        procedureGuideIds,
+        boxItemGuideIds,
+        clinicNotes: readJsonRecord(snapshot.clinicNotesJson),
+        videos,
+        sourceMetadata: readJsonRecord(snapshot.sourceMetadataJson),
+        counts: {
+          boxItems: boxItems.length,
+          guides: guides.length,
+          assignedGuides: assignedGuideIds.length,
+          procedureGuides: procedureGuideIds.length,
+          boxItemGuides: boxItemGuideIds.length,
+          videos: videos.length,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("[OWNER_TIER1_PACKING_LIST_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.get("/activation-codes/:code/snapshot-preview", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  try {
+    const preview = await previewTier1ActivationSnapshot({
+      code: parsedParams.data.code,
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_TIER1_SNAPSHOT_PREVIEWED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: preview.activationCode.clinicTag,
+      targetId: preview.activationCode.code,
+      targetType: "ActivationCode",
+      metadata: {
+        boxItemCount: preview.counts.boxItems,
+        guideCount: preview.counts.guides,
+      },
+    });
+
+    return res.status(200).json(preview);
+  } catch (err) {
+    if (err instanceof Tier1ActivationError) {
+      return res.status(err.statusCode).json({ code: err.code });
+    }
+
+    console.error("[OWNER_TIER1_SNAPSHOT_PREVIEW_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.get("/activation-codes/:code/validate-finalization", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  try {
+    const validation = await validateTier1ActivationSnapshot({
+      code: parsedParams.data.code,
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_TIER1_FINALIZATION_VALIDATED",
+      status: validation.valid ? AuditStatus.SUCCESS : AuditStatus.FAILURE,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: validation.preview?.activationCode.clinicTag ?? null,
+      targetId: parsedParams.data.code,
+      targetType: "ActivationCode",
+      metadata: {
+        valid: validation.valid,
+        issueCodes: validation.issues.map((issue) => issue.code),
+      },
+    });
+
+    return res.status(200).json(validation);
+  } catch (err) {
+    console.error("[OWNER_TIER1_FINALIZATION_VALIDATE_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.post("/activation-codes/:code/apply-box-template", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  const parsedBody = ApplyBoxTemplateSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+  }
+
+  try {
+    const [activationCode, boxTemplate] = await Promise.all([
+      loadAssignableActivationCode(parsedParams.data.code),
+      getBoxTemplateById(parsedBody.data.boxTemplateId, { includeInactive: true }),
+    ]);
+
+    if (!boxTemplate) {
+      return res.status(404).json({ code: "BOX_TEMPLATE_NOT_FOUND" });
+    }
+
+    const data: Prisma.ActivationCodeUpdateInput = {
+      boxTemplateId: boxTemplate.id,
+    };
+    markConfiguredIfEditable(activationCode.status, data);
+
+    const updated = await prisma.activationCode.update({
+      where: { id: activationCode.id },
+      data,
+      select: ownerActivationCodeSelect,
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_ACTIVATION_CODE_BOX_TEMPLATE_APPLIED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: activationCode.clinicTag,
+      targetId: activationCode.code,
+      targetType: "ActivationCode",
+      metadata: {
+        boxTemplateId: boxTemplate.id,
+      },
+    });
+
+    return res.status(200).json({
+      activationCode: await toOwnerActivationCodeResponse(updated),
+    });
+  } catch (err) {
+    if (err instanceof Tier1ActivationError) {
+      return res.status(err.statusCode).json({ code: err.code });
+    }
+
+    console.error("[OWNER_ACTIVATION_CODE_BOX_TEMPLATE_APPLY_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.post("/activation-codes/:code/apply-education-bundle", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  const parsedBody = ApplyEducationBundleSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+  }
+
+  try {
+    const [activationCode, educationBundle] = await Promise.all([
+      loadAssignableActivationCode(parsedParams.data.code),
+      getEducationBundleById(parsedBody.data.educationBundleId, { includeInactive: true }),
+    ]);
+
+    if (!educationBundle) {
+      return res.status(404).json({ code: "EDUCATION_BUNDLE_NOT_FOUND" });
+    }
+
+    const data: Prisma.ActivationCodeUpdateInput = {
+      educationBundleId: educationBundle.id,
+      ...(educationBundle.procedureName ? { procedureName: educationBundle.procedureName } : {}),
+    };
+    markConfiguredIfEditable(activationCode.status, data);
+
+    const updated = await prisma.activationCode.update({
+      where: { id: activationCode.id },
+      data,
+      select: ownerActivationCodeSelect,
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_ACTIVATION_CODE_EDUCATION_BUNDLE_APPLIED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: activationCode.clinicTag,
+      targetId: activationCode.code,
+      targetType: "ActivationCode",
+      metadata: {
+        educationBundleId: educationBundle.id,
+        procedureName: educationBundle.procedureName,
+      },
+    });
+
+    return res.status(200).json({
+      activationCode: await toOwnerActivationCodeResponse(updated),
+    });
+  } catch (err) {
+    if (err instanceof Tier1ActivationError) {
+      return res.status(err.statusCode).json({ code: err.code });
+    }
+
+    console.error("[OWNER_ACTIVATION_CODE_EDUCATION_BUNDLE_APPLY_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.post("/activation-codes/:code/box-items/inline", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  const parsedBody = InlineBoxItemAssignmentSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+  }
+
+  try {
+    const activationCode = await loadAssignableActivationCode(parsedParams.data.code);
+    const input = parsedBody.data;
+    const boxItem = await createBoxItem({
+      key: input.key,
+      name: input.name,
+      category: input.category,
+      description: input.description,
+      instructions: input.instructions,
+      defaultEducationModuleId: input.defaultEducationModuleId ?? null,
+      imageUrl: input.imageUrl,
+      active: input.active,
+      displayOrder: input.displayOrder,
+    });
+    const existingBoxItems = parseAssignedBoxItemOverrides(
+      activationCode.assignedBoxItemsJson
+    );
+    const data: Prisma.ActivationCodeUpdateInput = {
+      assignedBoxItemsJson: serializeAssignedBoxItemOverrides({
+        items: [
+          ...existingBoxItems.items,
+          {
+            key: boxItem.key,
+            label: boxItem.name,
+            note: input.note ?? null,
+          },
+        ],
+        removedItemKeys: existingBoxItems.removedItemKeys,
+      }),
+    };
+    markConfiguredIfEditable(activationCode.status, data);
+
+    const updated = await prisma.activationCode.update({
+      where: { id: activationCode.id },
+      data,
+      select: ownerActivationCodeSelect,
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_ACTIVATION_CODE_INLINE_BOX_ITEM_CREATED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: activationCode.clinicTag,
+      targetId: activationCode.code,
+      targetType: "ActivationCode",
+      metadata: {
+        boxItemId: boxItem.id,
+        boxItemKey: boxItem.key,
+      },
+    });
+
+    return res.status(201).json({
+      boxItem,
+      activationCode: await toOwnerActivationCodeResponse(updated),
+    });
+  } catch (err) {
+    if (err instanceof Tier1ActivationError) {
+      return res.status(err.statusCode).json({ code: err.code });
+    }
+
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return res.status(409).json({ code: "BOX_ITEM_KEY_EXISTS" });
+    }
+
+    console.error("[OWNER_ACTIVATION_CODE_INLINE_BOX_ITEM_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
+    });
+    return res.status(500).json({ code: "INTERNAL_ERROR" });
+  }
+});
+
+ownerRouter.post("/activation-codes/:code/education-guides/inline", async (req: Request, res: Response) => {
+  const parsedParams = ActivationCodeParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedParams.error.issues });
+  }
+
+  const parsedBody = InlineGuideAssignmentSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ code: "VALIDATION_ERROR", issues: parsedBody.error.issues });
+  }
+
+  try {
+    const activationCode = await loadAssignableActivationCode(parsedParams.data.code);
+    const input = parsedBody.data;
+    const guide = await createCustomLibraryModule({
+      title: input.title,
+      summary: input.summary,
+      body: input.body,
+      moduleType: input.moduleType,
+      videoUrl: input.videoUrl,
+      thumbnailUrl: input.thumbnailUrl,
+      categories: input.categories,
+      procedureNames: input.procedureNames,
+      boxItemKeys: input.boxItemKeys,
+      redFlags: input.redFlags,
+      requiredBoxItems: input.requiredBoxItems,
+      recommended: input.recommended,
+      featured: input.featured,
+      recommendationLabel: input.recommendationLabel,
+      recommendationOrder: input.recommendationOrder,
+      active: input.active,
+      displayOrder: input.displayOrder,
+    });
+    const existingEducation = toAssignedEducationResponse(
+      activationCode.assignedEducationJson
+    );
+    const recommendedGuideIds = input.assignAsRecommended
+      ? uniqueStrings([...existingEducation.recommendedGuideIds, guide.id])
+      : existingEducation.recommendedGuideIds;
+    const data: Prisma.ActivationCodeUpdateInput = {
+      assignedEducationJson: {
+        guideIds: uniqueStrings([...existingEducation.guideIds, guide.id]),
+        recommendedGuideIds,
+      } as Prisma.InputJsonValue,
+    };
+    markConfiguredIfEditable(activationCode.status, data);
+
+    const updated = await prisma.activationCode.update({
+      where: { id: activationCode.id },
+      data,
+      select: ownerActivationCodeSelect,
+    });
+
+    await AuditService.log({
+      req,
+      category: AuditCategory.ADMIN,
+      type: "OWNER_ACTIVATION_CODE_INLINE_GUIDE_CREATED",
+      status: AuditStatus.SUCCESS,
+      userId: req.user!.id,
+      role: req.user!.role,
+      clinicTag: activationCode.clinicTag,
+      targetId: activationCode.code,
+      targetType: "ActivationCode",
+      metadata: {
+        guideId: guide.id,
+        assignAsRecommended: input.assignAsRecommended ?? false,
+      },
+    });
+
+    return res.status(201).json({
+      guide,
+      activationCode: await toOwnerActivationCodeResponse(updated),
+    });
+  } catch (err) {
+    if (err instanceof Tier1ActivationError) {
+      return res.status(err.statusCode).json({ code: err.code });
+    }
+
+    console.error("[OWNER_ACTIVATION_CODE_INLINE_GUIDE_FAILED]", {
+      message: err instanceof Error ? err.message : "UNKNOWN_ERROR",
+      path: req.path,
+      method: req.method,
+      targetId: parsedParams.data.code,
     });
     return res.status(500).json({ code: "INTERNAL_ERROR" });
   }
@@ -1722,11 +3177,28 @@ ownerRouter.put("/activation-codes/:code", async (req: Request, res: Response) =
   try {
     const existing = await prisma.activationCode.findUnique({
       where: { code: parsedParams.data.code },
-      select: { id: true, code: true, clinicTag: true, assignedBoxItemsJson: true },
+      select: {
+        id: true,
+        code: true,
+        clinicTag: true,
+        status: true,
+        productMode: true,
+        assignedBoxItemsJson: true,
+      },
     });
 
     if (!existing) {
       return res.status(404).json({ code: "NOT_FOUND" });
+    }
+
+    if (
+      existing.productMode === "kit_only" &&
+      TIER1_SNAPSHOT_LOCKED_STATUSES.has(existing.status)
+    ) {
+      return res.status(409).json({
+        code: "TIER1_SNAPSHOT_LOCKED",
+        message: "Create a new snapshot version or reset for reissue before changing finalized Tier 1 assignments.",
+      });
     }
 
     const body = parsedBody.data;
@@ -1774,6 +3246,10 @@ ownerRouter.put("/activation-codes/:code", async (req: Request, res: Response) =
               ),
             } as Prisma.InputJsonValue)
           : Prisma.JsonNull;
+    }
+
+    if (OWNER_ASSIGNMENT_CONFIGURABLE_STATUSES.has(existing.status)) {
+      data.status = ActivationCodeStatus.CONFIGURED;
     }
 
     const updated = await prisma.activationCode.update({

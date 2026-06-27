@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { setApiNavigator } from "@/api/client";
+import { api, setApiNavigator } from "@/api/client";
 
 import Login from "@/pages/Login.tsx";
 import Signup from "@/pages/Signup.tsx";
@@ -8,7 +8,6 @@ import Verify from "@/pages/Verify.tsx";
 import Consent from "@/pages/Consent.tsx";
 import Onboarding from "@/pages/Onboarding.tsx";
 import PatientHome from "@/pages/PatientHome.tsx";
-import MyBox from "@/pages/MyBox.tsx";
 import MyBoxItemDetail from "@/pages/MyBoxItemDetail.tsx";
 import MedicalHub from "@/pages/MedicalHub.tsx";
 import MedicalLibraryCategory from "@/pages/MedicalLibraryCategory.tsx";
@@ -20,6 +19,7 @@ import ClinicPatientDetail from "@/pages/ClinicPatientDetail.tsx";
 import OwnerClinics from "@/pages/OwnerClinics.tsx";
 import OwnerClinicDetail from "@/pages/OwnerClinicDetail.tsx";
 import { RoleGuard } from "@/components/auth/RoleGuard";
+import type { RecoveryLibraryHomePayload } from "@/types";
 
 function NavigatorBridge() {
   const navigate = useNavigate();
@@ -45,6 +45,53 @@ function AppShell({ children }: { children: React.ReactNode }) {
       </div>
     </div>
   );
+}
+
+function PatientTrackerRoute() {
+  const allowed = useAllowedTracker();
+
+  if (allowed === null) {
+    return (
+      <div className="mx-auto w-full max-w-3xl rounded-[30px] border border-black/5 bg-white/95 p-5 text-sm text-muted-foreground shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
+        Loading recovery tools…
+      </div>
+    );
+  }
+
+  if (!allowed) {
+    return <Navigate to="/medical-hub?tab=procedure" replace />;
+  }
+
+  return <RecoveryLog />;
+}
+
+function useAllowedTracker() {
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadProductMode() {
+      try {
+        const payload = await api<RecoveryLibraryHomePayload>("/education/library", {
+          method: "GET",
+        });
+        if (!active) return;
+        setAllowed(payload.personalized.productMode !== "kit_only");
+      } catch {
+        if (!active) return;
+        setAllowed(true);
+      }
+    }
+
+    void loadProductMode();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return allowed;
 }
 
 export default function App() {
@@ -74,7 +121,7 @@ export default function App() {
             path="/my-box"
             element={
               <RoleGuard allow={["PATIENT"]} requirePatientReady>
-                <MyBox />
+                <Navigate to="/medical-hub?tab=kit" replace />
               </RoleGuard>
             }
           />
@@ -154,7 +201,7 @@ export default function App() {
             path="/log"
             element={
               <RoleGuard allow={["PATIENT"]} requirePatientReady>
-                <RecoveryLog />
+                <PatientTrackerRoute />
               </RoleGuard>
             }
           />

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, BookOpenText, Loader2, Search, ShieldAlert } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, ArrowRight, Loader2, Search, ShieldAlert } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { api, ApiError } from "@/api/client";
 import { RecoveryGuideCard } from "@/components/library/RecoveryGuideCard";
@@ -8,6 +8,7 @@ import {
   RECOVERY_LIBRARY_CATEGORY_META,
   recoveryModuleTypeLabel,
 } from "@/components/library/recoveryLibraryMeta";
+import { SegmentedControl } from "@/components/shared/SegmentedControl";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,27 @@ const SUGGESTED_TOPICS = [
   "ice pack",
   "when to call your clinic",
 ];
+
+type MedicalHubTab = "procedure" | "kit" | "library";
+
+const MEDICAL_HUB_TABS: Array<{ label: string; value: MedicalHubTab }> = [
+  { label: "My Procedure", value: "procedure" },
+  { label: "My Kit", value: "kit" },
+  { label: "Full Library", value: "library" },
+];
+
+function isMedicalHubTab(value: string | null): value is MedicalHubTab {
+  return value === "procedure" || value === "kit" || value === "library";
+}
+
+function uniqueGuides(guides: RecoveryLibraryGuideSummary[]) {
+  const seen = new Set<string>();
+  return guides.filter((guide) => {
+    if (seen.has(guide.id)) return false;
+    seen.add(guide.id);
+    return true;
+  });
+}
 
 function formatError(error: unknown) {
   const apiError = error as Partial<ApiError>;
@@ -259,6 +281,7 @@ function BoxItemsSection({
 
 export default function MedicalHub() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [libraryHome, setLibraryHome] = useState<RecoveryLibraryHomePayload | null>(null);
   const [libraryLoading, setLibraryLoading] = useState(true);
@@ -339,6 +362,43 @@ export default function MedicalHub() {
   const commonTopics = libraryHome?.sections["common-recovery-topics"] ?? [];
   const videos = libraryHome?.sections.videos ?? [];
   const clinicInstructions = libraryHome?.sections["clinic-instructions"] ?? [];
+  const procedureName = libraryHome?.personalized.procedureName ?? null;
+  const assignment = libraryHome?.personalized.assignment ?? null;
+  const procedureTabGuides = useMemo(() => {
+    const assignedGuides = assignment?.hasCodeEducationOverrides
+      ? recommendedGuides
+      : recommendedGuides.filter(
+          (guide) =>
+            guide.categories.includes("procedure-guides") ||
+            guide.procedureNames.length > 0
+        );
+
+    return uniqueGuides([...assignedGuides, ...personalizedProcedureGuides]);
+  }, [assignment?.hasCodeEducationOverrides, personalizedProcedureGuides, recommendedGuides]);
+  const hasProcedureTabContent =
+    procedureTabGuides.length > 0 || Boolean(assignment?.educationBundle);
+  const hasKitTabContent =
+    personalizedBoxItems.length > 0 || personalizedBoxGuides.length > 0;
+  const defaultTab: MedicalHubTab = hasProcedureTabContent
+    ? "procedure"
+    : hasKitTabContent
+      ? "kit"
+      : "library";
+  const requestedTab = searchParams.get("tab");
+  const activeTab: MedicalHubTab = isMedicalHubTab(requestedTab)
+    ? requestedTab
+    : defaultTab;
+
+  useEffect(() => {
+    if (libraryLoading) return;
+    if (isMedicalHubTab(searchParams.get("tab"))) return;
+
+    setSearchParams({ tab: defaultTab }, { replace: true });
+  }, [defaultTab, libraryLoading, searchParams, setSearchParams]);
+
+  function setActiveTab(tab: MedicalHubTab) {
+    setSearchParams({ tab });
+  }
 
   const isBlockedState = !loading && !error && !!results?.blocked;
   const isNoMatchState =
@@ -350,155 +410,122 @@ export default function MedicalHub() {
   const isSuccessState =
     !loading && !error && !results?.blocked && (results?.results.length ?? 0) > 0;
 
-  return (
-    <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-7">
-      <header className="space-y-4">
-        <Button
-          type="button"
-          variant="ghost"
-          className="h-9 self-start rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
-          onClick={() => navigate("/home")}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Button>
-
-        <Card className="overflow-hidden rounded-[34px] border border-black/5 bg-white/95 shadow-[0_16px_42px_rgba(15,23,42,0.06)]">
-          <div className="grid gap-6 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.14),_transparent_30%),linear-gradient(180deg,rgba(248,250,252,0.98),rgba(255,255,255,0.96))] p-5 sm:p-7 lg:grid-cols-[1.4fr_0.9fr]">
-            <div className="space-y-4">
-              <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-800">
-                Digital Recovery Library
-              </p>
-              <div className="space-y-2">
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                  Visual, simple recovery guidance for Frederick patients
-                </h1>
-                <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
-                  Browse guides by category, open step-by-step instructions, and keep the current
-                  recovery search when you want a quick answer.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {libraryHome?.personalized.procedureName ? (
-                  <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm text-emerald-900">
-                    Procedure: {libraryHome.personalized.procedureName}
-                  </div>
-                ) : null}
-                {libraryHome?.personalized.boxItems.length ? (
-                  <div className="rounded-full border border-stone-200 bg-stone-100 px-3 py-1.5 text-sm text-stone-700">
-                    {libraryHome.personalized.boxItems.length} recovery kit items linked
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="rounded-[28px] border border-emerald-100/80 bg-white/85 p-5">
-              <div className="flex items-start gap-3">
-                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
-                  <BookOpenText className="h-5 w-5" />
-                </div>
-                <div className="space-y-1">
-                  <div className="text-sm font-semibold text-foreground">
-                    Search the approved library
-                  </div>
-                  <p className="text-sm leading-6 text-muted-foreground">
-                    Try wound care, swelling, showering, pain medicine, or walking.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void runSearch(query);
-                      }
-                    }}
-                    placeholder="Search recovery topics"
-                    className="h-12 rounded-2xl border-black/8 bg-stone-50/60 pl-11 text-[15px] shadow-none focus-visible:ring-emerald-600"
-                  />
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {SUGGESTED_TOPICS.slice(0, 4).map((topic) => (
-                    <Button
-                      key={topic}
-                      type="button"
-                      variant="outline"
-                      className="h-9 rounded-full border-emerald-100 bg-emerald-50/50 px-3 text-sm text-emerald-900 hover:bg-emerald-100"
-                      onClick={() => void runSearch(topic)}
-                    >
-                      {topic}
-                    </Button>
-                  ))}
-                </div>
-
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    className="h-10 rounded-full px-4"
-                    onClick={() => void runSearch(query)}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Searching…
-                      </>
-                    ) : (
-                      <>
-                        <Search className="h-4 w-4" />
-                        Search
-                      </>
-                    )}
-                  </Button>
-
-                  {hasSearched ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-10 rounded-full px-4 text-muted-foreground hover:bg-stone-100"
-                      onClick={clearSearch}
-                    >
-                      Back to library
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            </div>
+  function renderLoadingCard(title: string, description: string) {
+    return (
+      <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
+        <div className="flex items-start gap-3">
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
+            <Loader2 className="h-5 w-5 animate-spin" />
           </div>
-        </Card>
-      </header>
-
-      {error ? (
-        <div className="rounded-[22px] border border-rose-200 bg-rose-50/70 p-4 text-sm leading-6 text-rose-950">
-          {error}
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">
+              {title}
+            </h2>
+            <p className="text-sm leading-6 text-muted-foreground">
+              {description}
+            </p>
+          </div>
         </div>
-      ) : null}
+      </Card>
+    );
+  }
 
-      {loading ? (
+  function renderProcedureTab() {
+    if (libraryLoading) {
+      return renderLoadingCard(
+        "Loading your procedure guide",
+        "Pulling the education assigned to your activation code, bundle, or finalized snapshot."
+      );
+    }
+
+    return (
+      <div className="space-y-6">
         <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
-          <div className="flex items-start gap-3">
-            <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </div>
+          <div className="space-y-3">
+            <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-800">
+              My Procedure
+            </p>
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                Searching the recovery library
+              <h2 className="text-xl font-semibold tracking-tight text-foreground">
+                {procedureName ? `${procedureName} guide` : "Your assigned recovery guide"}
               </h2>
-              <p className="text-sm leading-6 text-muted-foreground">
-                Pulling general recovery guidance for “{query.trim() || "your topic"}”.
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                This is the guided education assigned to your recovery. If your kit has been finalized,
+                these instructions come from the frozen PatientSnapshot for your physical box.
               </p>
             </div>
+            {assignment?.educationBundle ? (
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 text-sm leading-6 text-emerald-950">
+                Assigned bundle: <strong>{assignment.educationBundle.name}</strong>
+              </div>
+            ) : null}
           </div>
         </Card>
-      ) : isBlockedState ? (
+
+        <GuideSection
+          title="Assigned recovery education"
+          description="Procedure guides, bundle guides, and code-assigned guides for your recovery."
+          guides={procedureTabGuides}
+          emptyLabel="No procedure-specific guides are assigned yet. You can still browse the Full Library tab."
+        />
+      </div>
+    );
+  }
+
+  function renderKitTab() {
+    if (libraryLoading) {
+      return renderLoadingCard(
+        "Loading your kit instructions",
+        "Pulling box items and item-specific guides for your assigned recovery kit."
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
+          <div className="space-y-3">
+            <p className="inline-flex items-center rounded-full bg-stone-100 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-stone-700">
+              My Kit
+            </p>
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold tracking-tight text-foreground">
+                Box instructions and item guides
+              </h2>
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                This is the digital instruction manual for the physical recovery box assigned to you.
+                Item notes and linked guides are specific to your activation code when provided.
+              </p>
+            </div>
+            {assignment?.boxTemplate ? (
+              <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4 text-sm leading-6 text-stone-800">
+                Assigned box template: <strong>{assignment.boxTemplate.name}</strong>
+              </div>
+            ) : null}
+          </div>
+        </Card>
+
+        <BoxItemsSection items={personalizedBoxItems} />
+
+        <GuideSection
+          title="Box item education"
+          description="Guides connected to the supplies in your recovery kit."
+          guides={personalizedBoxGuides}
+          emptyLabel="No item-specific guides are assigned yet."
+        />
+      </div>
+    );
+  }
+
+  function renderFullLibraryTab() {
+    if (loading) {
+      return renderLoadingCard(
+        "Searching the recovery library",
+        `Pulling general recovery guidance for “${query.trim() || "your topic"}”.`
+      );
+    }
+
+    if (isBlockedState) {
+      return (
         <div className="space-y-4">
           <Card className="rounded-[30px] border border-rose-200 bg-rose-50/70 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
             <div className="flex items-start gap-3">
@@ -535,7 +562,11 @@ export default function MedicalHub() {
             </div>
           </Card>
         </div>
-      ) : isNoMatchState ? (
+      );
+    }
+
+    if (isNoMatchState) {
+      return (
         <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
           <div className="space-y-1">
             <h2 className="text-lg font-semibold tracking-tight text-foreground">
@@ -544,7 +575,11 @@ export default function MedicalHub() {
             <p className="text-sm leading-6 text-muted-foreground">{results?.message}</p>
           </div>
         </Card>
-      ) : isSuccessState ? (
+      );
+    }
+
+    if (isSuccessState) {
+      return (
         <section className="space-y-4">
           <div className="space-y-1">
             <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
@@ -561,136 +596,244 @@ export default function MedicalHub() {
             ))}
           </div>
         </section>
-      ) : libraryLoading ? (
-        <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
-          <div className="flex items-start gap-3">
-            <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </div>
-            <div className="space-y-1">
-              <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                Loading your library
-              </h2>
-              <p className="text-sm leading-6 text-muted-foreground">
-                Pulling Frederick Recovery guides, videos, and category sections.
+      );
+    }
+
+    if (libraryLoading) {
+      return renderLoadingCard(
+        "Loading your library",
+        "Pulling Frederick Recovery guides, videos, and category sections."
+      );
+    }
+
+    return (
+      <div className="space-y-7">
+        <section className="space-y-4">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
+              Browse by category
+            </h2>
+            <p className="text-sm leading-6 text-muted-foreground">
+              Open the broad library when you want to explore general recovery topics.
+            </p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {categoryCards.map((category) => {
+              const meta = RECOVERY_LIBRARY_CATEGORY_META[category.key];
+              const Icon = meta.icon;
+
+              return (
+                <Link key={category.key} to={`/medical-hub/categories/${category.key}`}>
+                  <Card className="h-full rounded-[28px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] transition-transform duration-150 hover:-translate-y-0.5">
+                    <div className="space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className={`inline-flex h-12 w-12 items-center justify-center rounded-2xl ${meta.iconClassName}`}>
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div className="rounded-full bg-stone-100 px-3 py-1 text-sm text-stone-700">
+                          {category.moduleCount}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <h3 className="text-lg font-semibold tracking-tight text-foreground">
+                          {category.title}
+                        </h3>
+                        <p className="text-sm leading-6 text-muted-foreground">
+                          {category.description}
+                        </p>
+                      </div>
+
+                      {category.featuredGuides[0] ? (
+                        <div className="rounded-[22px] border border-stone-200/80 bg-stone-50/80 p-4">
+                          <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                            Featured
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">
+                            {category.featuredGuides[0].title}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+
+        <GuideSection
+          title="Start here"
+          description="A small first set of guides for the earliest, most common recovery questions."
+          guides={startHere}
+          emptyLabel="Frederick Recovery has not added start-here guides yet."
+        />
+
+        <GuideSection
+          title="Common recovery topics"
+          description="The calm, broad guidance patients tend to revisit most."
+          guides={commonTopics}
+          emptyLabel="No common recovery guides are active yet."
+        />
+
+        <GuideSection
+          title="Videos"
+          description="Visual learning for patients who want to watch first and read second."
+          guides={videos}
+          emptyLabel="No videos are attached yet."
+        />
+
+        <GuideSection
+          title="Clinic instructions"
+          description="Frederick Recovery custom instructions and follow-up reminders."
+          guides={clinicInstructions}
+          emptyLabel="No clinic-specific instructions are active yet."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-7">
+      <header className="space-y-4">
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-9 self-start rounded-full px-3 text-muted-foreground hover:bg-emerald-50 hover:text-emerald-900"
+          onClick={() => navigate("/home")}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </Button>
+
+        <Card className="overflow-hidden rounded-[34px] border border-black/5 bg-white/95 shadow-[0_16px_42px_rgba(15,23,42,0.06)]">
+          <div className="grid gap-6 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.14),_transparent_30%),linear-gradient(180deg,rgba(248,250,252,0.98),rgba(255,255,255,0.96))] p-5 sm:p-7">
+            <div className="space-y-4">
+              <p className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-800">
+                Medical Hub
               </p>
+              <div className="space-y-2">
+                <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                  Your recovery education, organized
+                </h1>
+                <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
+                  Start with your assigned procedure guide, open your kit instructions, or browse
+                  the full Frederick Recovery library when you want to explore.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {libraryHome?.personalized.procedureName ? (
+                  <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm text-emerald-900">
+                    Procedure: {libraryHome.personalized.procedureName}
+                  </div>
+                ) : null}
+                {libraryHome?.personalized.boxItems.length ? (
+                  <div className="rounded-full border border-stone-200 bg-stone-100 px-3 py-1.5 text-sm text-stone-700">
+                    {libraryHome.personalized.boxItems.length} recovery kit items linked
+                  </div>
+                ) : null}
+              </div>
             </div>
+
+            <SegmentedControl
+              value={activeTab}
+              options={MEDICAL_HUB_TABS}
+              onChange={setActiveTab}
+              label="Medical Hub sections"
+            />
           </div>
         </Card>
-      ) : (
-        <div className="space-y-7">
-	          <GuideSection
-	            title="Recommended for Your Recovery"
-	            description="Guides assigned to your activation code, bundle, and recovery kit appear first, followed by Frederick Recovery recommendations."
-	            guides={recommendedGuides}
-	            emptyLabel="Frederick Recovery has not marked any recommended guides yet. The full library is still available below."
-	          />
+      </header>
 
-	          <BoxItemsSection items={personalizedBoxItems} />
-
-	          {personalizedProcedureGuides.length > 0 ? (
-	            <GuideSection
-	              title="Procedure Guide"
-	              description="Guides matched to your assigned procedure and education bundle."
-	              guides={personalizedProcedureGuides}
-	              emptyLabel=""
-	            />
-          ) : null}
-
-	          {personalizedBoxGuides.length > 0 ? (
-	            <GuideSection
-	              title="Box Item Instructions"
-	              description="Instructions tied to the supplies in your assigned box template."
-	              guides={personalizedBoxGuides}
-	              emptyLabel=""
-	            />
-	          ) : null}
-
-          <section className="space-y-4">
-	            <div className="space-y-1">
-	              <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
-	                Full Recovery Library
-	              </h2>
-	              <p className="text-sm leading-6 text-muted-foreground">
-                Open the library the way patients naturally look for help: start here, box item,
-                procedure, clinic instruction, or video.
-              </p>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {categoryCards.map((category) => {
-                const meta = RECOVERY_LIBRARY_CATEGORY_META[category.key];
-                const Icon = meta.icon;
-
-                return (
-                  <Link key={category.key} to={`/medical-hub/categories/${category.key}`}>
-                    <Card className="h-full rounded-[28px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] transition-transform duration-150 hover:-translate-y-0.5">
-                      <div className="space-y-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className={`inline-flex h-12 w-12 items-center justify-center rounded-2xl ${meta.iconClassName}`}>
-                            <Icon className="h-5 w-5" />
-                          </div>
-                          <div className="rounded-full bg-stone-100 px-3 py-1 text-sm text-stone-700">
-                            {category.moduleCount}
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                            {category.title}
-                          </h3>
-                          <p className="text-sm leading-6 text-muted-foreground">
-                            {category.description}
-                          </p>
-                        </div>
-
-                        {category.featuredGuides[0] ? (
-                          <div className="rounded-[22px] border border-stone-200/80 bg-stone-50/80 p-4">
-                            <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                              Featured
-                            </div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {category.featuredGuides[0].title}
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    </Card>
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
-
-          <GuideSection
-            title="Start here"
-            description="A small first set of guides for the earliest, most common recovery questions."
-            guides={startHere}
-            emptyLabel="Frederick Recovery has not added start-here guides yet."
-          />
-
-          <GuideSection
-            title="Common recovery topics"
-            description="The calm, broad guidance patients tend to revisit most."
-            guides={commonTopics}
-            emptyLabel="No common recovery guides are active yet."
-          />
-
-          <GuideSection
-            title="Videos"
-            description="Visual learning for patients who want to watch first and read second."
-            guides={videos}
-            emptyLabel="No videos are attached yet."
-          />
-
-          <GuideSection
-            title="Clinic instructions"
-            description="Frederick Recovery custom instructions and follow-up reminders."
-            guides={clinicInstructions}
-            emptyLabel="No clinic-specific instructions are active yet."
-          />
+      {error ? (
+        <div className="rounded-[22px] border border-rose-200 bg-rose-50/70 p-4 text-sm leading-6 text-rose-950">
+          {error}
         </div>
-      )}
+      ) : null}
+
+      {activeTab === "procedure" ? renderProcedureTab() : null}
+      {activeTab === "kit" ? renderKitTab() : null}
+      {activeTab === "library" ? (
+        <div className="space-y-6">
+          <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
+            <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+              <div className="space-y-2">
+                <div className="text-sm font-semibold text-foreground">
+                  Search the approved library
+                </div>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Try wound care, swelling, showering, pain medicine, or walking.
+                </p>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void runSearch(query);
+                      }
+                    }}
+                    placeholder="Search recovery topics"
+                    className="h-12 rounded-2xl border-black/8 bg-stone-50/60 pl-11 text-[15px] shadow-none focus-visible:ring-emerald-600"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  className="h-10 rounded-full px-4"
+                  onClick={() => void runSearch(query)}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Searching…
+                    </>
+                  ) : (
+                    <>
+                      <Search className="h-4 w-4" />
+                      Search
+                    </>
+                  )}
+                </Button>
+
+                {hasSearched ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-10 rounded-full px-4 text-muted-foreground hover:bg-stone-100"
+                    onClick={clearSearch}
+                  >
+                    Back to library
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {SUGGESTED_TOPICS.slice(0, 6).map((topic) => (
+                <Button
+                  key={topic}
+                  type="button"
+                  variant="outline"
+                  className="h-9 rounded-full border-emerald-100 bg-emerald-50/50 px-3 text-sm text-emerald-900 hover:bg-emerald-100"
+                  onClick={() => void runSearch(topic)}
+                >
+                  {topic}
+                </Button>
+              ))}
+            </div>
+          </Card>
+
+          {renderFullLibraryTab()}
+        </div>
+      ) : null}
 
       <Card className="rounded-[30px] border border-black/5 bg-white/95 p-5 shadow-[0_12px_34px_rgba(15,23,42,0.05)] sm:p-6">
         <div className="flex items-start gap-3">

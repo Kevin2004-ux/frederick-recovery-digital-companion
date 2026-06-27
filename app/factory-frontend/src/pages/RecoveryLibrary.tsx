@@ -1278,6 +1278,9 @@ export default function RecoveryLibraryPage({ focus = "all" }: RecoveryLibraryPa
                       ? "Saving creates an owner override on top of the built-in content library module."
                       : "Editing the saved guide configuration."}
                   </p>
+                  <p className="muted">
+                    Guides not attached to a bundle or box item will populate the Full Library tab for patient browsing.
+                  </p>
                 </div>
               </div>
 
@@ -1633,6 +1636,9 @@ export default function RecoveryLibraryPage({ focus = "all" }: RecoveryLibraryPa
                     Catalog details appear on patient “Your Box Items” cards when this key is
                     assigned through a template or activation code.
                   </p>
+                  <p className="muted">
+                    Guides attached to box items will appear in the patient’s My Kit tab.
+                  </p>
                 </div>
               </div>
 
@@ -1853,6 +1859,9 @@ export default function RecoveryLibraryPage({ focus = "all" }: RecoveryLibraryPa
                   <p className="muted">
                     Build reusable procedure-specific or general post-op guide folders without
                     tying them to activation codes yet.
+                  </p>
+                  <p className="muted">
+                    Guides assigned to a bundle will appear front-and-center in the patient’s My Procedure tab.
                   </p>
                 </div>
               </div>

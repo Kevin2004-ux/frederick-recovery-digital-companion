@@ -36,6 +36,7 @@ export type ActivationBatch = {
   clinicTag: string | null;
   quantity: number;
   boxType: string | null;
+  clinicOrderId?: string | null;
   includedItems?: Array<{ key?: string; label?: string }>;
   educationBundleId?: string | null;
   boxTemplateId?: string | null;
@@ -74,12 +75,42 @@ export type RecoveryLibraryBoxItem = {
   educationGuide?: RecoveryLibraryAdminGuideSummary | null;
 };
 
+export type ClinicOrder = {
+  id: string;
+  clinicTag: string;
+  orderNumber?: string | null;
+  externalRef?: string | null;
+  status: string;
+  requestedBoxCount?: number | null;
+  productMode: RecoveryLibraryProductMode;
+  defaultEducationBundleId?: string | null;
+  defaultBoxTemplateId?: string | null;
+  defaultProcedureName?: string | null;
+  requestedByName?: string | null;
+  requestedByEmail?: string | null;
+  notes?: string | null;
+  archivedAt?: string | null;
+  createdByUserId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  batchCount: number;
+};
+
+export type ClinicOrdersResponse = {
+  orders: ClinicOrder[];
+};
+
+export type ClinicOrderResponse = {
+  order: ClinicOrder;
+};
+
 export type ActivationCodeDetail = {
   id: string;
   code: string;
   status: string;
   clinicTag?: string | null;
   batchId?: string | null;
+  clinicOrderId?: string | null;
   boxType?: string | null;
   educationBundleId?: string | null;
   boxTemplateId?: string | null;
@@ -92,6 +123,7 @@ export type ActivationCodeDetail = {
   batchDefaults?: {
     educationBundleId?: string | null;
     boxTemplateId?: string | null;
+    clinicOrderId?: string | null;
     productMode?: RecoveryLibraryProductMode;
     procedureName?: string | null;
   } | null;
@@ -100,6 +132,12 @@ export type ActivationCodeDetail = {
   inheritedBoxItems?: RecoveryLibraryBoxItem[];
   resolvedBoxItems?: RecoveryLibraryBoxItem[];
   assignedEducation: ActivationCodeEducationOverrides;
+  currentSnapshot?: {
+    id: string;
+    version: number;
+    productMode: RecoveryLibraryProductMode;
+    createdAt: string;
+  } | null;
   createdAt?: string;
   claimedAt?: string | null;
   claimedByUserId?: string | null;
@@ -107,6 +145,162 @@ export type ActivationCodeDetail = {
 
 export type ActivationCodeDetailResponse = {
   activationCode: ActivationCodeDetail;
+};
+
+export type Tier1SnapshotPreview = {
+  activationCode: {
+    id: string;
+    code: string;
+    status: string;
+    clinicTag?: string | null;
+    productMode: RecoveryLibraryProductMode;
+    batchId?: string | null;
+    clinicOrderId?: string | null;
+    claimedAt?: string | null;
+    claimedByUserId?: string | null;
+  };
+  snapshot: {
+    productMode: RecoveryLibraryProductMode;
+    clinicTag?: string | null;
+    procedureName?: string | null;
+    educationBundleId?: string | null;
+    boxTemplateId?: string | null;
+    boxItems: Array<{
+      key?: string | null;
+      label?: string | null;
+      name?: string | null;
+      note?: string | null;
+      instructions?: string | null;
+      description?: string | null;
+    }>;
+    guides: Array<{
+      id?: string;
+      title?: string;
+      summary?: string;
+      moduleType?: string;
+      videoUrl?: string | null;
+      recommendationLabel?: string | null;
+      recommendationOrder?: number | null;
+    }>;
+    assignedGuideIds: string[];
+    recommendedGuideIds: string[];
+    procedureGuideIds: string[];
+    boxItemGuideIds: string[];
+    clinicNotes?: unknown;
+    videos: Array<{
+      id?: string;
+      title?: string;
+      videoUrl?: string | null;
+      thumbnailUrl?: string | null;
+    }>;
+    sourceMetadata?: unknown;
+  };
+  counts: {
+    boxItems: number;
+    guides: number;
+    assignedGuides: number;
+    procedureGuides: number;
+    boxItemGuides: number;
+    videos: number;
+  };
+};
+
+export type Tier1SnapshotValidationIssue = {
+  code: string;
+  message: string;
+};
+
+export type Tier1SnapshotValidationResponse = {
+  valid: boolean;
+  issues: Tier1SnapshotValidationIssue[];
+  preview: Tier1SnapshotPreview | null;
+};
+
+export type Tier1FinalizeResponse = {
+  activationCode: {
+    id: string;
+    code: string;
+    status: string;
+    clinicTag?: string | null;
+    productMode: RecoveryLibraryProductMode;
+    finalizedAt?: string | null;
+    packedAt?: string | null;
+  };
+  snapshot: {
+    id: string;
+    version: number;
+    isCurrent: boolean;
+    productMode: RecoveryLibraryProductMode;
+    clinicTag?: string | null;
+    procedureName?: string | null;
+    educationBundleId?: string | null;
+    boxTemplateId?: string | null;
+    createdAt: string;
+  };
+};
+
+export type Tier1PackingListResponse = {
+  source: "patient_snapshot";
+  activationCode: {
+    id: string;
+    code: string;
+    status: string;
+    clinicTag?: string | null;
+    clinicName?: string | null;
+    batchId?: string | null;
+    clinicOrderId?: string | null;
+    productMode: RecoveryLibraryProductMode;
+    procedureName?: string | null;
+    educationBundleId?: string | null;
+    boxTemplateId?: string | null;
+    finalizedAt?: string | null;
+    packedAt?: string | null;
+    claimedAt?: string | null;
+    claimedByUserId?: string | null;
+    createdAt?: string;
+  };
+  clinicOrder?: {
+    id: string;
+    orderNumber?: string | null;
+    externalRef?: string | null;
+    status: string;
+    requestedBoxCount?: number | null;
+    createdAt: string;
+  } | null;
+  batch?: {
+    id: string;
+    boxType?: string | null;
+    clinicOrderId?: string | null;
+    educationBundleId?: string | null;
+    boxTemplateId?: string | null;
+    productMode?: RecoveryLibraryProductMode | string;
+    procedureName?: string | null;
+    createdAt: string;
+  } | null;
+  snapshot: {
+    id: string;
+    version: number;
+    isCurrent: boolean;
+    status: string;
+    productMode: RecoveryLibraryProductMode;
+    clinicTag?: string | null;
+    procedureName?: string | null;
+    educationBundleId?: string | null;
+    boxTemplateId?: string | null;
+    createdAt: string;
+  };
+  fulfillment: {
+    boxItems: Tier1SnapshotPreview["snapshot"]["boxItems"];
+    guides: Tier1SnapshotPreview["snapshot"]["guides"];
+    assignedGuideIds: string[];
+    recommendedGuideIds: string[];
+    procedureGuideIds: string[];
+    boxItemGuideIds: string[];
+    clinicNotes?: unknown;
+    videos: Tier1SnapshotPreview["snapshot"]["videos"];
+    sourceMetadata?: unknown;
+    counts: Tier1SnapshotPreview["counts"];
+  };
 };
 
 export type RecoveryLibraryCategoryKey =

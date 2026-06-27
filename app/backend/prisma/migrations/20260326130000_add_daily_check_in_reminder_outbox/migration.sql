@@ -41,4 +41,3 @@ ALTER TABLE "ReminderOutbox" ADD CONSTRAINT "ReminderOutbox_patientUserId_fkey" 
 
 -- AddForeignKey
 ALTER TABLE "ReminderOutbox" ADD CONSTRAINT "ReminderOutbox_activationCodeId_fkey" FOREIGN KEY ("activationCodeId") REFERENCES "ActivationCode"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-

@@ -18,8 +18,15 @@ enum UserRole {
 enum ActivationCodeStatus {
   ISSUED
   DRAFT
+  CONFIGURED
   APPROVED
+  FINALIZED
+  PACKED
   CLAIMED
+  ARCHIVED
+  EXPIRED
+  VOIDED
+  RESET_FOR_REISSUE
   INVALIDATED
 }
 
@@ -101,6 +108,9 @@ model User {
   recoveryPlans RecoveryPlanInstance[]
 
   createdActivationBatches  ActivationBatch[]  @relation("ActivationBatchCreatedBy")
+  createdClinicOrders       ClinicOrder[]      @relation("ClinicOrderCreatedBy")
+  createdPatientSnapshots   PatientSnapshot[]  @relation("PatientSnapshotCreatedBy")
+  patientSnapshots          PatientSnapshot[]  @relation("PatientSnapshotPatient")
   capturedActivationConfigs ActivationCode[]   @relation("ActivationCodeConfigCapturedByUser")
   approvedActivationCodes   ActivationCode[]   @relation("ActivationCodeApprovedByUser")
   operationalAlerts         OperationalAlert[]
@@ -142,8 +152,39 @@ model ClinicPlanConfig {
   updatedAt DateTime @updatedAt
 
   activationCodes ActivationCode[]
+  clinicOrders    ClinicOrder[]
   templates       RecoveryPlanTemplate[]
 
+  @@index([archivedAt, updatedAt])
+}
+
+model ClinicOrder {
+  id                       String  @id @default(uuid())
+  clinicTag                String
+  clinic                   ClinicPlanConfig @relation(fields: [clinicTag], references: [clinicTag], onDelete: Restrict)
+  orderNumber              String? @unique
+  externalRef              String?
+  status                   String  @default("open")
+  requestedBoxCount        Int?
+  productMode              String  @default("kit_only")
+  defaultEducationBundleId String?
+  defaultBoxTemplateId     String?
+  defaultProcedureName     String?
+  requestedByName          String?
+  requestedByEmail         String?
+  notes                    String? @db.Text
+  archivedAt               DateTime?
+
+  createdByUserId String?
+  createdByUser   User?   @relation("ClinicOrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  activationBatches ActivationBatch[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clinicTag, status])
+  @@index([createdByUserId])
   @@index([archivedAt, updatedAt])
 }
 
@@ -157,6 +198,8 @@ model ActivationBatch {
   boxTemplateId     String?
   productMode       String  @default("full_platform")
   procedureName     String?
+  clinicOrderId     String?
+  clinicOrder       ClinicOrder? @relation(fields: [clinicOrderId], references: [id], onDelete: SetNull)
 
   createdByUserId String?
   createdByUser   User?   @relation("ActivationBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
@@ -169,6 +212,7 @@ model ActivationBatch {
   @@index([educationBundleId])
   @@index([boxTemplateId])
   @@index([productMode])
+  @@index([clinicOrderId])
 }
 
 model ActivationCode {
@@ -205,7 +249,15 @@ model ActivationCode {
   claimedByUser   User?     @relation("ActivationCodeClaimedByUser", fields: [claimedByUserId], references: [id], onDelete: SetNull)
   claimedAt       DateTime?
 
+  finalizedAt        DateTime?
+  packedAt           DateTime?
+  archivedAt         DateTime?
+  expiredAt          DateTime?
+  voidedAt           DateTime?
+  resetForReissueAt  DateTime?
+
   planInstance          RecoveryPlanInstance?
+  patientSnapshots      PatientSnapshot[]
   operationalAlerts     OperationalAlert[]
   reminderOutboxEntries ReminderOutbox[]
 
@@ -221,6 +273,44 @@ model ActivationCode {
   @@index([productMode])
   @@index([configCapturedByUserId])
   @@index([approvedByUserId])
+  @@index([finalizedAt])
+  @@index([packedAt])
+  @@index([archivedAt])
+}
+
+model PatientSnapshot {
+  id               String @id @default(uuid())
+  activationCodeId String
+  activationCode   ActivationCode @relation(fields: [activationCodeId], references: [id], onDelete: Cascade)
+  version          Int    @default(1)
+  isCurrent        Boolean @default(true)
+
+  productMode       String @default("kit_only")
+  clinicTag         String?
+  procedureName     String?
+  educationBundleId String?
+  boxTemplateId     String?
+
+  boxItemsJson       Json
+  guidesJson         Json
+  clinicNotesJson   Json?
+  videosJson         Json?
+  sourceMetadataJson Json?
+
+  patientUserId String?
+  patientUser   User?   @relation("PatientSnapshotPatient", fields: [patientUserId], references: [id], onDelete: SetNull)
+
+  createdByUserId String?
+  createdByUser   User?   @relation("PatientSnapshotCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([activationCodeId, version])
+  @@index([activationCodeId, isCurrent])
+  @@index([patientUserId])
+  @@index([clinicTag])
+  @@index([productMode])
+  @@index([createdByUserId])
 }
 
 model RecoveryPlanTemplate {

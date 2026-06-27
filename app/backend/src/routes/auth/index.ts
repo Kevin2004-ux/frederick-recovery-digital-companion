@@ -22,10 +22,10 @@ authRouter.post("/verify", authController.verify);
 // POST /auth/verify/resend (NEW)
 authRouter.post("/verify/resend", authController.resendVerification);
 
-// POST /auth/forgot-password 
+// POST /auth/forgot-password
 authRouter.post("/forgot-password", authController.forgotPassword);
 
-// POST /auth/reset-password 
+// POST /auth/reset-password
 authRouter.post("/reset-password", authController.resetPassword);
 
 

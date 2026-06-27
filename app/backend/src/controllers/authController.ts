@@ -498,17 +498,17 @@ export async function verify(req: Request, res: Response): Promise<any> {
   try {
     await userRepo.verifyEmailCode(email, code);
 
-    const user = await prisma.user.findUnique({ 
+    const user = await prisma.user.findUnique({
       where: { email },
       select: { id: true, email: true, role: true, tokenVersion: true }
     });
-    
+
     if (!user) return res.status(404).json({ code: "USER_NOT_FOUND" });
 
     // Note: The spec says do NOT issue a token upon verify so they are forced to use the login page.
-    // However, if you want the UX to be smooth, you can issue it here. For strict compliance, 
+    // However, if you want the UX to be smooth, you can issue it here. For strict compliance,
     // we return success and force them to /SignIn.
-    
+
     AuditService.log({
       req, category: AuditCategory.AUTH, type: "VERIFY_SUCCESS",
       userId: user.id, role: user.role, status: AuditStatus.SUCCESS

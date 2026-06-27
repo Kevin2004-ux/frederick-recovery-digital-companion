@@ -6,6 +6,7 @@ import {
   type BoxTemplateEducationModule as BoxTemplateEducationModuleRow,
   type EducationBundle as EducationBundleRow,
   type EducationBundleModule as EducationBundleModuleRow,
+  type PatientSnapshot as PatientSnapshotRow,
   type RecoveryLibraryModule as RecoveryLibraryModuleRow,
 } from "@prisma/client";
 
@@ -132,6 +133,12 @@ export type RecoveryLibraryAssignmentSummary = {
   } | null;
   hasCodeEducationOverrides: boolean;
   hasCodeBoxItemOverrides: boolean;
+  snapshot?: {
+    id: string;
+    version: number;
+    createdAt: string;
+    source: "patient_snapshot";
+  };
 };
 
 export type RecoveryLibraryHomePayload = {
@@ -835,6 +842,236 @@ function emptyPatientLibraryContext(): PatientLibraryContext {
       recommendedGuideIds: [],
     },
     hasCodeBoxItemOverrides: false,
+  };
+}
+
+type CurrentTier1Snapshot = {
+  activationCode: string;
+  snapshot: PatientSnapshotRow;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readRecord(value: Prisma.JsonValue | null): Record<string, unknown> {
+  return isRecord(value) ? (value as Record<string, unknown>) : {};
+}
+
+function readSnapshotArray<T>(value: Prisma.JsonValue | null, key: string): T[] {
+  const record = readRecord(value);
+  const list = record[key];
+  return Array.isArray(list) ? (list as T[]) : [];
+}
+
+function readSnapshotStringList(value: Prisma.JsonValue | null, key: string): string[] {
+  return uniqueStrings(
+    readSnapshotArray<unknown>(value, key).map((entry) =>
+      typeof entry === "string" ? entry : null
+    )
+  );
+}
+
+function isSnapshotModule(value: unknown): value is RecoveryLibraryModule {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.title === "string" &&
+    typeof value.type === "string" &&
+    typeof value.summary === "string"
+  );
+}
+
+function readSnapshotModules(snapshot: PatientSnapshotRow): RecoveryLibraryModule[] {
+  return readSnapshotArray<unknown>(snapshot.guidesJson, "libraryModules")
+    .filter(isSnapshotModule)
+    .sort(compareModules);
+}
+
+function isSnapshotBoxItem(value: unknown): value is RecoveryLibraryBoxItem {
+  if (!isRecord(value)) return false;
+  return typeof value.label === "string" && typeof value.name === "string";
+}
+
+function readSnapshotBoxItems(snapshot: PatientSnapshotRow): RecoveryLibraryBoxItem[] {
+  return readSnapshotArray<unknown>(snapshot.boxItemsJson, "items").filter(isSnapshotBoxItem);
+}
+
+function readSnapshotMetadata(snapshot: PatientSnapshotRow) {
+  const metadata = readRecord(snapshot.sourceMetadataJson);
+  const educationBundle = isRecord(metadata.educationBundle)
+    ? metadata.educationBundle
+    : null;
+  const boxTemplate = isRecord(metadata.boxTemplate) ? metadata.boxTemplate : null;
+
+  return {
+    educationBundle:
+      educationBundle &&
+      typeof educationBundle.id === "string" &&
+      typeof educationBundle.name === "string" &&
+      typeof educationBundle.slug === "string"
+        ? {
+            id: educationBundle.id,
+            name: educationBundle.name,
+            slug: educationBundle.slug,
+            procedureName:
+              typeof educationBundle.procedureName === "string"
+                ? educationBundle.procedureName
+                : null,
+          }
+        : null,
+    boxTemplate:
+      boxTemplate &&
+      typeof boxTemplate.id === "string" &&
+      typeof boxTemplate.name === "string" &&
+      typeof boxTemplate.slug === "string"
+        ? {
+            id: boxTemplate.id,
+            name: boxTemplate.name,
+            slug: boxTemplate.slug,
+          }
+        : null,
+  };
+}
+
+function modulesFromSnapshotIds(
+  modulesById: Map<string, RecoveryLibraryModule>,
+  moduleIds: string[]
+): RecoveryLibraryModuleSummary[] {
+  return moduleIds
+    .map((moduleId) => modulesById.get(moduleId))
+    .filter((module): module is RecoveryLibraryModule => Boolean(module))
+    .sort(compareModules)
+    .map(toSummary);
+}
+
+async function getCurrentTier1PatientSnapshot(
+  userId: string
+): Promise<CurrentTier1Snapshot | null> {
+  const activation = await prisma.activationCode.findFirst({
+    where: {
+      claimedByUserId: userId,
+      status: ActivationCodeStatus.CLAIMED,
+      productMode: "kit_only",
+    },
+    orderBy: { claimedAt: "desc" },
+    select: {
+      code: true,
+      patientSnapshots: {
+        where: {
+          isCurrent: true,
+          productMode: "kit_only",
+        },
+        orderBy: { version: "desc" },
+        take: 1,
+      },
+    },
+  });
+
+  const snapshot = activation?.patientSnapshots[0];
+  if (!activation || !snapshot) return null;
+
+  return {
+    activationCode: activation.code,
+    snapshot,
+  };
+}
+
+function buildSnapshotLibraryHomePayload(
+  current: CurrentTier1Snapshot
+): RecoveryLibraryHomePayload {
+  const { activationCode, snapshot } = current;
+  const modules = readSnapshotModules(snapshot);
+  const modulesById = new Map(modules.map((module) => [module.id, module]));
+  const boxItems = readSnapshotBoxItems(snapshot);
+  const metadata = readSnapshotMetadata(snapshot);
+  const assignedGuideIds = uniqueStrings([
+    ...readSnapshotStringList(snapshot.guidesJson, "recommendedGuideIds"),
+    ...readSnapshotStringList(snapshot.guidesJson, "assignedGuideIds"),
+  ]);
+  const procedureGuideIds = readSnapshotStringList(
+    snapshot.guidesJson,
+    "procedureGuideIds"
+  );
+  const boxItemGuideIds = readSnapshotStringList(
+    snapshot.guidesJson,
+    "boxItemGuideIds"
+  );
+  const recommendedOverrideIds = new Set(
+    readSnapshotStringList(snapshot.guidesJson, "recommendedGuideIds")
+  );
+  const codeAssignedGuides = assignedGuideIds
+    .map((moduleId, index) => {
+      const module = modulesById.get(moduleId);
+      if (!module) return null;
+      return toCodeAssignedGuideSummary(module, {
+        recommended: recommendedOverrideIds.has(moduleId),
+        order: index,
+      });
+    })
+    .filter((guide): guide is RecoveryLibraryModuleSummary => Boolean(guide));
+
+  const categories = CATEGORY_DEFINITIONS.map((category) => {
+    const categoryModules = modules.filter((module) =>
+      module.categories.includes(category.key)
+    );
+
+    return {
+      ...category,
+      moduleCount: categoryModules.length,
+      featuredGuides: categoryModules.slice(0, 3).map(toSummary),
+    };
+  });
+
+  const sections = Object.fromEntries(
+    CATEGORY_DEFINITIONS.map((category) => [
+      category.key,
+      modules
+        .filter((module) => module.categories.includes(category.key))
+        .slice(0, 8)
+        .map(toSummary),
+    ])
+  ) as RecoveryLibraryHomePayload["sections"];
+
+  const procedureGuides = modulesFromSnapshotIds(modulesById, procedureGuideIds);
+  const boxItemGuides = modulesFromSnapshotIds(modulesById, boxItemGuideIds);
+  const recommendedGuides: RecoveryLibraryModuleSummary[] = [];
+  appendUniqueGuides(recommendedGuides, codeAssignedGuides);
+  appendUniqueGuides(recommendedGuides, procedureGuides);
+  appendUniqueGuides(recommendedGuides, boxItemGuides);
+  appendUniqueGuides(
+    recommendedGuides,
+    modules
+      .filter(isRecommendedModule)
+      .sort(compareRecommendedModules)
+      .map(toSummary)
+  );
+
+  return {
+    recommendedGuides,
+    categories,
+    sections,
+    personalized: {
+      productMode: "kit_only",
+      assignment: {
+        activationCode,
+        productMode: "kit_only",
+        educationBundle: metadata.educationBundle,
+        boxTemplate: metadata.boxTemplate,
+        hasCodeEducationOverrides: assignedGuideIds.length > 0,
+        hasCodeBoxItemOverrides: boxItems.length > 0,
+        snapshot: {
+          id: snapshot.id,
+          version: snapshot.version,
+          createdAt: snapshot.createdAt.toISOString(),
+          source: "patient_snapshot",
+        },
+      },
+      procedureName: snapshot.procedureName,
+      boxItems,
+      procedureGuides,
+      boxItemGuides,
+    },
   };
 }
 
@@ -1547,6 +1784,13 @@ export async function getPatientLibraryContext(userId: string): Promise<PatientL
 export async function getLibraryHomePayload(args: {
   userId?: string;
 }): Promise<RecoveryLibraryHomePayload> {
+  if (args.userId) {
+    const currentSnapshot = await getCurrentTier1PatientSnapshot(args.userId);
+    if (currentSnapshot) {
+      return buildSnapshotLibraryHomePayload(currentSnapshot);
+    }
+  }
+
   const [modules, patientContext] = await Promise.all([
     listLibraryModules(),
     args.userId
@@ -1701,6 +1945,50 @@ export async function getLibraryCategoryPayload(args: {
   categoryKey: LibraryCategoryKey;
   userId?: string;
 }): Promise<RecoveryLibraryCategoryPayload> {
+  if (args.userId) {
+    const currentSnapshot = await getCurrentTier1PatientSnapshot(args.userId);
+    if (currentSnapshot) {
+      const category = getLibraryCategory(args.categoryKey);
+      if (!category) {
+        throw new Error("UNKNOWN_LIBRARY_CATEGORY");
+      }
+
+      const patientContext = {
+        procedureName: currentSnapshot.snapshot.procedureName,
+        boxItems: readSnapshotBoxItems(currentSnapshot.snapshot),
+      };
+      const guides = readSnapshotModules(currentSnapshot.snapshot)
+        .filter((module) => module.categories.includes(args.categoryKey))
+        .sort((a, b) => {
+          const aMatchesProcedure = matchesProcedure(
+            a,
+            patientContext.procedureName
+          );
+          const bMatchesProcedure = matchesProcedure(
+            b,
+            patientContext.procedureName
+          );
+          if (aMatchesProcedure !== bMatchesProcedure) {
+            return aMatchesProcedure ? -1 : 1;
+          }
+
+          const aMatchesBox = matchesBoxItems(a, patientContext.boxItems);
+          const bMatchesBox = matchesBoxItems(b, patientContext.boxItems);
+          if (aMatchesBox !== bMatchesBox) {
+            return aMatchesBox ? -1 : 1;
+          }
+
+          return compareModules(a, b);
+        })
+        .map(toSummary);
+
+      return {
+        category,
+        guides,
+      };
+    }
+  }
+
   const [modules, patientContext] = await Promise.all([
     listLibraryModules(),
     args.userId
@@ -1740,7 +2028,45 @@ export async function getLibraryCategoryPayload(args: {
 
 export async function getLibraryGuidePayload(args: {
   moduleId: string;
+  userId?: string;
 }): Promise<RecoveryLibraryGuidePayload | null> {
+  if (args.userId) {
+    const currentSnapshot = await getCurrentTier1PatientSnapshot(args.userId);
+    if (currentSnapshot) {
+      const modules = readSnapshotModules(currentSnapshot.snapshot);
+      const guide = modules.find((module) => module.id === args.moduleId);
+      if (!guide) return null;
+
+      const relatedGuides = modules
+        .filter((module) => module.id !== guide.id)
+        .map((module) => {
+          const sharedCategories = module.categories.filter((category) =>
+            guide.categories.includes(category)
+          ).length;
+          const sharedProcedures = module.procedureNames.filter((procedure) =>
+            guide.procedureNames.includes(procedure)
+          ).length;
+          const sharedBoxItems = module.boxItemKeys.filter((key) =>
+            guide.boxItemKeys.includes(key)
+          ).length;
+
+          return {
+            module,
+            score: sharedCategories * 3 + sharedProcedures * 4 + sharedBoxItems * 4,
+          };
+        })
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score || compareModules(a.module, b.module))
+        .slice(0, 4)
+        .map((entry) => toSummary(entry.module));
+
+      return {
+        guide,
+        relatedGuides,
+      };
+    }
+  }
+
   const modules = await listLibraryModules();
   const guide = modules.find((module) => module.id === args.moduleId);
   if (!guide) return null;

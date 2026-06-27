@@ -16,6 +16,22 @@ import {
 
 export const activationRouter = Router();
 
+function readSnapshotBoxItems(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const items = (value as { items?: unknown }).items;
+  return Array.isArray(items) ? items : [];
+}
+
+function readSnapshotBoxTemplateName(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const boxTemplate = (value as { boxTemplate?: unknown }).boxTemplate;
+  if (!boxTemplate || typeof boxTemplate !== "object" || Array.isArray(boxTemplate)) {
+    return null;
+  }
+  const name = (boxTemplate as { name?: unknown }).name;
+  return typeof name === "string" ? name : null;
+}
+
 // POST /activation/claim
 // Patient enters code + email + password to create account
 activationRouter.post("/claim", async (req: Request, res: Response): Promise<any> => {
@@ -54,7 +70,13 @@ activationRouter.post("/claim", async (req: Request, res: Response): Promise<any
       return res.status(404).json({ code: "INVALID_CODE" });
     }
 
-    if (activation.status !== ActivationCodeStatus.ISSUED && activation.status !== ActivationCodeStatus.DRAFT && activation.status !== ActivationCodeStatus.APPROVED) {
+    if (
+      activation.status !== ActivationCodeStatus.ISSUED &&
+      activation.status !== ActivationCodeStatus.DRAFT &&
+      activation.status !== ActivationCodeStatus.APPROVED &&
+      activation.status !== ActivationCodeStatus.FINALIZED &&
+      activation.status !== ActivationCodeStatus.PACKED
+    ) {
       return res.status(409).json({ code: "CODE_ALREADY_USED" });
     }
 
@@ -93,6 +115,17 @@ activationRouter.post("/claim", async (req: Request, res: Response): Promise<any
           claimedByUserId: newUser.id,
           claimedAt: new Date()
         }
+      });
+
+      await tx.patientSnapshot.updateMany({
+        where: {
+          activationCodeId: activation.id,
+          isCurrent: true,
+          productMode: "kit_only",
+        },
+        data: {
+          patientUserId: newUser.id,
+        },
       });
 
       // C. Copy Plan Config if exists (Optional logic)
@@ -156,7 +189,22 @@ activationRouter.get(
         status: true,
         batchId: true,
         boxTemplateId: true,
+        productMode: true,
         assignedBoxItemsJson: true,
+        patientSnapshots: {
+          where: {
+            isCurrent: true,
+            productMode: "kit_only",
+          },
+          orderBy: { version: "desc" },
+          take: 1,
+          select: {
+            boxItemsJson: true,
+            sourceMetadataJson: true,
+            version: true,
+            createdAt: true,
+          },
+        },
         batch: {
           select: {
             id: true,
@@ -167,6 +215,34 @@ activationRouter.get(
         },
       },
     });
+
+    const currentSnapshot = activation?.patientSnapshots[0] ?? null;
+    const snapshotItems = currentSnapshot
+      ? readSnapshotBoxItems(currentSnapshot.boxItemsJson)
+      : [];
+
+    if (activation?.productMode === "kit_only" && currentSnapshot) {
+      return res.status(200).json({
+        myBox: {
+          batchId: activation.batch?.id ?? null,
+          boxType:
+            readSnapshotBoxTemplateName(currentSnapshot.sourceMetadataJson) ??
+            activation.batch?.boxType ??
+            null,
+          includedItems: snapshotItems,
+          items: snapshotItems,
+        },
+        source: {
+          type: "patient_snapshot",
+          derivedFromClaimedActivation: true,
+          activationStatus: activation.status,
+          batchLinked: Boolean(activation.batch),
+          itemEducationSource: "patient_snapshot",
+          snapshotVersion: currentSnapshot.version,
+          snapshotCreatedAt: currentSnapshot.createdAt,
+        },
+      });
+    }
 
     const boxTemplateId =
       activation?.boxTemplateId ?? activation?.batch?.boxTemplateId ?? null;
