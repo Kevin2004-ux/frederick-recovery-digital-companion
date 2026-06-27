@@ -632,13 +632,25 @@ type OwnerActivationCodeRecord = Prisma.ActivationCodeGetPayload<{
 }>;
 
 async function toOwnerActivationCodeResponse(code: OwnerActivationCodeRecord) {
-  const boxItemResolution = await resolveActivationCodeBoxItems({
-    assignedBoxItemsJson: code.assignedBoxItemsJson,
-    boxTemplateId: code.boxTemplateId,
-    batchBoxTemplateId: code.batch?.boxTemplateId ?? null,
-    batchIncludedItemsJson: code.batch?.includedItemsJson ?? null,
-    includeInactiveTemplate: true,
-  });
+  const effectiveEducationBundleId =
+    code.educationBundleId ?? code.batch?.educationBundleId ?? null;
+  const [boxItemResolution, educationBundle] = await Promise.all([
+    resolveActivationCodeBoxItems({
+      assignedBoxItemsJson: code.assignedBoxItemsJson,
+      boxTemplateId: code.boxTemplateId,
+      batchBoxTemplateId: code.batch?.boxTemplateId ?? null,
+      batchIncludedItemsJson: code.batch?.includedItemsJson ?? null,
+      includeInactiveTemplate: true,
+    }),
+    effectiveEducationBundleId
+      ? getEducationBundleById(effectiveEducationBundleId, { includeInactive: true })
+      : Promise.resolve(null),
+  ]);
+  const effectiveProcedureName =
+    code.procedureName ??
+    code.batch?.procedureName ??
+    educationBundle?.procedureName ??
+    null;
 
   return {
     id: code.id,
@@ -652,11 +664,10 @@ async function toOwnerActivationCodeResponse(code: OwnerActivationCodeRecord) {
     boxTemplateId: code.boxTemplateId ?? null,
     productMode: code.productMode,
     procedureName: code.procedureName ?? null,
-    effectiveEducationBundleId:
-      code.educationBundleId ?? code.batch?.educationBundleId ?? null,
+    effectiveEducationBundleId,
     effectiveBoxTemplateId: code.boxTemplateId ?? code.batch?.boxTemplateId ?? null,
     effectiveProductMode: code.productMode ?? code.batch?.productMode ?? "full_platform",
-    effectiveProcedureName: code.procedureName ?? code.batch?.procedureName ?? null,
+    effectiveProcedureName,
     batchDefaults: code.batch
       ? {
           educationBundleId: code.batch.educationBundleId ?? null,

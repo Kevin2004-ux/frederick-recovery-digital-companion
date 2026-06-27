@@ -1190,6 +1190,16 @@ export default function OwnerClinicDetailPage() {
   async function handlePreviewSnapshot() {
     if (!selectedCode) return;
 
+    if (!procedureSavedForPreview) {
+      setCodeEditorError("Procedure is required before previewing or finalizing. Enter or confirm the procedure, then save this box setup.");
+      return;
+    }
+
+    if (procedureHasUnsavedChange) {
+      setCodeEditorError("Save the procedure before previewing so the frozen patient view uses the right procedure.");
+      return;
+    }
+
     setSnapshotPreviewLoading(true);
     setCodeEditorError("");
     setCodeEditorSuccess("");
@@ -1850,6 +1860,27 @@ export default function OwnerClinicDetailPage() {
     libraryPayload?.bundles.find((bundle) => bundle.id === codeEditorForm.educationBundleId) ?? null;
   const selectedFormTemplate =
     libraryPayload?.boxTemplates.find((template) => template.id === codeEditorForm.boxTemplateId) ?? null;
+  const savedBundleId =
+    selectedCode?.educationBundleId ?? selectedCode?.effectiveEducationBundleId ?? "";
+  const savedBundle =
+    libraryPayload?.bundles.find((bundle) => bundle.id === savedBundleId) ?? null;
+  const savedProcedureName = (
+    selectedCode?.procedureName ??
+    selectedCode?.effectiveProcedureName ??
+    ""
+  ).trim();
+  const procedureInputValue = codeEditorForm.procedureName.trim();
+  const procedureHasUnsavedChange = Boolean(
+    selectedCode && procedureInputValue !== savedProcedureName,
+  );
+  const procedureSavedForPreview = Boolean(savedProcedureName);
+  const procedureSourceLabel = selectedCode?.procedureName
+    ? "Saved on this code"
+    : selectedCode?.batchDefaults?.procedureName
+      ? "Inherited from this order"
+      : savedBundle?.procedureName
+        ? "Inherited from EducationBundle"
+        : "Required before preview";
   const catalogItemByKey = new Map((libraryPayload?.boxItems ?? []).map((boxItem) => [boxItem.key, boxItem]));
   const formInheritedBoxItems: RecoveryLibraryBoxItem[] = selectedFormTemplate
     ? selectedFormTemplate.boxItemKeys.map((key) => {
@@ -1957,6 +1988,15 @@ export default function OwnerClinicDetailPage() {
       label: "Clinic selected",
       description: snapshotValidation?.preview?.activationCode.clinicTag || selectedCode?.clinicTag || "No clinic",
       passed: Boolean(snapshotValidation?.preview?.activationCode.clinicTag || selectedCode?.clinicTag),
+    },
+    {
+      label: "Procedure selected",
+      description: snapshotValidation?.preview?.snapshot.procedureName
+        ? snapshotValidation.preview.snapshot.procedureName
+        : savedProcedureName
+          ? `${savedProcedureName} (${procedureSourceLabel})`
+          : "Required before preview/finalize",
+      passed: Boolean(snapshotValidation?.preview?.snapshot.procedureName || savedProcedureName),
     },
     {
       label: "Tier 1 product mode",
@@ -2721,6 +2761,58 @@ export default function OwnerClinicDetailPage() {
               </div>
             ) : null}
 
+            <div className={procedureSavedForPreview ? "info-card form-stack" : "info-card form-stack warning-card"}>
+              <div className="section-heading compact-section-heading">
+                <div>
+                  <p className="eyebrow">Required before preview</p>
+                  <h3>Procedure</h3>
+                  <p className="muted">
+                    Tier 1 snapshots require a procedure so the patient view and box contents stay matched.
+                    This can inherit from the box order, bundle, or saved code default.
+                  </p>
+                </div>
+                <span className={procedureSavedForPreview ? "status-pill active" : "status-pill warning"}>
+                  {procedureSavedForPreview ? procedureSourceLabel : "Procedure required"}
+                </span>
+              </div>
+
+              <div className="grid-two">
+                <label className="field">
+                  <span>Procedure name *</span>
+                  <input
+                    type="text"
+                    value={codeEditorForm.procedureName}
+                    disabled={selectedCodeLocked}
+                    required
+                    aria-invalid={!procedureInputValue && !procedureSavedForPreview}
+                    onChange={(event) =>
+                      setCodeEditorForm((current) => ({
+                        ...current,
+                        procedureName: event.target.value,
+                      }))
+                    }
+                    placeholder="General Surgery"
+                  />
+                </label>
+                <div className="action-stack">
+                  <p className="muted">
+                    {procedureSavedForPreview
+                      ? `Current procedure: ${savedProcedureName}`
+                      : "Enter a procedure, or apply an EducationBundle/order default that includes one."}
+                    {procedureHasUnsavedChange ? " Save before previewing." : ""}
+                  </p>
+                  <button
+                    className="button primary action-button"
+                    type="submit"
+                    disabled={codeEditorSaving || selectedCodeLocked || !procedureInputValue}
+                  >
+                    {codeEditorSaving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
+                    Save procedure / box setup
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="grid-two">
               <label className="field">
                 <span>Education bundle</span>
@@ -2762,22 +2854,6 @@ export default function OwnerClinicDetailPage() {
                     </option>
                   ))}
                 </select>
-              </label>
-
-              <label className="field">
-                <span>Procedure name</span>
-                <input
-                  type="text"
-                  value={codeEditorForm.procedureName}
-                  disabled={selectedCodeLocked}
-                  onChange={(event) =>
-                    setCodeEditorForm((current) => ({
-                      ...current,
-                      procedureName: event.target.value,
-                    }))
-                  }
-                  placeholder="Knee Replacement"
-                />
               </label>
 
               <label className="field">
@@ -3312,7 +3388,12 @@ export default function OwnerClinicDetailPage() {
                   className="button secondary"
                   type="button"
                   onClick={() => void handlePreviewSnapshot()}
-                  disabled={snapshotPreviewLoading || !selectedCodeIsTier1}
+                  disabled={
+                    snapshotPreviewLoading ||
+                    !selectedCodeIsTier1 ||
+                    !procedureSavedForPreview ||
+                    procedureHasUnsavedChange
+                  }
                 >
                   {snapshotPreviewLoading ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}
                   Preview patient view
@@ -3325,6 +3406,8 @@ export default function OwnerClinicDetailPage() {
                     lifecycleLoading === "finalize" ||
                     selectedCodeLocked ||
                     !selectedCodeCanFinalize ||
+                    !procedureSavedForPreview ||
+                    procedureHasUnsavedChange ||
                     !snapshotValidation?.valid
                   }
                 >
@@ -3357,6 +3440,18 @@ export default function OwnerClinicDetailPage() {
               {!selectedCodeIsTier1 ? (
                 <div className="alert error">
                   Snapshot preview/finalize is only available for kit-only Tier 1 activation codes.
+                </div>
+              ) : null}
+
+              {selectedCodeIsTier1 && !procedureSavedForPreview ? (
+                <div className="alert error">
+                  Procedure is required before previewing or finalizing. Enter it in the Procedure card above, then save this box setup.
+                </div>
+              ) : null}
+
+              {selectedCodeIsTier1 && procedureSavedForPreview && procedureHasUnsavedChange ? (
+                <div className="alert error">
+                  Procedure has unsaved changes. Save this box setup before previewing so the frozen patient view uses the correct procedure.
                 </div>
               ) : null}
 
