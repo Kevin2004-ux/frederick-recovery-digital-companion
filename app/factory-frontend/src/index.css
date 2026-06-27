@@ -205,6 +205,10 @@ code {
   margin-bottom: 20px;
 }
 
+.compact-section-heading {
+  margin-bottom: 0;
+}
+
 .brand-mark,
 .nav-card-icon {
   width: 42px;
@@ -305,6 +309,15 @@ h3 {
   min-height: 120px;
   padding: 14px;
   resize: vertical;
+}
+
+.compact-field {
+  gap: 6px;
+}
+
+.compact-field input,
+.compact-field select {
+  min-height: 40px;
 }
 
 .field input:focus,
@@ -867,6 +880,10 @@ h3 {
   gap: 8px;
 }
 
+.mini-tag-cloud {
+  margin-top: 10px;
+}
+
 .chip-button {
   min-height: 34px;
   border-radius: 999px;
@@ -955,6 +972,12 @@ h3 {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.snapshot-preview-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
 .library-preview-card {
   display: grid;
   gap: 8px;
@@ -969,6 +992,15 @@ h3 {
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
+}
+
+.compact-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.compact-list-panel {
+  max-height: 320px;
 }
 
 .owner-count-grid,

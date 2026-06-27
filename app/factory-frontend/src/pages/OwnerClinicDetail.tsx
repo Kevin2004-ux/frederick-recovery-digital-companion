@@ -1,4 +1,17 @@
-import { ArrowLeft, Building2, Download, Loader2, PlusCircle, Save, TableProperties } from "lucide-react";
+import {
+  ArrowLeft,
+  BookPlus,
+  Building2,
+  Download,
+  Eye,
+  Loader2,
+  LockKeyhole,
+  PackageCheck,
+  PlusCircle,
+  Save,
+  TableProperties,
+  WandSparkles,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -6,10 +19,19 @@ import { api, ApiError } from "@/api/client";
 import type {
   ActivationCodeDetail,
   ActivationCodeDetailResponse,
+  ClinicOrder,
+  ClinicOrderResponse,
+  ClinicOrdersResponse,
   CreateBatchResponse,
+  RecoveryLibraryAdminModule,
   RecoveryLibraryAdminPayload,
+  BoxItemCatalogItem,
   RecoveryLibraryBoxItem,
+  RecoveryLibraryCategoryKey,
   RecoveryLibraryProductMode,
+  Tier1FinalizeResponse,
+  Tier1SnapshotPreview,
+  Tier1SnapshotValidationResponse,
 } from "@/types";
 
 type OwnerClinicDetailResponse = {
@@ -39,6 +61,7 @@ type OwnerClinicDetailResponse = {
     clinicTag?: string | null;
     quantity: number;
     boxType?: string | null;
+    clinicOrderId?: string | null;
     educationBundleId?: string | null;
     boxTemplateId?: string | null;
     productMode?: RecoveryLibraryProductMode;
@@ -71,6 +94,7 @@ type OwnerClinicCodeRow = {
   status: string;
   clinicTag?: string | null;
   batchId?: string | null;
+  clinicOrderId?: string | null;
   boxType?: string | null;
   educationBundleId?: string | null;
   boxTemplateId?: string | null;
@@ -116,6 +140,43 @@ type GenerateCodesForm = {
   productMode: RecoveryLibraryProductMode;
 };
 
+type ClinicOrderForm = {
+  orderNumber: string;
+  externalRef: string;
+  requestedBoxCount: string;
+  defaultProcedureName: string;
+  defaultBoxTemplateId: string;
+  defaultEducationBundleId: string;
+  productMode: RecoveryLibraryProductMode;
+  requestedByName: string;
+  requestedByEmail: string;
+  notes: string;
+};
+
+type InlineBoxItemForm = {
+  key: string;
+  name: string;
+  category: string;
+  description: string;
+  instructions: string;
+  defaultEducationModuleId: string;
+  imageUrl: string;
+  note: string;
+};
+
+type InlineGuideForm = {
+  title: string;
+  summary: string;
+  body: string;
+  categories: string;
+  procedureNames: string;
+  boxItemKeys: string;
+  videoUrl: string;
+  recommendationLabel: string;
+  recommendationOrder: string;
+  assignAsRecommended: boolean;
+};
+
 const EMPTY_CODE_ASSIGNMENT_FORM: CodeAssignmentForm = {
   educationBundleId: "",
   boxTemplateId: "",
@@ -132,8 +193,54 @@ const EMPTY_GENERATE_CODES_FORM: GenerateCodesForm = {
   educationBundleId: "",
   boxTemplateId: "",
   procedureName: "",
-  productMode: "full_platform",
+  productMode: "kit_only",
 };
+
+const EMPTY_CLINIC_ORDER_FORM: ClinicOrderForm = {
+  orderNumber: "",
+  externalRef: "",
+  requestedBoxCount: "10",
+  defaultProcedureName: "",
+  defaultBoxTemplateId: "",
+  defaultEducationBundleId: "",
+  productMode: "kit_only",
+  requestedByName: "",
+  requestedByEmail: "",
+  notes: "",
+};
+
+const EMPTY_INLINE_BOX_ITEM_FORM: InlineBoxItemForm = {
+  key: "",
+  name: "",
+  category: "",
+  description: "",
+  instructions: "",
+  defaultEducationModuleId: "",
+  imageUrl: "",
+  note: "",
+};
+
+const EMPTY_INLINE_GUIDE_FORM: InlineGuideForm = {
+  title: "",
+  summary: "",
+  body: "",
+  categories: "clinic-instructions",
+  procedureNames: "",
+  boxItemKeys: "",
+  videoUrl: "",
+  recommendationLabel: "",
+  recommendationOrder: "",
+  assignAsRecommended: true,
+};
+
+const RECOVERY_LIBRARY_CATEGORY_KEYS: RecoveryLibraryCategoryKey[] = [
+  "start-here",
+  "common-recovery-topics",
+  "procedure-guides",
+  "box-item-instructions",
+  "videos",
+  "clinic-instructions",
+];
 
 type OwnerClinicUserMutationResponse = {
   user: {
@@ -217,7 +324,7 @@ function productModeDescription(productMode: RecoveryLibraryProductMode) {
     return "Kit-only education shows the patient library, box items, education guides, videos, and instructions only.";
   }
 
-  return "Full platform codes can include the complete recovery platform, including clinic dashboard features, logs, check-ins, tracking, and alerts.";
+  return "Full platform codes use the broader recovery platform. Keep Tier 1 factory fulfillment on kit-only unless this code is intentionally outside the kit workflow.";
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -262,6 +369,26 @@ function formatClinicError(error: unknown, fallback: string) {
     return "This clinic is archived. Reactivate or provision the clinic before generating new codes.";
   }
 
+  if (apiError?.code === "CLINIC_ORDER_NOT_FOUND") {
+    return "Clinic order was not found.";
+  }
+
+  if (apiError?.code === "TIER1_SNAPSHOT_LOCKED") {
+    return "This Tier 1 snapshot is finalized and locked. Create a correction/new snapshot version before changing content.";
+  }
+
+  if (apiError?.code === "NOT_TIER1_ACTIVATION_CODE") {
+    return "This action is only available for kit-only Tier 1 activation codes.";
+  }
+
+  if (apiError?.code === "INVALID_STATE_TRANSITION") {
+    return "That lifecycle action is not available for the code’s current status.";
+  }
+
+  if (apiError?.code === "BOX_ITEM_KEY_EXISTS") {
+    return "That box item key already exists. Choose the existing item from the catalog or use a unique key.";
+  }
+
   if (apiError?.code === "VALIDATION_ERROR") {
     return "Please review the fields and try again.";
   }
@@ -282,6 +409,55 @@ function parseIdsText(value: string) {
         .filter(Boolean),
     ),
   );
+}
+
+function splitInputValues(value: string) {
+  return parseIdsText(value);
+}
+
+function parseCategoryText(value: string): RecoveryLibraryCategoryKey[] {
+  const allowed = new Set(RECOVERY_LIBRARY_CATEGORY_KEYS);
+  const categories = splitInputValues(value).filter((category): category is RecoveryLibraryCategoryKey =>
+    allowed.has(category as RecoveryLibraryCategoryKey)
+  );
+
+  return categories.length ? categories : ["clinic-instructions"];
+}
+
+function parseNumberText(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isTier1SnapshotLocked(code: ActivationCodeDetail | null) {
+  if (!code || code.productMode !== "kit_only") return false;
+
+  return ["FINALIZED", "PACKED", "CLAIMED", "ARCHIVED", "VOIDED"].includes(code.status);
+}
+
+function isTier1FinalizableStatus(status?: string | null) {
+  return Boolean(status && ["ISSUED", "DRAFT", "CONFIGURED", "APPROVED", "RESET_FOR_REISSUE"].includes(status));
+}
+
+function isTier1PackableStatus(status?: string | null) {
+  return status === "FINALIZED" || status === "PACKED";
+}
+
+function formatOrderStatus(status?: string | null) {
+  if (!status) return "Open";
+
+  return status
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function findGuideTitle(libraryPayload: RecoveryLibraryAdminPayload | null, guideId: string) {
+  return libraryPayload?.modules.find((module) => module.id === guideId)?.title ?? guideId;
 }
 
 function boxItemsToText(items: RecoveryLibraryBoxItem[] = []) {
@@ -353,6 +529,16 @@ export default function OwnerClinicDetailPage() {
   const [error, setError] = useState("");
   const [libraryPayload, setLibraryPayload] = useState<RecoveryLibraryAdminPayload | null>(null);
   const [libraryError, setLibraryError] = useState("");
+  const [clinicOrders, setClinicOrders] = useState<ClinicOrder[]>([]);
+  const [clinicOrdersLoading, setClinicOrdersLoading] = useState(false);
+  const [clinicOrdersError, setClinicOrdersError] = useState("");
+  const [clinicOrdersSuccess, setClinicOrdersSuccess] = useState("");
+  const [clinicOrderForm, setClinicOrderForm] = useState<ClinicOrderForm>(
+    EMPTY_CLINIC_ORDER_FORM,
+  );
+  const [clinicOrderSubmitting, setClinicOrderSubmitting] = useState(false);
+  const [orderGenerateQuantityById, setOrderGenerateQuantityById] = useState<Record<string, string>>({});
+  const [orderActionLoading, setOrderActionLoading] = useState<string | null>(null);
   const [codes, setCodes] = useState<OwnerClinicCodeRow[]>([]);
   const [codesLoading, setCodesLoading] = useState(false);
   const [codesLoaded, setCodesLoaded] = useState(false);
@@ -374,6 +560,19 @@ export default function OwnerClinicDetailPage() {
   const [codeEditorSuccess, setCodeEditorSuccess] = useState("");
   const [guidePickId, setGuidePickId] = useState("");
   const [boxItemPickKey, setBoxItemPickKey] = useState("");
+  const [inlineBoxItemForm, setInlineBoxItemForm] = useState<InlineBoxItemForm>(
+    EMPTY_INLINE_BOX_ITEM_FORM,
+  );
+  const [inlineGuideForm, setInlineGuideForm] = useState<InlineGuideForm>(
+    EMPTY_INLINE_GUIDE_FORM,
+  );
+  const [inlineBoxItemSaving, setInlineBoxItemSaving] = useState(false);
+  const [inlineGuideSaving, setInlineGuideSaving] = useState(false);
+  const [snapshotPreview, setSnapshotPreview] = useState<Tier1SnapshotPreview | null>(null);
+  const [snapshotValidation, setSnapshotValidation] =
+    useState<Tier1SnapshotValidationResponse | null>(null);
+  const [snapshotPreviewLoading, setSnapshotPreviewLoading] = useState(false);
+  const [lifecycleLoading, setLifecycleLoading] = useState<"finalize" | "pack" | null>(null);
   const [downloadingClinic, setDownloadingClinic] = useState(false);
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null);
   const [adminForm, setAdminForm] = useState({
@@ -414,6 +613,43 @@ export default function OwnerClinicDetailPage() {
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  const loadClinicOrders = useCallback(async () => {
+    setClinicOrdersLoading(true);
+    setClinicOrdersError("");
+
+    try {
+      const params = new URLSearchParams({
+        clinicTag,
+        limit: "500",
+      });
+      const payload = await api.get<ClinicOrdersResponse>(
+        `/owner/clinic-orders?${params.toString()}`,
+      );
+      const orders = Array.isArray(payload.orders) ? payload.orders : [];
+      setClinicOrders(orders);
+      setOrderGenerateQuantityById((current) => {
+        const next = { ...current };
+        for (const order of orders) {
+          if (!next[order.id]) {
+            next[order.id] = String(order.requestedBoxCount ?? 1);
+          }
+        }
+        return next;
+      });
+    } catch (nextError) {
+      setClinicOrdersError(
+        formatClinicError(nextError, "We couldn’t load clinic orders right now."),
+      );
+      setClinicOrders([]);
+    } finally {
+      setClinicOrdersLoading(false);
+    }
+  }, [clinicTag]);
+
+  useEffect(() => {
+    void loadClinicOrders();
+  }, [loadClinicOrders]);
 
   useEffect(() => {
     let active = true;
@@ -457,6 +693,97 @@ export default function OwnerClinicDetailPage() {
   useEffect(() => {
     void loadCodes(null);
   }, [loadCodes]);
+
+  async function handleCreateClinicOrder(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const requestedBoxCount = parseNumberText(clinicOrderForm.requestedBoxCount);
+
+    if (!requestedBoxCount || !Number.isInteger(requestedBoxCount) || requestedBoxCount < 1) {
+      setClinicOrdersError("Enter a whole-number box quantity of at least 1.");
+      setClinicOrdersSuccess("");
+      return;
+    }
+
+    setClinicOrderSubmitting(true);
+    setClinicOrdersError("");
+    setClinicOrdersSuccess("");
+
+    try {
+      const payload = await api.post<ClinicOrderResponse>("/owner/clinic-orders", {
+        clinicTag,
+        productMode: "kit_only",
+        requestedBoxCount,
+        ...(clinicOrderForm.orderNumber.trim()
+          ? { orderNumber: clinicOrderForm.orderNumber.trim() }
+          : {}),
+        ...(clinicOrderForm.externalRef.trim()
+          ? { externalRef: clinicOrderForm.externalRef.trim() }
+          : {}),
+        ...(clinicOrderForm.defaultProcedureName.trim()
+          ? { defaultProcedureName: clinicOrderForm.defaultProcedureName.trim() }
+          : {}),
+        ...(clinicOrderForm.defaultBoxTemplateId
+          ? { defaultBoxTemplateId: clinicOrderForm.defaultBoxTemplateId }
+          : {}),
+        ...(clinicOrderForm.defaultEducationBundleId
+          ? { defaultEducationBundleId: clinicOrderForm.defaultEducationBundleId }
+          : {}),
+        ...(clinicOrderForm.requestedByName.trim()
+          ? { requestedByName: clinicOrderForm.requestedByName.trim() }
+          : {}),
+        ...(clinicOrderForm.requestedByEmail.trim()
+          ? { requestedByEmail: clinicOrderForm.requestedByEmail.trim() }
+          : {}),
+        ...(clinicOrderForm.notes.trim() ? { notes: clinicOrderForm.notes.trim() } : {}),
+      });
+
+      setClinicOrdersSuccess(`Clinic order created for ${payload.order.requestedBoxCount ?? requestedBoxCount} kit(s).`);
+      setClinicOrderForm(EMPTY_CLINIC_ORDER_FORM);
+      await loadClinicOrders();
+    } catch (nextError) {
+      setClinicOrdersError(
+        formatClinicError(nextError, "We couldn’t create that clinic order right now."),
+      );
+    } finally {
+      setClinicOrderSubmitting(false);
+    }
+  }
+
+  async function handleGenerateCodesFromOrder(order: ClinicOrder) {
+    const quantityText = orderGenerateQuantityById[order.id] ?? String(order.requestedBoxCount ?? 1);
+    const quantity = parseNumberText(quantityText);
+
+    if (!quantity || !Number.isInteger(quantity) || quantity < 1) {
+      setClinicOrdersError("Enter a whole-number quantity before generating codes.");
+      setClinicOrdersSuccess("");
+      return;
+    }
+
+    setOrderActionLoading(order.id);
+    setClinicOrdersError("");
+    setClinicOrdersSuccess("");
+    setCodesError("");
+
+    try {
+      const payload = await api.post<CreateBatchResponse>(
+        `/owner/clinic-orders/${encodeURIComponent(order.id)}/generate-codes`,
+        { quantity },
+      );
+
+      setClinicOrdersSuccess(
+        `Generated ${payload.batch.quantity} kit-only activation code(s) from this order.`,
+      );
+      await loadClinicOrders();
+      await loadDetail(false);
+      await loadCodes(payload.batch.id);
+    } catch (nextError) {
+      setClinicOrdersError(
+        formatClinicError(nextError, "We couldn’t generate codes from that order right now."),
+      );
+    } finally {
+      setOrderActionLoading(null);
+    }
+  }
 
   async function handleGenerateCodes(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -508,6 +835,10 @@ export default function OwnerClinicDetailPage() {
     setCodeEditorLoading(true);
     setCodeEditorError("");
     setCodeEditorSuccess("");
+    setSnapshotPreview(null);
+    setSnapshotValidation(null);
+    setInlineBoxItemForm(EMPTY_INLINE_BOX_ITEM_FORM);
+    setInlineGuideForm(EMPTY_INLINE_GUIDE_FORM);
 
     try {
       const payload = await api.get<ActivationCodeDetailResponse>(
@@ -556,6 +887,8 @@ export default function OwnerClinicDetailPage() {
 
       setSelectedCode(payload.activationCode);
       setCodeEditorForm(codeDetailToForm(payload.activationCode));
+      setSnapshotPreview(null);
+      setSnapshotValidation(null);
       setCodeEditorSuccess(`Saved assignments for ${payload.activationCode.code}.`);
       setCodes((current) =>
         current.map((codeRow) =>
@@ -576,6 +909,286 @@ export default function OwnerClinicDetailPage() {
       setCodeEditorError(formatClinicError(nextError, "We couldn’t save that activation code."));
     } finally {
       setCodeEditorSaving(false);
+    }
+  }
+
+  async function handleApplyBoxTemplate() {
+    if (!selectedCode || !codeEditorForm.boxTemplateId) return;
+    if (isTier1SnapshotLocked(selectedCode)) {
+      setCodeEditorError("This finalized Tier 1 snapshot is locked and cannot be edited casually.");
+      return;
+    }
+
+    setCodeEditorSaving(true);
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+    setSnapshotPreview(null);
+    setSnapshotValidation(null);
+
+    try {
+      const payload = await api.post<ActivationCodeDetailResponse>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}/apply-box-template`,
+        { boxTemplateId: codeEditorForm.boxTemplateId },
+      );
+      setSelectedCode(payload.activationCode);
+      setCodeEditorForm(codeDetailToForm(payload.activationCode));
+      setCodeEditorSuccess("Box template applied to this activation code only.");
+      await loadCodes(activeBatchId);
+    } catch (nextError) {
+      setCodeEditorError(formatClinicError(nextError, "We couldn’t apply that box template."));
+    } finally {
+      setCodeEditorSaving(false);
+    }
+  }
+
+  async function handleApplyEducationBundle() {
+    if (!selectedCode || !codeEditorForm.educationBundleId) return;
+    if (isTier1SnapshotLocked(selectedCode)) {
+      setCodeEditorError("This finalized Tier 1 snapshot is locked and cannot be edited casually.");
+      return;
+    }
+
+    setCodeEditorSaving(true);
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+    setSnapshotPreview(null);
+    setSnapshotValidation(null);
+
+    try {
+      const payload = await api.post<ActivationCodeDetailResponse>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}/apply-education-bundle`,
+        { educationBundleId: codeEditorForm.educationBundleId },
+      );
+      setSelectedCode(payload.activationCode);
+      setCodeEditorForm(codeDetailToForm(payload.activationCode));
+      setCodeEditorSuccess("Education bundle applied to this activation code only.");
+      await loadCodes(activeBatchId);
+    } catch (nextError) {
+      setCodeEditorError(formatClinicError(nextError, "We couldn’t apply that education bundle."));
+    } finally {
+      setCodeEditorSaving(false);
+    }
+  }
+
+  async function handleCreateInlineBoxItem() {
+    if (!selectedCode) return;
+    if (isTier1SnapshotLocked(selectedCode)) {
+      setCodeEditorError("This finalized Tier 1 snapshot is locked and cannot be edited casually.");
+      return;
+    }
+
+    setInlineBoxItemSaving(true);
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+    setSnapshotPreview(null);
+    setSnapshotValidation(null);
+
+    try {
+      const payload = await api.post<{
+        boxItem: BoxItemCatalogItem;
+        activationCode: ActivationCodeDetail;
+      }>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}/box-items/inline`,
+        {
+          key: inlineBoxItemForm.key.trim(),
+          name: inlineBoxItemForm.name.trim(),
+          ...(inlineBoxItemForm.category.trim() ? { category: inlineBoxItemForm.category.trim() } : {}),
+          ...(inlineBoxItemForm.description.trim()
+            ? { description: inlineBoxItemForm.description.trim() }
+            : {}),
+          ...(inlineBoxItemForm.instructions.trim()
+            ? { instructions: inlineBoxItemForm.instructions.trim() }
+            : {}),
+          ...(inlineBoxItemForm.defaultEducationModuleId.trim()
+            ? { defaultEducationModuleId: inlineBoxItemForm.defaultEducationModuleId.trim() }
+            : {}),
+          ...(inlineBoxItemForm.imageUrl.trim() ? { imageUrl: inlineBoxItemForm.imageUrl.trim() } : {}),
+          ...(inlineBoxItemForm.note.trim() ? { note: inlineBoxItemForm.note.trim() } : {}),
+          active: true,
+        },
+      );
+
+      setLibraryPayload((current) =>
+        current
+          ? {
+              ...current,
+              boxItems: [
+                payload.boxItem,
+                ...current.boxItems.filter((item) => item.id !== payload.boxItem.id),
+              ],
+            }
+          : current,
+      );
+      setSelectedCode(payload.activationCode);
+      setCodeEditorForm(codeDetailToForm(payload.activationCode));
+      setInlineBoxItemForm(EMPTY_INLINE_BOX_ITEM_FORM);
+      setCodeEditorSuccess("Created a new box item and assigned it to this code.");
+      await loadCodes(activeBatchId);
+    } catch (nextError) {
+      setCodeEditorError(formatClinicError(nextError, "We couldn’t create and assign that box item."));
+    } finally {
+      setInlineBoxItemSaving(false);
+    }
+  }
+
+  async function handleCreateInlineGuide() {
+    if (!selectedCode) return;
+    if (isTier1SnapshotLocked(selectedCode)) {
+      setCodeEditorError("This finalized Tier 1 snapshot is locked and cannot be edited casually.");
+      return;
+    }
+
+    setInlineGuideSaving(true);
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+    setSnapshotPreview(null);
+    setSnapshotValidation(null);
+
+    try {
+      const recommendationOrder = parseNumberText(inlineGuideForm.recommendationOrder);
+      const payload = await api.post<{
+        guide: RecoveryLibraryAdminModule;
+        activationCode: ActivationCodeDetail;
+      }>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}/education-guides/inline`,
+        {
+          title: inlineGuideForm.title.trim(),
+          summary: inlineGuideForm.summary.trim(),
+          body: inlineGuideForm.body.trim(),
+          moduleType: "education",
+          categories: parseCategoryText(inlineGuideForm.categories),
+          procedureNames:
+            splitInputValues(inlineGuideForm.procedureNames).length > 0
+              ? splitInputValues(inlineGuideForm.procedureNames)
+              : codeEditorForm.procedureName.trim()
+                ? [codeEditorForm.procedureName.trim()]
+                : [],
+          boxItemKeys: splitInputValues(inlineGuideForm.boxItemKeys),
+          redFlags: [],
+          requiredBoxItems: [],
+          ...(inlineGuideForm.videoUrl.trim() ? { videoUrl: inlineGuideForm.videoUrl.trim() } : {}),
+          recommended: inlineGuideForm.assignAsRecommended,
+          featured: false,
+          ...(inlineGuideForm.recommendationLabel.trim()
+            ? { recommendationLabel: inlineGuideForm.recommendationLabel.trim() }
+            : {}),
+          ...(recommendationOrder !== null ? { recommendationOrder } : {}),
+          assignAsRecommended: inlineGuideForm.assignAsRecommended,
+          active: true,
+        },
+      );
+
+      setLibraryPayload((current) =>
+        current
+          ? {
+              ...current,
+              modules: [
+                payload.guide,
+                ...current.modules.filter((module) => module.id !== payload.guide.id),
+              ],
+            }
+          : current,
+      );
+      setSelectedCode(payload.activationCode);
+      setCodeEditorForm(codeDetailToForm(payload.activationCode));
+      setInlineGuideForm(EMPTY_INLINE_GUIDE_FORM);
+      setCodeEditorSuccess("Created a new education guide and assigned it to this code.");
+      await loadCodes(activeBatchId);
+    } catch (nextError) {
+      setCodeEditorError(formatClinicError(nextError, "We couldn’t create and assign that guide."));
+    } finally {
+      setInlineGuideSaving(false);
+    }
+  }
+
+  async function handlePreviewSnapshot() {
+    if (!selectedCode) return;
+
+    setSnapshotPreviewLoading(true);
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+
+    try {
+      const validation = await api.get<Tier1SnapshotValidationResponse>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}/validate-finalization`,
+      );
+      setSnapshotValidation(validation);
+      setSnapshotPreview(validation.preview);
+      setCodeEditorSuccess(
+        validation.valid
+          ? "Preview validated. This is what will freeze into the PatientSnapshot."
+          : "Preview loaded with validation issues to resolve before finalization.",
+      );
+    } catch (nextError) {
+      setCodeEditorError(formatClinicError(nextError, "We couldn’t preview that PatientSnapshot."));
+      setSnapshotPreview(null);
+      setSnapshotValidation(null);
+    } finally {
+      setSnapshotPreviewLoading(false);
+    }
+  }
+
+  async function handleFinalizeCode() {
+    if (!selectedCode) return;
+
+    if (!snapshotValidation?.valid) {
+      setCodeEditorError("Preview and resolve validation before finalizing this Tier 1 code.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Finalize this Tier 1 code and freeze the PatientSnapshot before the physical box leaves our hands?",
+    );
+    if (!confirmed) return;
+
+    setLifecycleLoading("finalize");
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+
+    try {
+      const payload = await api.post<Tier1FinalizeResponse>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}/finalize`,
+      );
+      const detailPayload = await api.get<ActivationCodeDetailResponse>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}`,
+      );
+      setSelectedCode(detailPayload.activationCode);
+      setCodeEditorForm(codeDetailToForm(detailPayload.activationCode));
+      setCodeEditorSuccess(
+        `Finalized snapshot v${payload.snapshot.version}. The Tier 1 patient view is now frozen.`,
+      );
+      await loadCodes(activeBatchId);
+      await loadDetail(false);
+    } catch (nextError) {
+      setCodeEditorError(formatClinicError(nextError, "We couldn’t finalize that activation code."));
+    } finally {
+      setLifecycleLoading(null);
+    }
+  }
+
+  async function handlePackCode() {
+    if (!selectedCode) return;
+
+    setLifecycleLoading("pack");
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+
+    try {
+      await api.post<{ activationCode: Tier1FinalizeResponse["activationCode"] }>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}/pack`,
+      );
+      const detailPayload = await api.get<ActivationCodeDetailResponse>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}`,
+      );
+      setSelectedCode(detailPayload.activationCode);
+      setCodeEditorForm(codeDetailToForm(detailPayload.activationCode));
+      setCodeEditorSuccess("Code marked packed. The physical box is ready/prepared.");
+      await loadCodes(activeBatchId);
+      await loadDetail(false);
+    } catch (nextError) {
+      setCodeEditorError(formatClinicError(nextError, "We couldn’t mark that code as packed."));
+    } finally {
+      setLifecycleLoading(null);
     }
   }
 
@@ -851,6 +1464,15 @@ export default function OwnerClinicDetailPage() {
     return codes.filter((code) => code.batchId === activeBatchId);
   }, [activeBatchId, codes]);
 
+  const codesByOrderId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const code of codes) {
+      if (!code.clinicOrderId) continue;
+      counts.set(code.clinicOrderId, (counts.get(code.clinicOrderId) ?? 0) + 1);
+    }
+    return counts;
+  }, [codes]);
+
   const bundleNameById = useMemo(() => {
     return new Map((libraryPayload?.bundles ?? []).map((bundle) => [bundle.id, bundle.name]));
   }, [libraryPayload?.bundles]);
@@ -902,6 +1524,12 @@ export default function OwnerClinicDetailPage() {
       return !codeLevelBoxItems.some((codeItem) => (codeItem.key ?? codeItem.label) === dedupeKey);
     }),
   ];
+  const selectedCodeLocked = isTier1SnapshotLocked(selectedCode);
+  const selectedCodeIsTier1 = selectedCode?.productMode === "kit_only";
+  const selectedCodeCanFinalize =
+    selectedCodeIsTier1 && isTier1FinalizableStatus(selectedCode?.status);
+  const selectedCodeCanPack =
+    selectedCodeIsTier1 && isTier1PackableStatus(selectedCode?.status);
 
   if (loading) {
     return (
@@ -1002,9 +1630,10 @@ export default function OwnerClinicDetailPage() {
         </div>
         <nav className="workspace-nav" aria-label="Clinic workspace sections">
           <a href="#clinic-overview">Clinic overview</a>
+          <a href="#clinic-orders">Clinic orders</a>
           <a href="#clinic-users">Clinic users / logins</a>
           <a href="#activation-batches">Activation batches</a>
-          <a href="#generate-codes">Generate codes</a>
+          <a href="#clinic-orders">Generate from order</a>
           <a href="#activation-codes">Activation codes</a>
           <a href="#code-assignment-editor">Configure code</a>
           <a href="#clinic-lifecycle">Delete / archive clinic</a>
@@ -1018,6 +1647,8 @@ export default function OwnerClinicDetailPage() {
       {userActionSuccess ? <div className="alert success">{userActionSuccess}</div> : null}
       {clinicActionError ? <div className="alert error">{clinicActionError}</div> : null}
       {clinicActionSuccess ? <div className="alert success">{clinicActionSuccess}</div> : null}
+      {clinicOrdersError ? <div className="alert error">{clinicOrdersError}</div> : null}
+      {clinicOrdersSuccess ? <div className="alert success">{clinicOrdersSuccess}</div> : null}
       {codesError ? <div className="alert error">{codesError}</div> : null}
       {generateCodesError ? <div className="alert error">{generateCodesError}</div> : null}
       {generateCodesSuccess ? <div className="alert success">{generateCodesSuccess}</div> : null}
@@ -1027,10 +1658,10 @@ export default function OwnerClinicDetailPage() {
           <strong>Delete blocked.</strong>
           <div className="owner-activity-grid">
             <span>Claimed codes: {deleteBlockedActivity.claimedCodesCount}</span>
-            <span>Log entries: {deleteBlockedActivity.logEntriesCount}</span>
-            <span>Recovery plans: {deleteBlockedActivity.recoveryPlansCount}</span>
-            <span>Operational alerts: {deleteBlockedActivity.operationalAlertsCount}</span>
-            <span>Reminder outbox: {deleteBlockedActivity.reminderOutboxCount}</span>
+            <span>Patient records: {deleteBlockedActivity.logEntriesCount}</span>
+            <span>Plan records: {deleteBlockedActivity.recoveryPlansCount}</span>
+            <span>Operational records: {deleteBlockedActivity.operationalAlertsCount}</span>
+            <span>Reminder records: {deleteBlockedActivity.reminderOutboxCount}</span>
           </div>
         </div>
       ) : null}
@@ -1092,6 +1723,331 @@ export default function OwnerClinicDetailPage() {
         </div>
       </section>
 
+      <section className="panel" id="clinic-orders">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Clinic Orders</p>
+            <h2>Tier 1 box requests</h2>
+            <p className="muted">
+              Create kit-only ClinicOrders, set default box and education assignments, then
+              generate activation codes from the order so each code inherits the fulfillment setup.
+            </p>
+          </div>
+          <button
+            className="button secondary"
+            type="button"
+            onClick={() => void loadClinicOrders()}
+            disabled={clinicOrdersLoading}
+          >
+            {clinicOrdersLoading ? <Loader2 size={16} className="spin" /> : <TableProperties size={16} />}
+            Refresh orders
+          </button>
+        </div>
+
+        <div className="info-card owner-form-card">
+          <h3>Create ClinicOrder</h3>
+          {clinicArchived ? (
+            <div className="alert error">
+              This clinic is archived. New Tier 1 orders cannot be created until the clinic is provisioned again.
+            </div>
+          ) : null}
+          <form className="form-stack" onSubmit={handleCreateClinicOrder}>
+            <div className="grid-two">
+              <label className="field">
+                <span>Requested box quantity</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={5000}
+                  value={clinicOrderForm.requestedBoxCount}
+                  onChange={(event) =>
+                    setClinicOrderForm((current) => ({
+                      ...current,
+                      requestedBoxCount: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </label>
+
+              <label className="field">
+                <span>Product mode</span>
+                <select
+                  value={clinicOrderForm.productMode}
+                  onChange={(event) =>
+                    setClinicOrderForm((current) => ({
+                      ...current,
+                      productMode: event.target.value as RecoveryLibraryProductMode,
+                    }))
+                  }
+                >
+                  <option value="kit_only">Kit-only education</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Default procedure</span>
+                <input
+                  type="text"
+                  value={clinicOrderForm.defaultProcedureName}
+                  onChange={(event) =>
+                    setClinicOrderForm((current) => ({
+                      ...current,
+                      defaultProcedureName: event.target.value,
+                    }))
+                  }
+                  placeholder="General Surgery"
+                />
+              </label>
+
+              <label className="field">
+                <span>Default BoxTemplate</span>
+                <select
+                  value={clinicOrderForm.defaultBoxTemplateId}
+                  onChange={(event) =>
+                    setClinicOrderForm((current) => ({
+                      ...current,
+                      defaultBoxTemplateId: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">No default template</option>
+                  {(libraryPayload?.boxTemplates ?? []).map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Default EducationBundle</span>
+                <select
+                  value={clinicOrderForm.defaultEducationBundleId}
+                  onChange={(event) =>
+                    setClinicOrderForm((current) => ({
+                      ...current,
+                      defaultEducationBundleId: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">No default bundle</option>
+                  {(libraryPayload?.bundles ?? []).map((bundle) => (
+                    <option key={bundle.id} value={bundle.id}>
+                      {bundle.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Order number</span>
+                <input
+                  type="text"
+                  value={clinicOrderForm.orderNumber}
+                  onChange={(event) =>
+                    setClinicOrderForm((current) => ({
+                      ...current,
+                      orderNumber: event.target.value,
+                    }))
+                  }
+                  placeholder="Optional internal order number"
+                />
+              </label>
+
+              <label className="field">
+                <span>Requested by name</span>
+                <input
+                  type="text"
+                  value={clinicOrderForm.requestedByName}
+                  onChange={(event) =>
+                    setClinicOrderForm((current) => ({
+                      ...current,
+                      requestedByName: event.target.value,
+                    }))
+                  }
+                  placeholder="Optional"
+                />
+              </label>
+
+              <label className="field">
+                <span>Requested by email</span>
+                <input
+                  type="email"
+                  value={clinicOrderForm.requestedByEmail}
+                  onChange={(event) =>
+                    setClinicOrderForm((current) => ({
+                      ...current,
+                      requestedByEmail: event.target.value,
+                    }))
+                  }
+                  placeholder="Optional"
+                />
+              </label>
+            </div>
+
+            <label className="field">
+              <span>Order notes</span>
+              <textarea
+                value={clinicOrderForm.notes}
+                onChange={(event) =>
+                  setClinicOrderForm((current) => ({
+                    ...current,
+                    notes: event.target.value,
+                  }))
+                }
+                placeholder="Clinic notes, fulfillment reminders, special kit context"
+                rows={3}
+              />
+            </label>
+
+            <button
+              className="button primary"
+              type="submit"
+              disabled={clinicOrderSubmitting || clinicArchived}
+            >
+              {clinicOrderSubmitting ? (
+                <>
+                  <Loader2 size={16} className="spin" />
+                  Creating order
+                </>
+              ) : (
+                <>
+                  <PlusCircle size={16} />
+                  Create ClinicOrder
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+
+        <div className="table-wrap">
+          {clinicOrdersLoading && clinicOrders.length === 0 ? (
+            <p className="muted">Loading ClinicOrders...</p>
+          ) : clinicOrders.length === 0 ? (
+            <p className="muted">No ClinicOrders yet. Create one above to start Tier 1 fulfillment.</p>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Status</th>
+                  <th>Defaults</th>
+                  <th>Created</th>
+                  <th>Codes</th>
+                  <th>Generate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clinicOrders.map((order) => (
+                  <tr key={order.id}>
+                    <td>
+                      <div className="cell-strong">{order.orderNumber || order.id}</div>
+                      <div className="cell-muted">{order.requestedBoxCount ?? "—"} requested kit(s)</div>
+                      {order.notes ? <div className="cell-muted">{order.notes}</div> : null}
+                    </td>
+                    <td>
+                      <span className="status-pill active">{formatOrderStatus(order.status)}</span>
+                      <div className="cell-muted">{formatProductMode(order.productMode)}</div>
+                    </td>
+                    <td>
+                      <div className="cell-strong">{order.defaultProcedureName || "No procedure"}</div>
+                      <div className="cell-muted">
+                        {order.defaultBoxTemplateId
+                          ? templateNameById.get(order.defaultBoxTemplateId) ?? "Template assigned"
+                          : "No BoxTemplate"}
+                      </div>
+                      <div className="cell-muted">
+                        {order.defaultEducationBundleId
+                          ? bundleNameById.get(order.defaultEducationBundleId) ?? "Bundle assigned"
+                          : "No EducationBundle"}
+                      </div>
+                    </td>
+                    <td>{formatDateTime(order.createdAt)}</td>
+                    <td>
+                      <div className="cell-strong">{codesByOrderId.get(order.id) ?? 0} loaded code(s)</div>
+                      <div className="cell-muted">{order.batchCount} batch(es)</div>
+                      {(() => {
+                        const orderCodes = codes.filter((code) => code.clinicOrderId === order.id);
+                        if (orderCodes.length === 0) return null;
+
+                        return (
+                          <div className="tag-cloud mini-tag-cloud">
+                            {orderCodes.slice(0, 6).map((code) => (
+                              <button
+                                key={code.code}
+                                className="chip-button"
+                                type="button"
+                                onClick={() => void handleOpenCode(code.code)}
+                              >
+                                {code.code}
+                              </button>
+                            ))}
+                            {orderCodes.length > 6 ? <span className="cell-muted">+{orderCodes.length - 6} more</span> : null}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td>
+                      <div className="action-stack">
+                        <label className="field compact-field">
+                          <span>Quantity</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={5000}
+                            value={orderGenerateQuantityById[order.id] ?? String(order.requestedBoxCount ?? 1)}
+                            onChange={(event) =>
+                              setOrderGenerateQuantityById((current) => ({
+                                ...current,
+                                [order.id]: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <button
+                          className="button primary action-button"
+                          type="button"
+                          onClick={() => void handleGenerateCodesFromOrder(order)}
+                          disabled={orderActionLoading === order.id || clinicArchived}
+                        >
+                          {orderActionLoading === order.id ? (
+                            <>
+                              <Loader2 size={16} className="spin" />
+                              Generating
+                            </>
+                          ) : (
+                            <>
+                              <PlusCircle size={16} />
+                              Generate Tier 1 codes
+                            </>
+                          )}
+                        </button>
+                        <button
+                          className="button secondary action-button"
+                          type="button"
+                          onClick={() => {
+                            setActiveBatchId(null);
+                            void loadCodes(null);
+                            window.setTimeout(() => {
+                              document
+                                .getElementById("activation-codes")
+                                ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }, 0);
+                          }}
+                        >
+                          View clinic codes
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
+
       <section className="panel" id="code-assignment-editor">
         <div className="section-heading">
           <div>
@@ -1115,6 +2071,13 @@ export default function OwnerClinicDetailPage() {
           </div>
         ) : selectedCode ? (
           <form className="form-stack" onSubmit={handleSaveCodeAssignment}>
+            {selectedCodeLocked ? (
+              <div className="alert success">
+                <strong>Snapshot frozen.</strong> This Tier 1 code has a finalized PatientSnapshot.
+                Content edits are locked unless an explicit correction/new snapshot version workflow is used.
+              </div>
+            ) : null}
+
             <div className="grid-two">
               <div className="info-card">
                 <h3>{selectedCode.code}</h3>
@@ -1135,6 +2098,18 @@ export default function OwnerClinicDetailPage() {
                     <dt>Claimed by</dt>
                     <dd>{selectedCode.claimedByUserId || "—"}</dd>
                   </div>
+                  <div>
+                    <dt>Clinic order</dt>
+                    <dd>{selectedCode.clinicOrderId || selectedCode.batchDefaults?.clinicOrderId || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Current snapshot</dt>
+                    <dd>
+                      {selectedCode.currentSnapshot
+                        ? `v${selectedCode.currentSnapshot.version} · ${formatDateTime(selectedCode.currentSnapshot.createdAt)}`
+                        : "Not finalized"}
+                    </dd>
+                  </div>
                 </dl>
               </div>
 
@@ -1150,6 +2125,12 @@ export default function OwnerClinicDetailPage() {
                     ? `${selectedFormTemplate.name} · ${selectedFormTemplate.boxItemKeys.length} item key(s)`
                     : "No box template selected."}
                 </p>
+                {selectedCodeLocked ? (
+                  <div className="inline-note compact-note">
+                    <LockKeyhole size={18} />
+                    <span>Finalized Tier 1 content is locked to protect box-to-patient consistency.</span>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -1158,6 +2139,7 @@ export default function OwnerClinicDetailPage() {
                 <span>Education bundle</span>
                 <select
                   value={codeEditorForm.educationBundleId}
+                  disabled={selectedCodeLocked}
                   onChange={(event) =>
                     setCodeEditorForm((current) => ({
                       ...current,
@@ -1178,6 +2160,7 @@ export default function OwnerClinicDetailPage() {
                 <span>Box template</span>
                 <select
                   value={codeEditorForm.boxTemplateId}
+                  disabled={selectedCodeLocked}
                   onChange={(event) =>
                     setCodeEditorForm((current) => ({
                       ...current,
@@ -1199,6 +2182,7 @@ export default function OwnerClinicDetailPage() {
                 <input
                   type="text"
                   value={codeEditorForm.procedureName}
+                  disabled={selectedCodeLocked}
                   onChange={(event) =>
                     setCodeEditorForm((current) => ({
                       ...current,
@@ -1213,6 +2197,7 @@ export default function OwnerClinicDetailPage() {
                 <span>Product mode</span>
                 <select
                   value={codeEditorForm.productMode}
+                  disabled={selectedCodeLocked}
                   onChange={(event) =>
                     setCodeEditorForm((current) => ({
                       ...current,
@@ -1224,6 +2209,27 @@ export default function OwnerClinicDetailPage() {
                   <option value="full_platform">Full platform</option>
                 </select>
               </label>
+            </div>
+
+            <div className="action-row">
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => void handleApplyBoxTemplate()}
+                disabled={!codeEditorForm.boxTemplateId || codeEditorSaving || selectedCodeLocked}
+              >
+                {codeEditorSaving ? <Loader2 size={16} className="spin" /> : <WandSparkles size={16} />}
+                Apply BoxTemplate to this code
+              </button>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => void handleApplyEducationBundle()}
+                disabled={!codeEditorForm.educationBundleId || codeEditorSaving || selectedCodeLocked}
+              >
+                {codeEditorSaving ? <Loader2 size={16} className="spin" /> : <BookPlus size={16} />}
+                Apply EducationBundle to this code
+              </button>
             </div>
 
             <div className="inline-note">
@@ -1241,6 +2247,7 @@ export default function OwnerClinicDetailPage() {
                   <span>Add item from catalog</span>
                   <select
                     value={boxItemPickKey}
+                    disabled={selectedCodeLocked}
                     onChange={(event) => setBoxItemPickKey(event.target.value)}
                   >
                     <option value="">Choose a box item</option>
@@ -1256,7 +2263,7 @@ export default function OwnerClinicDetailPage() {
                     className="button secondary action-button"
                     type="button"
                     onClick={addCatalogBoxItemToCode}
-                    disabled={!boxItemPickKey}
+                    disabled={!boxItemPickKey || selectedCodeLocked}
                   >
                     Add to this code
                   </button>
@@ -1275,6 +2282,7 @@ export default function OwnerClinicDetailPage() {
                             key={item.key ?? item.label}
                             className="chip-button"
                             type="button"
+                            disabled={selectedCodeLocked}
                             onClick={() =>
                               removed && item.key
                                 ? restoreInheritedBoxItem(item.key)
@@ -1312,6 +2320,7 @@ export default function OwnerClinicDetailPage() {
                 <span>Code-level added items and notes</span>
                 <textarea
                   value={codeEditorForm.assignedBoxItemsText}
+                  disabled={selectedCodeLocked}
                   onChange={(event) =>
                     setCodeEditorForm((current) => ({
                       ...current,
@@ -1327,6 +2336,7 @@ export default function OwnerClinicDetailPage() {
                 <span>Removed inherited item keys</span>
                 <textarea
                   value={codeEditorForm.removedBoxItemKeysText}
+                  disabled={selectedCodeLocked}
                   onChange={(event) =>
                     setCodeEditorForm((current) => ({
                       ...current,
@@ -1337,6 +2347,101 @@ export default function OwnerClinicDetailPage() {
                   rows={3}
                 />
               </label>
+
+              <details className="advanced-panel">
+                <summary>Create missing BoxItem inline and assign to this code</summary>
+                <div className="form-stack">
+                  <div className="grid-two">
+                    <label className="field">
+                      <span>Item key</span>
+                      <input
+                        value={inlineBoxItemForm.key}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineBoxItemForm((current) => ({
+                            ...current,
+                            key: event.target.value,
+                          }))
+                        }
+                        placeholder="compression_wrap"
+                        required
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Item name</span>
+                      <input
+                        value={inlineBoxItemForm.name}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineBoxItemForm((current) => ({
+                            ...current,
+                            name: event.target.value,
+                          }))
+                        }
+                        placeholder="Compression Wrap"
+                        required
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Category</span>
+                      <input
+                        value={inlineBoxItemForm.category}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineBoxItemForm((current) => ({
+                            ...current,
+                            category: event.target.value,
+                          }))
+                        }
+                        placeholder="Compression"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Item note for this code</span>
+                      <input
+                        value={inlineBoxItemForm.note}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineBoxItemForm((current) => ({
+                            ...current,
+                            note: event.target.value,
+                          }))
+                        }
+                        placeholder="Use as tolerated"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="field">
+                    <span>Instructions</span>
+                    <textarea
+                      value={inlineBoxItemForm.instructions}
+                      disabled={selectedCodeLocked}
+                      onChange={(event) =>
+                        setInlineBoxItemForm((current) => ({
+                          ...current,
+                          instructions: event.target.value,
+                        }))
+                      }
+                      placeholder="Patient-facing instructions for this item"
+                      rows={3}
+                    />
+                  </label>
+
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => void handleCreateInlineBoxItem()}
+                    disabled={inlineBoxItemSaving || selectedCodeLocked}
+                  >
+                    {inlineBoxItemSaving ? <Loader2 size={16} className="spin" /> : <PlusCircle size={16} />}
+                    Create BoxItem and add to code
+                  </button>
+                </div>
+              </details>
             </div>
 
             <div className="info-card form-stack">
@@ -1344,7 +2449,11 @@ export default function OwnerClinicDetailPage() {
               <div className="grid-two">
                 <label className="field">
                   <span>Select an existing guide</span>
-                  <select value={guidePickId} onChange={(event) => setGuidePickId(event.target.value)}>
+                  <select
+                    value={guidePickId}
+                    disabled={selectedCodeLocked}
+                    onChange={(event) => setGuidePickId(event.target.value)}
+                  >
                     <option value="">Choose a guide</option>
                     {(libraryPayload?.modules ?? []).map((module) => (
                       <option key={module.id} value={module.id}>
@@ -1358,7 +2467,7 @@ export default function OwnerClinicDetailPage() {
                     className="button secondary action-button"
                     type="button"
                     onClick={() => addGuideToCodeField("guideIdsText")}
-                    disabled={!guidePickId}
+                    disabled={!guidePickId || selectedCodeLocked}
                   >
                     Add selected
                   </button>
@@ -1366,7 +2475,7 @@ export default function OwnerClinicDetailPage() {
                     className="button secondary action-button"
                     type="button"
                     onClick={() => addGuideToCodeField("recommendedGuideIdsText")}
-                    disabled={!guidePickId}
+                    disabled={!guidePickId || selectedCodeLocked}
                   >
                     Add recommended
                   </button>
@@ -1378,6 +2487,7 @@ export default function OwnerClinicDetailPage() {
                   <span>Selected guide IDs</span>
                   <textarea
                     value={codeEditorForm.guideIdsText}
+                    disabled={selectedCodeLocked}
                     onChange={(event) =>
                       setCodeEditorForm((current) => ({
                         ...current,
@@ -1392,6 +2502,7 @@ export default function OwnerClinicDetailPage() {
                   <span>Recommended guide IDs</span>
                   <textarea
                     value={codeEditorForm.recommendedGuideIdsText}
+                    disabled={selectedCodeLocked}
                     onChange={(event) =>
                       setCodeEditorForm((current) => ({
                         ...current,
@@ -1402,9 +2513,346 @@ export default function OwnerClinicDetailPage() {
                   />
                 </label>
               </div>
+
+              <details className="advanced-panel">
+                <summary>Create missing education guide inline and assign to this code</summary>
+                <div className="form-stack">
+                  <div className="grid-two">
+                    <label className="field">
+                      <span>Guide title</span>
+                      <input
+                        value={inlineGuideForm.title}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineGuideForm((current) => ({
+                            ...current,
+                            title: event.target.value,
+                          }))
+                        }
+                        placeholder="Using Your Compression Wrap"
+                        required
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Summary</span>
+                      <input
+                        value={inlineGuideForm.summary}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineGuideForm((current) => ({
+                            ...current,
+                            summary: event.target.value,
+                          }))
+                        }
+                        placeholder="Short patient-facing summary"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Categories</span>
+                      <input
+                        value={inlineGuideForm.categories}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineGuideForm((current) => ({
+                            ...current,
+                            categories: event.target.value,
+                          }))
+                        }
+                        placeholder="clinic-instructions, box-item-instructions"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Box item keys</span>
+                      <input
+                        value={inlineGuideForm.boxItemKeys}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineGuideForm((current) => ({
+                            ...current,
+                            boxItemKeys: event.target.value,
+                          }))
+                        }
+                        placeholder="compression_wrap"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Procedure names</span>
+                      <input
+                        value={inlineGuideForm.procedureNames}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineGuideForm((current) => ({
+                            ...current,
+                            procedureNames: event.target.value,
+                          }))
+                        }
+                        placeholder="Defaults to the code procedure if blank"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Video URL</span>
+                      <input
+                        value={inlineGuideForm.videoUrl}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineGuideForm((current) => ({
+                            ...current,
+                            videoUrl: event.target.value,
+                          }))
+                        }
+                        placeholder="Optional"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Recommendation label</span>
+                      <input
+                        value={inlineGuideForm.recommendationLabel}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineGuideForm((current) => ({
+                            ...current,
+                            recommendationLabel: event.target.value,
+                          }))
+                        }
+                        placeholder="Start here"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Recommendation order</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={inlineGuideForm.recommendationOrder}
+                        disabled={selectedCodeLocked}
+                        onChange={(event) =>
+                          setInlineGuideForm((current) => ({
+                            ...current,
+                            recommendationOrder: event.target.value,
+                          }))
+                        }
+                        placeholder="0"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="field">
+                    <span>Guide body</span>
+                    <textarea
+                      value={inlineGuideForm.body}
+                      disabled={selectedCodeLocked}
+                      onChange={(event) =>
+                        setInlineGuideForm((current) => ({
+                          ...current,
+                          body: event.target.value,
+                        }))
+                      }
+                      placeholder="Patient-facing guide content"
+                      rows={5}
+                      required
+                    />
+                  </label>
+
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={inlineGuideForm.assignAsRecommended}
+                      disabled={selectedCodeLocked}
+                      onChange={(event) =>
+                        setInlineGuideForm((current) => ({
+                          ...current,
+                          assignAsRecommended: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Add as recommended guide for this activation code</span>
+                  </label>
+
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => void handleCreateInlineGuide()}
+                    disabled={inlineGuideSaving || selectedCodeLocked}
+                  >
+                    {inlineGuideSaving ? <Loader2 size={16} className="spin" /> : <BookPlus size={16} />}
+                    Create guide and add to code
+                  </button>
+                </div>
+              </details>
             </div>
 
-            <button className="button primary" type="submit" disabled={codeEditorSaving}>
+            <div className="info-card form-stack">
+              <div className="section-heading compact-section-heading">
+                <div>
+                  <p className="eyebrow">Preview before finalizing</p>
+                  <h3>PatientSnapshot contents</h3>
+                  <p className="muted">
+                    Preview the frozen kit-only patient view before this box leaves fulfillment.
+                    Finalizing freezes the snapshot so future template, bundle, item, or guide edits do not change this patient’s instructions.
+                  </p>
+                </div>
+              </div>
+
+              <div className="action-row">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => void handlePreviewSnapshot()}
+                  disabled={snapshotPreviewLoading || !selectedCodeIsTier1}
+                >
+                  {snapshotPreviewLoading ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}
+                  Preview PatientSnapshot
+                </button>
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={() => void handleFinalizeCode()}
+                  disabled={
+                    lifecycleLoading === "finalize" ||
+                    selectedCodeLocked ||
+                    !selectedCodeCanFinalize ||
+                    !snapshotValidation?.valid
+                  }
+                >
+                  {lifecycleLoading === "finalize" ? (
+                    <Loader2 size={16} className="spin" />
+                  ) : (
+                    <LockKeyhole size={16} />
+                  )}
+                  Finalize and freeze snapshot
+                </button>
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => void handlePackCode()}
+                  disabled={
+                    lifecycleLoading === "pack" ||
+                    !selectedCodeCanPack ||
+                    selectedCode?.status === "PACKED"
+                  }
+                >
+                  {lifecycleLoading === "pack" ? (
+                    <Loader2 size={16} className="spin" />
+                  ) : (
+                    <PackageCheck size={16} />
+                  )}
+                  {selectedCode?.status === "PACKED" ? "Packed" : "Mark packed"}
+                </button>
+              </div>
+
+              {!selectedCodeIsTier1 ? (
+                <div className="alert error">
+                  Snapshot preview/finalize is only available for kit-only Tier 1 activation codes.
+                </div>
+              ) : null}
+
+              {snapshotValidation ? (
+                <div className={snapshotValidation.valid ? "alert success" : "alert error"}>
+                  <strong>{snapshotValidation.valid ? "Validation passed." : "Validation needs attention."}</strong>
+                  {snapshotValidation.issues.length ? (
+                    <ul className="compact-list">
+                      {snapshotValidation.issues.map((issue) => (
+                        <li key={issue.code}>{issue.message}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span> This code is ready to finalize.</span>
+                  )}
+                </div>
+              ) : null}
+
+              {snapshotPreview ? (
+                <div className="snapshot-preview-grid">
+                  <div className="library-preview-card">
+                    <h3>Snapshot summary</h3>
+                    <dl className="meta-list">
+                      <div>
+                        <dt>Procedure</dt>
+                        <dd>{snapshotPreview.snapshot.procedureName || "—"}</dd>
+                      </div>
+                      <div>
+                        <dt>Product mode</dt>
+                        <dd>{formatProductMode(snapshotPreview.snapshot.productMode)}</dd>
+                      </div>
+                      <div>
+                        <dt>Box items</dt>
+                        <dd>{snapshotPreview.counts.boxItems}</dd>
+                      </div>
+                      <div>
+                        <dt>Guides</dt>
+                        <dd>{snapshotPreview.counts.guides}</dd>
+                      </div>
+                      <div>
+                        <dt>Videos</dt>
+                        <dd>{snapshotPreview.counts.videos}</dd>
+                      </div>
+                    </dl>
+                  </div>
+
+                  <div className="library-preview-card">
+                    <h3>Final box items</h3>
+                    {snapshotPreview.snapshot.boxItems.length ? (
+                      <div className="library-module-row-meta">
+                        {snapshotPreview.snapshot.boxItems.map((item, index) => (
+                          <span key={`${item.key ?? item.label ?? "item"}-${index}`}>
+                            {item.name || item.label || item.key || "Box item"}
+                            {item.note ? ` · ${item.note}` : ""}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted">No box items in preview.</p>
+                    )}
+                  </div>
+
+                  <div className="library-preview-card">
+                    <h3>Assigned guides</h3>
+                    {snapshotPreview.snapshot.guides.length ? (
+                      <div className="library-module-list compact-list-panel">
+                        {snapshotPreview.snapshot.guides.map((guide, index) => (
+                          <div className="library-module-row" key={`${guide.id ?? guide.title ?? "guide"}-${index}`}>
+                            <div className="library-module-title">{guide.title || guide.id || "Education guide"}</div>
+                            {guide.summary ? <p className="muted">{guide.summary}</p> : null}
+                            <div className="library-module-row-meta">
+                              {guide.recommendationLabel ? <span>{guide.recommendationLabel}</span> : null}
+                              {guide.videoUrl ? <span>Video included</span> : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted">No guides in preview.</p>
+                    )}
+                  </div>
+
+                  <div className="library-preview-card">
+                    <h3>Clinic notes and videos</h3>
+                    <p className="muted">
+                      {snapshotPreview.snapshot.videos.length
+                        ? `${snapshotPreview.snapshot.videos.length} video(s) included.`
+                        : "No videos included."}
+                    </p>
+                    {snapshotPreview.snapshot.recommendedGuideIds.length ? (
+                      <div className="library-module-row-meta">
+                        {snapshotPreview.snapshot.recommendedGuideIds.map((guideId) => (
+                          <span key={guideId}>Recommended: {findGuideTitle(libraryPayload, guideId)}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <p className="muted">Use Preview PatientSnapshot before finalizing this code.</p>
+              )}
+            </div>
+
+            <button className="button primary" type="submit" disabled={codeEditorSaving || selectedCodeLocked}>
               {codeEditorSaving ? (
                 <>
                   <Loader2 size={16} className="spin" />
@@ -1615,6 +3063,7 @@ export default function OwnerClinicDetailPage() {
                     <td>
                       <div className="cell-strong">{batch.id}</div>
                       <div className="cell-muted">{batch.clinicTag || "—"}</div>
+                      <div className="cell-muted">Order: {batch.clinicOrderId || "—"}</div>
                     </td>
                     <td>{batch.quantity}</td>
                     <td>{batch.boxType || "—"}</td>
@@ -1835,6 +3284,7 @@ export default function OwnerClinicDetailPage() {
                     <td>
                       <div className="cell-strong">{code.code}</div>
                       <div className="cell-muted">Batch: {code.batchId || "—"}</div>
+                      <div className="cell-muted">Order: {code.clinicOrderId || "—"}</div>
                     </td>
                     <td>{formatActivationCodeStatus(code.status)}</td>
                     <td>
@@ -1904,7 +3354,7 @@ export default function OwnerClinicDetailPage() {
           <div className="info-card danger-card">
             <h3>Delete test clinic</h3>
             <p className="muted">
-              Hard delete is only for empty test clinics. Clinics with claimed patients, logs, recovery plans, alerts, or reminder history will be blocked.
+              Hard delete is only for empty test clinics. Clinics with claimed patients or protected operational history will be blocked.
             </p>
             {deleteConfirmationOpen ? (
               <form className="form-stack" onSubmit={handleDeleteClinic}>
