@@ -11,6 +11,7 @@ import { requireAuth } from "../../middleware/requireAuth.js";
 import { getUserIdOrRespond } from "../../utils/requireUser.js";
 import { prisma } from "../../db/prisma.js";
 import { generatePlan } from "../../services/plan/generatePlan.js";
+import { requireFullPlatformRecoveryAccess } from "../../services/tier1AccessGuard.js";
 
 export const planRouter = Router();
 
@@ -74,6 +75,7 @@ planRouter.get("/admin/seed", async (req, res): Promise<any> => {
 
 // Auth required for all /plan endpoints
 planRouter.use(requireAuth);
+planRouter.use(requireFullPlatformRecoveryAccess("Recovery tracking"));
 
 /**
  * Canonical 6-field categorical config (NO DEFAULTS).
@@ -458,7 +460,7 @@ planRouter.get("/current/resolved", async (req, res) => {
 
 /**
  * GET /plan/today/resolved
- * Returns the full resolved plan. The frontend is responsible for calculating 
+ * Returns the full resolved plan. The frontend is responsible for calculating
  * local day offsets to prevent timezone/DST drift.
  * DEV: add ?regen=1 to rebuild plan (ignored in production).
  *

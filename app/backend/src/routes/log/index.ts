@@ -12,6 +12,7 @@ import { getUserIdOrRespond } from "../../utils/requireUser.js";
 import { AuditService, AuditCategory, AuditStatus, AuditSeverity } from "../../services/AuditService.js";
 import { PdfService } from "../../services/export/PdfService.js";
 import { syncOperationalAlertsForPatient } from "../../services/operationalAlerts.js";
+import { requireFullPlatformRecoveryAccess } from "../../services/tier1AccessGuard.js";
 
 export const logRouter = Router();
 
@@ -20,6 +21,7 @@ logRouter.use(requireAuth);
 logRouter.use(requireRole([UserRole.PATIENT]));
 logRouter.use(requireConsent);
 logRouter.use(requireOnboarding);
+logRouter.use(requireFullPlatformRecoveryAccess("Recovery logs and check-ins"));
 
 const baseEntrySchema = {
   painLevel: z.number().int().min(1).max(10),

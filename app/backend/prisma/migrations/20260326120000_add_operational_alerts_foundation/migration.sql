@@ -47,4 +47,3 @@ ALTER TABLE "OperationalAlert" ADD CONSTRAINT "OperationalAlert_patientUserId_fk
 
 -- AddForeignKey
 ALTER TABLE "OperationalAlert" ADD CONSTRAINT "OperationalAlert_activationCodeId_fkey" FOREIGN KEY ("activationCodeId") REFERENCES "ActivationCode"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
