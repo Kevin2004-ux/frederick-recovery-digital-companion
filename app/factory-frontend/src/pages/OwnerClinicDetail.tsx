@@ -432,6 +432,10 @@ function splitInputValues(value: string) {
   return parseIdsText(value);
 }
 
+function uniqueText(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.map((value) => value?.trim() ?? "").filter(Boolean)));
+}
+
 function parseCategoryText(value: string): RecoveryLibraryCategoryKey[] {
   const allowed = new Set(RECOVERY_LIBRARY_CATEGORY_KEYS);
   const categories = splitInputValues(value).filter((category): category is RecoveryLibraryCategoryKey =>
@@ -1304,6 +1308,17 @@ export default function OwnerClinicDetailPage() {
   }
 
   function buildPackingListText(list: Tier1PackingListResponse) {
+    const instructionGuideIds = uniqueText([
+      ...list.fulfillment.assignedGuideIds,
+      ...list.fulfillment.recommendedGuideIds,
+      ...list.fulfillment.procedureGuideIds,
+      ...list.fulfillment.boxItemGuideIds,
+    ]);
+    const instructionGuideIdSet = new Set(instructionGuideIds);
+    const instructionGuides = list.fulfillment.guides.filter(
+      (guide) => guide.id && instructionGuideIdSet.has(guide.id),
+    );
+    const generalLibraryGuideCount = Math.max(list.fulfillment.counts.guides - instructionGuides.length, 0);
     const lines = [
       `Packing list for ${list.activationCode.code}`,
       `Clinic: ${list.activationCode.clinicName || list.activationCode.clinicTag || "—"}`,
@@ -1323,13 +1338,15 @@ export default function OwnerClinicDetailPage() {
           })
         : ["No box items assigned."]),
       "",
-      "Assigned guides:",
-      ...(list.fulfillment.guides.length
-        ? list.fulfillment.guides.map((guide, index) => {
+      "Box-specific patient instructions:",
+      ...(instructionGuides.length
+        ? instructionGuides.map((guide, index) => {
             const label = guide.recommendationLabel ? ` — ${guide.recommendationLabel}` : "";
             return `${index + 1}. ${formatSnapshotGuideTitle(guide)}${label}`;
           })
-        : ["No guides assigned."]),
+        : ["No box-specific guides assigned."]),
+      "",
+      `General library frozen separately: ${generalLibraryGuideCount} article(s)`,
     ];
 
     return lines.join("\n");
@@ -1858,18 +1875,77 @@ export default function OwnerClinicDetailPage() {
   const visibleInheritedBoxItems =
     formInheritedBoxItems.filter((item) => !item.key || !removedBoxItemKeySet.has(item.key));
   const codeLevelBoxItems = parseBoxItemsText(codeEditorForm.assignedBoxItemsText);
-  const finalPreviewBoxItems = [
-    ...codeLevelBoxItems.map((item) => ({
+  const codeLevelBoxItemRows = codeLevelBoxItems.map((item) => {
+    const catalogItem = item.key ? catalogItemByKey.get(item.key) : null;
+    const label = catalogItem?.name ?? item.label;
+
+    return {
       key: item.key ?? null,
-      label: item.label,
-      name: item.label,
+      label,
+      name: label,
+      category: catalogItem?.category ?? null,
+      description: catalogItem?.description ?? null,
+      instructions: catalogItem?.instructions ?? null,
+      defaultEducationModuleId: catalogItem?.defaultEducationModuleId ?? null,
       note: item.note ?? null,
-    })),
-    ...visibleInheritedBoxItems.filter((item) => {
+      sourceLabel: catalogItem ? "Catalog item added to this code" : "Code-level custom item",
+      sourceDetail: catalogItem
+        ? `Catalog key: ${catalogItem.key}`
+        : "Typed directly for this one activation code",
+      sourceTone: catalogItem ? "active" : "warning",
+    };
+  });
+  const inheritedBoxItemRows = visibleInheritedBoxItems
+    .filter((item) => {
       const dedupeKey = item.key ?? item.label;
       return !codeLevelBoxItems.some((codeItem) => (codeItem.key ?? codeItem.label) === dedupeKey);
-    }),
-  ];
+    })
+    .map((item) => ({
+      key: item.key ?? null,
+      label: item.label,
+      name: item.name || item.label,
+      category: item.category ?? null,
+      description: item.description ?? null,
+      instructions: item.instructions ?? null,
+      defaultEducationModuleId: item.defaultEducationModuleId ?? null,
+      note: item.note ?? null,
+      sourceLabel: selectedFormTemplate ? "From selected BoxTemplate" : "Inherited from batch/template",
+      sourceDetail: selectedFormTemplate
+        ? selectedFormTemplate.name
+        : selectedCode?.batchDefaults?.boxTemplateId ?? "Batch default",
+      sourceTone: "inactive",
+    }));
+  const finalPreviewBoxItems = [...codeLevelBoxItemRows, ...inheritedBoxItemRows];
+  const snapshotInstructionGuideIds = snapshotPreview
+    ? uniqueText([
+        ...snapshotPreview.snapshot.assignedGuideIds,
+        ...snapshotPreview.snapshot.recommendedGuideIds,
+        ...snapshotPreview.snapshot.procedureGuideIds,
+        ...snapshotPreview.snapshot.boxItemGuideIds,
+      ])
+    : [];
+  const snapshotInstructionGuideIdSet = new Set(snapshotInstructionGuideIds);
+  const snapshotPatientInstructionGuides = snapshotPreview
+    ? snapshotPreview.snapshot.guides.filter((guide) => guide.id && snapshotInstructionGuideIdSet.has(guide.id))
+    : [];
+  const snapshotGeneralLibraryGuideCount = snapshotPreview
+    ? Math.max(snapshotPreview.counts.guides - snapshotPatientInstructionGuides.length, 0)
+    : 0;
+  const packingInstructionGuideIds = packingList
+    ? uniqueText([
+        ...packingList.fulfillment.assignedGuideIds,
+        ...packingList.fulfillment.recommendedGuideIds,
+        ...packingList.fulfillment.procedureGuideIds,
+        ...packingList.fulfillment.boxItemGuideIds,
+      ])
+    : [];
+  const packingInstructionGuideIdSet = new Set(packingInstructionGuideIds);
+  const packingPatientInstructionGuides = packingList
+    ? packingList.fulfillment.guides.filter((guide) => guide.id && packingInstructionGuideIdSet.has(guide.id))
+    : [];
+  const packingGeneralLibraryGuideCount = packingList
+    ? Math.max(packingList.fulfillment.counts.guides - packingPatientInstructionGuides.length, 0)
+    : 0;
   const selectedCodeLocked = isTier1SnapshotLocked(selectedCode);
   const selectedCodeIsTier1 = selectedCode?.productMode === "kit_only";
   const selectedCodeCanFinalize =
@@ -1897,12 +1973,12 @@ export default function OwnerClinicDetailPage() {
     {
       label: "Guide or bundle assigned",
       description: snapshotValidation?.preview
-        ? `${snapshotValidation.preview.counts.guides} guide(s) in preview`
+        ? `${snapshotInstructionGuideIds.length} box/procedure guide(s); ${snapshotGeneralLibraryGuideCount} library article(s) frozen separately`
         : codeEditorForm.educationBundleId
           ? "Bundle selected; run preview"
           : "Run preview after assigning education",
       passed:
-        (snapshotValidation?.preview?.counts.guides ?? 0) > 0 ||
+        snapshotInstructionGuideIds.length > 0 ||
         Boolean(snapshotValidation?.preview?.snapshot.educationBundleId),
     },
     {
@@ -1960,11 +2036,12 @@ export default function OwnerClinicDetailPage() {
       <section className="panel hero-panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Clinic workspace</p>
+            <p className="eyebrow">Tier 1 fulfillment</p>
             <h1>{detail.clinic.name || detail.clinic.clinicTag}</h1>
             <p className="muted">
-              Manage clinic overview, logins, activation batches, generated codes, code configuration, and lifecycle actions for{" "}
-              <strong>{detail.clinic.clinicTag}</strong>.
+              Build kit-only recovery boxes from order to packed handoff. Start with a Clinic Order,
+              generate codes, configure one box at a time, preview the patient view, then finalize,
+              pack, and print.
             </p>
             {detail.clinic.archivedAt ? (
               <p className="muted">
@@ -2011,22 +2088,21 @@ export default function OwnerClinicDetailPage() {
       <section className="panel clinic-workspace-panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Workspace map</p>
-            <h2>Manage this clinic from one place</h2>
+            <p className="eyebrow">Fulfillment flow</p>
+            <h2>Build boxes in this order</h2>
             <p className="muted">
-              Use these sections to move from clinic setup to activation-code generation and code-level configuration.
+              The primary path stays on this page: create the order, generate codes, open a code,
+              build the box, preview, finalize, pack, then print or export.
             </p>
           </div>
         </div>
-        <nav className="workspace-nav" aria-label="Clinic workspace sections">
-          <a href="#clinic-overview">Clinic overview</a>
-          <a href="#clinic-orders">Clinic orders</a>
-          <a href="#clinic-users">Clinic users / logins</a>
-          <a href="#activation-batches">Activation batches</a>
-          <a href="#clinic-orders">Generate from order</a>
-          <a href="#activation-codes">Activation codes</a>
-          <a href="#code-assignment-editor">Configure code</a>
-          <a href="#clinic-lifecycle">Delete / archive clinic</a>
+        <nav className="workspace-nav fulfillment-stepper" aria-label="Tier 1 fulfillment steps">
+          <a href="#clinic-orders"><span>1</span>Create order</a>
+          <a href="#clinic-orders"><span>2</span>Generate codes</a>
+          <a href="#code-assignment-editor"><span>3</span>Build one box</a>
+          <a href="#snapshot-preview-panel"><span>4</span>Preview & finalize</a>
+          <a href="#packing-list-panel"><span>5</span>Pack / print</a>
+          <a href="#advanced-clinic-admin"><span>+</span>Advanced</a>
         </nav>
       </section>
 
@@ -2056,7 +2132,9 @@ export default function OwnerClinicDetailPage() {
         </div>
       ) : null}
 
-      <section className="grid-two owner-detail-grid" id="clinic-overview">
+      <details className="advanced-panel admin-collapsible" id="clinic-overview">
+        <summary>Clinic profile and activity</summary>
+        <div className="grid-two owner-detail-grid">
         <div className="panel">
           <div className="section-heading">
             <div>
@@ -2111,16 +2189,17 @@ export default function OwnerClinicDetailPage() {
             ))}
           </div>
         </div>
-      </section>
+        </div>
+      </details>
 
       <section className="panel" id="clinic-orders">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Clinic Orders</p>
-            <h2>Tier 1 box requests</h2>
+            <p className="eyebrow">Step 1</p>
+            <h2>Create or open a box order</h2>
             <p className="muted">
-              Create kit-only ClinicOrders, set default box and education assignments, then
-              generate activation codes from the order so each code inherits the fulfillment setup.
+              Set the default procedure, box template, and education bundle once, then generate the codes
+              that map one-to-one with physical boxes.
             </p>
           </div>
           <button
@@ -2135,7 +2214,7 @@ export default function OwnerClinicDetailPage() {
         </div>
 
         <div className="info-card owner-form-card">
-          <h3>Create ClinicOrder</h3>
+          <h3>New box order</h3>
           {clinicArchived ? (
             <div className="alert error">
               This clinic is archived. New Tier 1 orders cannot be created until the clinic is provisioned again.
@@ -2304,7 +2383,7 @@ export default function OwnerClinicDetailPage() {
               ) : (
                 <>
                   <PlusCircle size={16} />
-                  Create ClinicOrder
+                  Create box order
                 </>
               )}
             </button>
@@ -2313,9 +2392,9 @@ export default function OwnerClinicDetailPage() {
 
         <div className="table-wrap">
           {clinicOrdersLoading && clinicOrders.length === 0 ? (
-            <p className="muted">Loading ClinicOrders...</p>
+            <p className="muted">Loading box orders...</p>
           ) : clinicOrders.length === 0 ? (
-            <p className="muted">No ClinicOrders yet. Create one above to start Tier 1 fulfillment.</p>
+            <p className="muted">No box orders yet. Create one above to start Tier 1 fulfillment.</p>
           ) : (
             <table className="data-table">
               <thead>
@@ -2424,7 +2503,7 @@ export default function OwnerClinicDetailPage() {
                           ) : (
                             <>
                               <PlusCircle size={16} />
-                              Generate Tier 1 codes
+                              Generate box codes
                             </>
                           )}
                         </button>
@@ -2474,11 +2553,11 @@ export default function OwnerClinicDetailPage() {
       <section className="panel" id="code-assignment-editor">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Configure individual code</p>
-            <h2>Activation code assignment editor</h2>
+            <p className="eyebrow">Step 3</p>
+            <h2>Build this box</h2>
             <p className="muted">
-              Select a generated code to adjust its bundle, box template, procedure, product mode,
-              and code-level guide overrides.
+              Open one code from the order, confirm the physical contents, choose the patient instructions,
+              preview what the patient will see, then finalize before packing.
             </p>
           </div>
         </div>
@@ -2492,7 +2571,7 @@ export default function OwnerClinicDetailPage() {
         {codeEditorLoading ? (
           <div className="info-card">
             <Loader2 size={18} className="spin" />
-            <p className="muted">Loading activation code assignment.</p>
+            <p className="muted">Loading this box setup.</p>
           </div>
         ) : selectedCode ? (
           <form className="form-stack" onSubmit={handleSaveCodeAssignment}>
@@ -2505,6 +2584,7 @@ export default function OwnerClinicDetailPage() {
 
             <div className="grid-two">
               <div className="info-card">
+                <p className="eyebrow">Box code</p>
                 <h3>{selectedCode.code}</h3>
                 <dl className="meta-list">
                   <div>
@@ -2528,7 +2608,7 @@ export default function OwnerClinicDetailPage() {
                     <dd>{selectedCode.clinicOrderId || selectedCode.batchDefaults?.clinicOrderId || "—"}</dd>
                   </div>
                   <div>
-                    <dt>Current snapshot</dt>
+                    <dt>Frozen patient view</dt>
                     <dd>
                       {selectedCode.currentSnapshot
                         ? `v${selectedCode.currentSnapshot.version} · ${formatDateTime(selectedCode.currentSnapshot.createdAt)}`
@@ -2539,7 +2619,8 @@ export default function OwnerClinicDetailPage() {
               </div>
 
               <div className="info-card">
-                <h3>Selected preview</h3>
+                <p className="eyebrow">Current setup</p>
+                <h3>Template and education</h3>
                 <p className="muted">
                   {selectedFormBundle
                     ? `${selectedFormBundle.name} · ${selectedFormBundle.moduleCount} guide(s)`
@@ -2563,10 +2644,11 @@ export default function OwnerClinicDetailPage() {
               <div className="info-card form-stack print-hidden">
                 <div className="section-heading compact-section-heading">
                   <div>
-                    <p className="eyebrow">Fulfillment tools</p>
-                    <h3>Frozen snapshot packing</h3>
+                    <p className="eyebrow">Step 5</p>
+                    <h3>Pack / print after finalizing</h3>
                     <p className="muted">
-                      Packing lists are available after finalization and read from the PatientSnapshot, not from live templates or bundles.
+                      Packing lists unlock after finalization and come from the frozen patient view,
+                      not from later template or bundle edits.
                     </p>
                   </div>
                 </div>
@@ -2610,7 +2692,7 @@ export default function OwnerClinicDetailPage() {
 
                 {["FINALIZED", "PACKED", "CLAIMED"].includes(selectedCode.status) ? (
                   <details className="advanced-panel danger-panel">
-                    <summary>Owner reset_for_reissue (audited)</summary>
+                  <summary>Reissue this code with an audit reason</summary>
                     <div className="form-stack">
                       <p className="muted">
                         Claimed or finalized codes are not casually reusable. Reset only when an owner intentionally voids the current fulfillment path and records why.
@@ -2742,9 +2824,9 @@ export default function OwnerClinicDetailPage() {
             </div>
 
             <div className="info-card form-stack">
-              <h3>Final box contents for this activation code</h3>
+              <h3>Physical items in this box</h3>
               <p className="muted">
-                Add or remove items for this one code only. The master box template is not changed.
+                Confirm what goes into this one physical box. Each item shows where it came from and what the patient will read.
               </p>
 
               <div className="grid-two">
@@ -2805,14 +2887,31 @@ export default function OwnerClinicDetailPage() {
                 </div>
 
                 <div className="info-card">
-                  <h3>Final resolved contents</h3>
+                  <h3>Box checklist preview</h3>
                   {finalPreviewBoxItems.length ? (
-                    <div className="library-module-row-meta">
+                    <div className="box-item-source-list">
                       {finalPreviewBoxItems.map((item) => (
-                        <span key={item.key ?? item.label}>
-                          {item.name || item.label}
-                          {item.note ? ` · ${item.note}` : ""}
-                        </span>
+                        <div className="box-item-source-card" key={item.key ?? item.label}>
+                          <div className="library-assignment-header">
+                            <div>
+                              <strong>{item.name || item.label}</strong>
+                              <span>
+                                {item.key ? `Key: ${item.key}` : "No catalog key"}
+                                {item.category ? ` · ${item.category}` : ""}
+                              </span>
+                            </div>
+                            <span className={`status-pill ${item.sourceTone}`}>{item.sourceLabel}</span>
+                          </div>
+                          <p className="muted">{item.sourceDetail}</p>
+                          {item.note ? <p className="muted"><strong>Box note:</strong> {item.note}</p> : null}
+                          {item.description ? <p className="muted"><strong>Description:</strong> {item.description}</p> : null}
+                          {item.instructions ? <p className="muted"><strong>Instructions:</strong> {item.instructions}</p> : null}
+                          {item.defaultEducationModuleId ? (
+                            <p className="muted">
+                              <strong>Linked guide:</strong> {findGuideTitle(libraryPayload, item.defaultEducationModuleId)}
+                            </p>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
                   ) : (
@@ -2822,7 +2921,7 @@ export default function OwnerClinicDetailPage() {
               </div>
 
               <label className="field">
-                <span>Code-level added items and notes</span>
+                <span>Items added only to this code</span>
                 <textarea
                   value={codeEditorForm.assignedBoxItemsText}
                   disabled={selectedCodeLocked}
@@ -2832,13 +2931,13 @@ export default function OwnerClinicDetailPage() {
                       assignedBoxItemsText: event.target.value,
                     }))
                   }
-                  placeholder={"icepack|Ice Pack|Use 20 minutes at a time\ncompression_socks|Compression Socks"}
+                  placeholder={"ice_pack|Ice Pack|Use 20 minutes at a time\ncompression_socks|Compression Socks"}
                   rows={4}
                 />
               </label>
 
               <label className="field">
-                <span>Removed inherited item keys</span>
+                <span>Template item keys removed from this code</span>
                 <textarea
                   value={codeEditorForm.removedBoxItemKeysText}
                   disabled={selectedCodeLocked}
@@ -2854,7 +2953,7 @@ export default function OwnerClinicDetailPage() {
               </label>
 
               <details className="advanced-panel">
-                <summary>Create missing BoxItem inline and assign to this code</summary>
+                <summary>Create a missing box item without leaving this box</summary>
                 <div className="form-stack">
                   <div className="grid-two">
                     <label className="field">
@@ -2943,14 +3042,18 @@ export default function OwnerClinicDetailPage() {
                     disabled={inlineBoxItemSaving || selectedCodeLocked}
                   >
                     {inlineBoxItemSaving ? <Loader2 size={16} className="spin" /> : <PlusCircle size={16} />}
-                    Create BoxItem and add to code
+                    Create item and add to this box
                   </button>
                 </div>
               </details>
             </div>
 
             <div className="info-card form-stack">
-              <h3>Guide overrides</h3>
+              <h3>Patient instructions for this box</h3>
+              <p className="muted">
+                Add only the procedure or item-specific guides that should be emphasized for this box.
+                The full education library remains available separately.
+              </p>
               <div className="grid-two">
                 <label className="field">
                   <span>Select an existing guide</span>
@@ -2989,7 +3092,7 @@ export default function OwnerClinicDetailPage() {
 
               <div className="grid-two">
                 <label className="field">
-                  <span>Selected guide IDs</span>
+                  <span>Guides assigned to this patient view</span>
                   <textarea
                     value={codeEditorForm.guideIdsText}
                     disabled={selectedCodeLocked}
@@ -3004,7 +3107,7 @@ export default function OwnerClinicDetailPage() {
                 </label>
 
                 <label className="field">
-                  <span>Recommended guide IDs</span>
+                  <span>Recommended / start-here guides</span>
                   <textarea
                     value={codeEditorForm.recommendedGuideIdsText}
                     disabled={selectedCodeLocked}
@@ -3020,7 +3123,7 @@ export default function OwnerClinicDetailPage() {
               </div>
 
               <details className="advanced-panel">
-                <summary>Create missing education guide inline and assign to this code</summary>
+                <summary>Create a missing patient guide without leaving this box</summary>
                 <div className="form-stack">
                   <div className="grid-two">
                     <label className="field">
@@ -3186,20 +3289,20 @@ export default function OwnerClinicDetailPage() {
                     disabled={inlineGuideSaving || selectedCodeLocked}
                   >
                     {inlineGuideSaving ? <Loader2 size={16} className="spin" /> : <BookPlus size={16} />}
-                    Create guide and add to code
+                    Create guide and add to this box
                   </button>
                 </div>
               </details>
             </div>
 
-            <div className="info-card form-stack">
+            <div className="info-card form-stack" id="snapshot-preview-panel">
               <div className="section-heading compact-section-heading">
                 <div>
-                  <p className="eyebrow">Preview before finalizing</p>
-                  <h3>PatientSnapshot contents</h3>
+                  <p className="eyebrow">Step 4</p>
+                  <h3>Preview patient view before finalizing</h3>
                   <p className="muted">
-                    Preview the frozen kit-only patient view before this box leaves fulfillment.
-                    Finalizing freezes the snapshot so future template, bundle, item, or guide edits do not change this patient’s instructions.
+                    Check the exact kit-only instructions this patient will see. Finalizing freezes this view
+                    so future template, bundle, item, or guide edits do not change this box.
                   </p>
                 </div>
               </div>
@@ -3212,7 +3315,7 @@ export default function OwnerClinicDetailPage() {
                   disabled={snapshotPreviewLoading || !selectedCodeIsTier1}
                 >
                   {snapshotPreviewLoading ? <Loader2 size={16} className="spin" /> : <Eye size={16} />}
-                  Preview PatientSnapshot
+                  Preview patient view
                 </button>
                 <button
                   className="button primary"
@@ -3230,7 +3333,7 @@ export default function OwnerClinicDetailPage() {
                   ) : (
                     <LockKeyhole size={16} />
                   )}
-                  Finalize and freeze snapshot
+                  Finalize patient view
                 </button>
                 <button
                   className="button secondary"
@@ -3308,7 +3411,11 @@ export default function OwnerClinicDetailPage() {
                       </div>
                       <div>
                         <dt>Guides</dt>
-                        <dd>{snapshotPreview.counts.guides}</dd>
+                        <dd>{snapshotPatientInstructionGuides.length} box-specific</dd>
+                      </div>
+                      <div>
+                        <dt>Full library</dt>
+                        <dd>{snapshotGeneralLibraryGuideCount} article(s) frozen separately</dd>
                       </div>
                       <div>
                         <dt>Videos</dt>
@@ -3320,12 +3427,20 @@ export default function OwnerClinicDetailPage() {
                   <div className="library-preview-card">
                     <h3>Final box items</h3>
                     {snapshotPreview.snapshot.boxItems.length ? (
-                      <div className="library-module-row-meta">
+                      <div className="box-item-source-list">
                         {snapshotPreview.snapshot.boxItems.map((item, index) => (
-                          <span key={`${item.key ?? item.label ?? "item"}-${index}`}>
-                            {item.name || item.label || item.key || "Box item"}
-                            {item.note ? ` · ${item.note}` : ""}
-                          </span>
+                          <div className="box-item-source-card" key={`${item.key ?? item.label ?? "item"}-${index}`}>
+                            <div className="library-assignment-header">
+                              <div>
+                                <strong>{formatSnapshotBoxItemName(item)}</strong>
+                                <span>{item.key ? `Key: ${item.key}` : "No catalog key"}</span>
+                              </div>
+                              <span className="status-pill active">Frozen into patient view</span>
+                            </div>
+                            {item.note ? <p className="muted"><strong>Box note:</strong> {item.note}</p> : null}
+                            {item.description ? <p className="muted"><strong>Description:</strong> {item.description}</p> : null}
+                            {item.instructions ? <p className="muted"><strong>Instructions:</strong> {item.instructions}</p> : null}
+                          </div>
                         ))}
                       </div>
                     ) : (
@@ -3334,27 +3449,32 @@ export default function OwnerClinicDetailPage() {
                   </div>
 
                   <div className="library-preview-card">
-                    <h3>Assigned guides</h3>
-                    {snapshotPreview.snapshot.guides.length ? (
+                    <h3>Box-specific patient instructions</h3>
+                    {snapshotPatientInstructionGuides.length ? (
                       <div className="library-module-list compact-list-panel">
-                        {snapshotPreview.snapshot.guides.map((guide, index) => (
+                        {snapshotPatientInstructionGuides.map((guide, index) => (
                           <div className="library-module-row" key={`${guide.id ?? guide.title ?? "guide"}-${index}`}>
                             <div className="library-module-title">{guide.title || guide.id || "Education guide"}</div>
                             {guide.summary ? <p className="muted">{guide.summary}</p> : null}
                             <div className="library-module-row-meta">
                               {guide.recommendationLabel ? <span>{guide.recommendationLabel}</span> : null}
+                              {guide.id && snapshotPreview.snapshot.procedureGuideIds.includes(guide.id) ? <span>Procedure guide</span> : null}
+                              {guide.id && snapshotPreview.snapshot.boxItemGuideIds.includes(guide.id) ? <span>Box item guide</span> : null}
                               {guide.videoUrl ? <span>Video included</span> : null}
                             </div>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <p className="muted">No guides in preview.</p>
+                      <p className="muted">No box-specific guides in preview. The full library is still frozen separately if available.</p>
                     )}
                   </div>
 
                   <div className="library-preview-card">
-                    <h3>Clinic notes and videos</h3>
+                    <h3>Library, clinic notes, and videos</h3>
+                    <p className="muted">
+                      {snapshotGeneralLibraryGuideCount} general library article(s) are frozen for stability but are not highlighted as assigned box instructions.
+                    </p>
                     <p className="muted">
                       {snapshotPreview.snapshot.videos.length
                         ? `${snapshotPreview.snapshot.videos.length} video(s) included.`
@@ -3375,7 +3495,7 @@ export default function OwnerClinicDetailPage() {
             </div>
 
             {packingList ? (
-              <div className="info-card form-stack packing-list-panel">
+              <div className="info-card form-stack packing-list-panel" id="packing-list-panel">
                 <div className="section-heading compact-section-heading print-hidden">
                   <div>
                     <p className="eyebrow">Packing checklist</p>
@@ -3477,10 +3597,10 @@ export default function OwnerClinicDetailPage() {
                   </div>
 
                   <div className="library-preview-card">
-                    <h3>Assigned guides</h3>
-                    {packingList.fulfillment.guides.length ? (
+                    <h3>Box-specific patient instructions</h3>
+                    {packingPatientInstructionGuides.length ? (
                       <ol className="checklist-list">
-                        {packingList.fulfillment.guides.map((guide, index) => (
+                        {packingPatientInstructionGuides.map((guide, index) => (
                           <li key={`${guide.id ?? guide.title ?? "guide"}-${index}`}>
                             <label>
                               <input type="checkbox" />
@@ -3488,6 +3608,8 @@ export default function OwnerClinicDetailPage() {
                                 <strong>{formatSnapshotGuideTitle(guide)}</strong>
                                 {guide.summary ? <small>{guide.summary}</small> : null}
                                 {guide.recommendationLabel ? <small>Label: {guide.recommendationLabel}</small> : null}
+                                {guide.id && packingList.fulfillment.procedureGuideIds.includes(guide.id) ? <small>Procedure guide</small> : null}
+                                {guide.id && packingList.fulfillment.boxItemGuideIds.includes(guide.id) ? <small>Box item guide</small> : null}
                                 {guide.videoUrl ? <small>Video included</small> : null}
                               </span>
                             </label>
@@ -3495,7 +3617,7 @@ export default function OwnerClinicDetailPage() {
                         ))}
                       </ol>
                     ) : (
-                      <p className="muted">No guides frozen into this snapshot.</p>
+                      <p className="muted">No box-specific guides frozen into this snapshot.</p>
                     )}
                   </div>
                 </div>
@@ -3527,8 +3649,12 @@ export default function OwnerClinicDetailPage() {
                         <dd>{packingList.fulfillment.counts.boxItems}</dd>
                       </div>
                       <div>
-                        <dt>Guides</dt>
-                        <dd>{packingList.fulfillment.counts.guides}</dd>
+                        <dt>Box-specific guides</dt>
+                        <dd>{packingPatientInstructionGuides.length}</dd>
+                      </div>
+                      <div>
+                        <dt>General library</dt>
+                        <dd>{packingGeneralLibraryGuideCount} frozen separately</dd>
                       </div>
                     </dl>
                   </div>
@@ -3554,6 +3680,9 @@ export default function OwnerClinicDetailPage() {
           <p className="muted">Open a generated code to edit its education assignment.</p>
         )}
       </section>
+
+      <details className="advanced-panel admin-collapsible" id="advanced-clinic-admin">
+        <summary>Advanced clinic admin, batches, and all-code list</summary>
 
       <section className="panel" id="clinic-users">
         <div className="section-heading">
@@ -4096,6 +4225,7 @@ export default function OwnerClinicDetailPage() {
           </div>
         </div>
       </section>
+      </details>
     </div>
   );
 }

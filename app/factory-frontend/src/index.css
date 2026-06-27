@@ -626,6 +626,42 @@ h3 {
   background: rgba(20, 81, 63, 0.12);
 }
 
+.fulfillment-stepper a {
+  gap: 8px;
+  padding: 10px 14px 10px 10px;
+}
+
+.fulfillment-stepper a span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: #14513f;
+  color: #fff;
+  font-size: 0.78rem;
+}
+
+.admin-collapsible {
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.admin-collapsible > summary {
+  cursor: pointer;
+  color: #17362d;
+  font-weight: 800;
+}
+
+.admin-collapsible > summary::marker {
+  color: #14513f;
+}
+
+.admin-collapsible .panel {
+  margin-top: 16px;
+}
+
 .action-stack {
   display: grid;
   gap: 8px;
@@ -919,6 +955,20 @@ h3 {
   display: grid;
   gap: 12px;
   padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(21, 53, 44, 0.1);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.box-item-source-list {
+  display: grid;
+  gap: 12px;
+}
+
+.box-item-source-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
   border-radius: 18px;
   border: 1px solid rgba(21, 53, 44, 0.1);
   background: rgba(255, 255, 255, 0.92);
