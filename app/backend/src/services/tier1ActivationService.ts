@@ -196,8 +196,6 @@ async function buildTier1SnapshotInput(code: string, actorUserId: string | null)
     activation.educationBundleId ?? activation.batch?.educationBundleId ?? null;
   const boxTemplateId =
     activation.boxTemplateId ?? activation.batch?.boxTemplateId ?? null;
-  const procedureName =
-    activation.procedureName ?? activation.batch?.procedureName ?? null;
 
   const [libraryModules, educationBundle, boxTemplate, boxItemResolution] =
     await Promise.all([
@@ -216,6 +214,11 @@ async function buildTier1SnapshotInput(code: string, actorUserId: string | null)
         includeInactiveTemplate: true,
       }),
     ]);
+  const procedureName =
+    activation.procedureName ??
+    activation.batch?.procedureName ??
+    educationBundle?.procedureName ??
+    null;
 
   const modulesById = new Map(libraryModules.map((module) => [module.id, module]));
   const assignedEducation = parseAssignedEducationOverrides(
@@ -419,8 +422,8 @@ function validateTier1SnapshotPreview(
 
   if (!preview.snapshot.procedureName) {
     issues.push({
-      code: "PROCEDURE_NAME_RECOMMENDED",
-      message: "Procedure name is recommended before finalizing a Tier 1 snapshot.",
+      code: "PROCEDURE_NAME_REQUIRED",
+      message: "Procedure name is required before finalizing a Tier 1 patient snapshot.",
     });
   }
 
