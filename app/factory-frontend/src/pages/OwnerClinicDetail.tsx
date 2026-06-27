@@ -2,15 +2,23 @@ import {
   ArrowLeft,
   BookPlus,
   Building2,
+  CheckCircle2,
+  Clipboard,
+  ClipboardCheck,
   Download,
   Eye,
+  FileDown,
+  ListChecks,
   Loader2,
   LockKeyhole,
   PackageCheck,
   PlusCircle,
+  Printer,
+  RotateCcw,
   Save,
   TableProperties,
   WandSparkles,
+  XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -30,6 +38,7 @@ import type {
   RecoveryLibraryCategoryKey,
   RecoveryLibraryProductMode,
   Tier1FinalizeResponse,
+  Tier1PackingListResponse,
   Tier1SnapshotPreview,
   Tier1SnapshotValidationResponse,
 } from "@/types";
@@ -385,6 +394,14 @@ function formatClinicError(error: unknown, fallback: string) {
     return "That lifecycle action is not available for the code’s current status.";
   }
 
+  if (apiError?.code === "PACKING_LIST_NOT_READY") {
+    return "Finalize this Tier 1 code before generating a packing list.";
+  }
+
+  if (apiError?.code === "PATIENT_SNAPSHOT_NOT_FOUND") {
+    return "This code does not have a current PatientSnapshot to pack from.";
+  }
+
   if (apiError?.code === "BOX_ITEM_KEY_EXISTS") {
     return "That box item key already exists. Choose the existing item from the catalog or use a unique key.";
   }
@@ -456,8 +473,48 @@ function formatOrderStatus(status?: string | null) {
     .join(" ");
 }
 
+function isCodeReadyToPack(status?: string | null) {
+  return Boolean(status && ["FINALIZED", "PACKED", "CLAIMED"].includes(status));
+}
+
+function isCodeNeedsFulfillmentSetup(status?: string | null) {
+  return Boolean(
+    status &&
+      ["ISSUED", "DRAFT", "CONFIGURED", "APPROVED", "RESET_FOR_REISSUE"].includes(status),
+  );
+}
+
+function csvEscape(value: unknown) {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
 function findGuideTitle(libraryPayload: RecoveryLibraryAdminPayload | null, guideId: string) {
   return libraryPayload?.modules.find((module) => module.id === guideId)?.title ?? guideId;
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function nestedRecord(value: unknown, key: string) {
+  return asPlainRecord(asPlainRecord(value)[key]);
+}
+
+function readRecordString(value: unknown, key: string) {
+  const entry = asPlainRecord(value)[key];
+  return typeof entry === "string" && entry.trim() ? entry : null;
+}
+
+function formatSnapshotBoxItemName(item: Tier1SnapshotPreview["snapshot"]["boxItems"][number]) {
+  return item.name || item.label || item.key || "Box item";
+}
+
+function formatSnapshotGuideTitle(guide: Tier1SnapshotPreview["snapshot"]["guides"][number]) {
+  return guide.title || guide.id || "Education guide";
 }
 
 function boxItemsToText(items: RecoveryLibraryBoxItem[] = []) {
@@ -572,6 +629,12 @@ export default function OwnerClinicDetailPage() {
   const [snapshotValidation, setSnapshotValidation] =
     useState<Tier1SnapshotValidationResponse | null>(null);
   const [snapshotPreviewLoading, setSnapshotPreviewLoading] = useState(false);
+  const [packingList, setPackingList] = useState<Tier1PackingListResponse | null>(null);
+  const [packingListLoading, setPackingListLoading] = useState(false);
+  const [packingListError, setPackingListError] = useState("");
+  const [fulfillmentNotice, setFulfillmentNotice] = useState("");
+  const [codeReissueReason, setCodeReissueReason] = useState("");
+  const [codeReissueLoading, setCodeReissueLoading] = useState(false);
   const [lifecycleLoading, setLifecycleLoading] = useState<"finalize" | "pack" | null>(null);
   const [downloadingClinic, setDownloadingClinic] = useState(false);
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null);
@@ -837,6 +900,10 @@ export default function OwnerClinicDetailPage() {
     setCodeEditorSuccess("");
     setSnapshotPreview(null);
     setSnapshotValidation(null);
+    setPackingList(null);
+    setPackingListError("");
+    setFulfillmentNotice("");
+    setCodeReissueReason("");
     setInlineBoxItemForm(EMPTY_INLINE_BOX_ITEM_FORM);
     setInlineGuideForm(EMPTY_INLINE_GUIDE_FORM);
 
@@ -889,6 +956,9 @@ export default function OwnerClinicDetailPage() {
       setCodeEditorForm(codeDetailToForm(payload.activationCode));
       setSnapshotPreview(null);
       setSnapshotValidation(null);
+      setPackingList(null);
+      setPackingListError("");
+      setFulfillmentNotice("");
       setCodeEditorSuccess(`Saved assignments for ${payload.activationCode.code}.`);
       setCodes((current) =>
         current.map((codeRow) =>
@@ -924,6 +994,9 @@ export default function OwnerClinicDetailPage() {
     setCodeEditorSuccess("");
     setSnapshotPreview(null);
     setSnapshotValidation(null);
+    setPackingList(null);
+    setPackingListError("");
+    setFulfillmentNotice("");
 
     try {
       const payload = await api.post<ActivationCodeDetailResponse>(
@@ -953,6 +1026,9 @@ export default function OwnerClinicDetailPage() {
     setCodeEditorSuccess("");
     setSnapshotPreview(null);
     setSnapshotValidation(null);
+    setPackingList(null);
+    setPackingListError("");
+    setFulfillmentNotice("");
 
     try {
       const payload = await api.post<ActivationCodeDetailResponse>(
@@ -982,6 +1058,9 @@ export default function OwnerClinicDetailPage() {
     setCodeEditorSuccess("");
     setSnapshotPreview(null);
     setSnapshotValidation(null);
+    setPackingList(null);
+    setPackingListError("");
+    setFulfillmentNotice("");
 
     try {
       const payload = await api.post<{
@@ -1043,6 +1122,9 @@ export default function OwnerClinicDetailPage() {
     setCodeEditorSuccess("");
     setSnapshotPreview(null);
     setSnapshotValidation(null);
+    setPackingList(null);
+    setPackingListError("");
+    setFulfillmentNotice("");
 
     try {
       const recommendationOrder = parseNumberText(inlineGuideForm.recommendationOrder);
@@ -1159,6 +1241,7 @@ export default function OwnerClinicDetailPage() {
       );
       await loadCodes(activeBatchId);
       await loadDetail(false);
+      await handleLoadPackingList(selectedCode.code);
     } catch (nextError) {
       setCodeEditorError(formatClinicError(nextError, "We couldn’t finalize that activation code."));
     } finally {
@@ -1185,11 +1268,238 @@ export default function OwnerClinicDetailPage() {
       setCodeEditorSuccess("Code marked packed. The physical box is ready/prepared.");
       await loadCodes(activeBatchId);
       await loadDetail(false);
+      await handleLoadPackingList(selectedCode.code);
     } catch (nextError) {
       setCodeEditorError(formatClinicError(nextError, "We couldn’t mark that code as packed."));
     } finally {
       setLifecycleLoading(null);
     }
+  }
+
+  function getOrderCodes(orderId: string) {
+    return codes.filter((code) => code.clinicOrderId === orderId);
+  }
+
+  function getPackingListBundleName(list: Tier1PackingListResponse) {
+    const sourceBundle = nestedRecord(list.fulfillment.sourceMetadata, "educationBundle");
+    const frozenName = readRecordString(sourceBundle, "name");
+    const bundleId = list.snapshot.educationBundleId ?? list.activationCode.educationBundleId;
+    return frozenName ?? (bundleId ? bundleNameById.get(bundleId) ?? bundleId : "—");
+  }
+
+  function getPackingListTemplateName(list: Tier1PackingListResponse) {
+    const sourceTemplate = nestedRecord(list.fulfillment.sourceMetadata, "boxTemplate");
+    const frozenName = readRecordString(sourceTemplate, "name");
+    const templateId = list.snapshot.boxTemplateId ?? list.activationCode.boxTemplateId;
+    return frozenName ?? (templateId ? templateNameById.get(templateId) ?? templateId : "—");
+  }
+
+  function getPackingClinicNotes(list: Tier1PackingListResponse) {
+    return readRecordString(list.fulfillment.clinicNotes, "clinicNotes");
+  }
+
+  function getPackingItemNotes(list: Tier1PackingListResponse) {
+    const itemNotes = asPlainRecord(list.fulfillment.clinicNotes).itemNotes;
+    return Array.isArray(itemNotes) ? itemNotes.map(asPlainRecord) : [];
+  }
+
+  function buildPackingListText(list: Tier1PackingListResponse) {
+    const lines = [
+      `Packing list for ${list.activationCode.code}`,
+      `Clinic: ${list.activationCode.clinicName || list.activationCode.clinicTag || "—"}`,
+      `Clinic order: ${list.clinicOrder?.orderNumber || list.clinicOrder?.id || list.activationCode.clinicOrderId || "—"}`,
+      `Procedure: ${list.snapshot.procedureName || list.activationCode.procedureName || "—"}`,
+      `Product mode: ${formatProductMode(list.snapshot.productMode)}`,
+      `Box template: ${getPackingListTemplateName(list)}`,
+      `Education bundle: ${getPackingListBundleName(list)}`,
+      `Snapshot: v${list.snapshot.version} (${list.snapshot.status})`,
+      "",
+      "Box items:",
+      ...(list.fulfillment.boxItems.length
+        ? list.fulfillment.boxItems.map((item, index) => {
+            const note = item.note ? ` — ${item.note}` : "";
+            const instructions = item.instructions ? ` (${item.instructions})` : "";
+            return `${index + 1}. ${formatSnapshotBoxItemName(item)}${note}${instructions}`;
+          })
+        : ["No box items assigned."]),
+      "",
+      "Assigned guides:",
+      ...(list.fulfillment.guides.length
+        ? list.fulfillment.guides.map((guide, index) => {
+            const label = guide.recommendationLabel ? ` — ${guide.recommendationLabel}` : "";
+            return `${index + 1}. ${formatSnapshotGuideTitle(guide)}${label}`;
+          })
+        : ["No guides assigned."]),
+    ];
+
+    return lines.join("\n");
+  }
+
+  async function copyTextToClipboard(text: string, onSuccess: () => void, onFailure: () => void) {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API unavailable");
+      }
+      await navigator.clipboard.writeText(text);
+      onSuccess();
+    } catch {
+      onFailure();
+    }
+  }
+
+  async function handleLoadPackingList(codeOverride?: string) {
+    const targetCode = codeOverride ?? selectedCode?.code;
+    if (!targetCode) return;
+
+    setPackingListLoading(true);
+    setPackingListError("");
+    setFulfillmentNotice("");
+
+    try {
+      const payload = await api.get<Tier1PackingListResponse>(
+        `/owner/activation-codes/${encodeURIComponent(targetCode)}/packing-list`,
+      );
+      setPackingList(payload);
+      setFulfillmentNotice("Packing list loaded from the frozen PatientSnapshot.");
+    } catch (nextError) {
+      setPackingList(null);
+      setPackingListError(formatClinicError(nextError, "We couldn’t load the packing list."));
+    } finally {
+      setPackingListLoading(false);
+    }
+  }
+
+  async function handleCopyPackingList() {
+    if (!packingList) return;
+    await copyTextToClipboard(
+      buildPackingListText(packingList),
+      () => setFulfillmentNotice("Packing list copied to clipboard."),
+      () => setPackingListError("Clipboard access was unavailable. Use Print packing list instead."),
+    );
+  }
+
+  function handlePrintPackingList() {
+    if (!packingList) {
+      setPackingListError("Load the packing list before printing.");
+      return;
+    }
+    window.print();
+  }
+
+  async function handleResetCodeForReissue() {
+    if (!selectedCode) return;
+    const reason = codeReissueReason.trim();
+
+    if (!reason) {
+      setPackingListError("Enter an owner audit reason before resetting this code for reissue.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Reset this Tier 1 activation code for reissue? This is an audited owner-only action and should not be used for casual reuse.",
+    );
+    if (!confirmed) return;
+
+    setCodeReissueLoading(true);
+    setCodeEditorError("");
+    setCodeEditorSuccess("");
+    setPackingListError("");
+    setFulfillmentNotice("");
+
+    try {
+      await api.post<{ activationCode: Tier1FinalizeResponse["activationCode"] }>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}/reset-for-reissue`,
+        { reason },
+      );
+      const detailPayload = await api.get<ActivationCodeDetailResponse>(
+        `/owner/activation-codes/${encodeURIComponent(selectedCode.code)}`,
+      );
+      setSelectedCode(detailPayload.activationCode);
+      setCodeEditorForm(codeDetailToForm(detailPayload.activationCode));
+      setSnapshotPreview(null);
+      setSnapshotValidation(null);
+      setPackingList(null);
+      setCodeReissueReason("");
+      setCodeEditorSuccess("Code reset for reissue with an owner audit reason. Reconfigure and finalize before packing again.");
+      await loadCodes(activeBatchId);
+      await loadDetail(false);
+    } catch (nextError) {
+      setPackingListError(formatClinicError(nextError, "We couldn’t reset that code for reissue."));
+    } finally {
+      setCodeReissueLoading(false);
+    }
+  }
+
+  async function handleCopyOrderCodes(order: ClinicOrder) {
+    const orderCodes = getOrderCodes(order.id);
+
+    if (orderCodes.length === 0) {
+      setClinicOrdersError("No activation codes are loaded for this order yet.");
+      setClinicOrdersSuccess("");
+      return;
+    }
+
+    await copyTextToClipboard(
+      orderCodes.map((code) => code.code).join("\n"),
+      () => {
+        setClinicOrdersSuccess(`Copied ${orderCodes.length} activation code(s) for this order.`);
+        setClinicOrdersError("");
+      },
+      () => {
+        setClinicOrdersError("Clipboard access was unavailable. Use Export order CSV instead.");
+        setClinicOrdersSuccess("");
+      },
+    );
+  }
+
+  function handleExportOrderCodes(order: ClinicOrder) {
+    const orderCodes = getOrderCodes(order.id);
+
+    if (orderCodes.length === 0) {
+      setClinicOrdersError("No activation codes are loaded for this order yet.");
+      setClinicOrdersSuccess("");
+      return;
+    }
+
+    const headers = [
+      "code",
+      "status",
+      "clinicTag",
+      "clinicOrderId",
+      "batchId",
+      "procedureName",
+      "productMode",
+      "boxTemplateId",
+      "educationBundleId",
+      "createdAt",
+      "claimedAt",
+      "claimedByUserId",
+    ];
+    const rows = orderCodes.map((code) => [
+      code.code,
+      code.status,
+      code.clinicTag,
+      code.clinicOrderId,
+      code.batchId,
+      code.procedureName,
+      code.productMode,
+      code.boxTemplateId,
+      code.educationBundleId,
+      code.createdAt,
+      code.claimedAt,
+      code.claimedByUserId,
+    ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map(csvEscape).join(","))
+      .join("\n");
+    const filenameSeed = order.orderNumber || order.id;
+
+    downloadBlob(
+      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+      `activation-codes-order-${filenameSeed}.csv`,
+    );
+    setClinicOrdersSuccess(`Exported ${orderCodes.length} activation code(s) for this order.`);
+    setClinicOrdersError("");
   }
 
   function addGuideToCodeField(field: "guideIdsText" | "recommendedGuideIdsText") {
@@ -1473,6 +1783,42 @@ export default function OwnerClinicDetailPage() {
     return counts;
   }, [codes]);
 
+  const orderCodeSummaryById = useMemo(() => {
+    const summaries = new Map<
+      string,
+      {
+        total: number;
+        readyToPack: number;
+        needsSetup: number;
+        packed: number;
+        claimed: number;
+      }
+    >();
+
+    for (const code of codes) {
+      if (!code.clinicOrderId) continue;
+      const current =
+        summaries.get(code.clinicOrderId) ??
+        {
+          total: 0,
+          readyToPack: 0,
+          needsSetup: 0,
+          packed: 0,
+          claimed: 0,
+        };
+
+      current.total += 1;
+      if (isCodeReadyToPack(code.status)) current.readyToPack += 1;
+      if (isCodeNeedsFulfillmentSetup(code.status)) current.needsSetup += 1;
+      if (code.status === "PACKED") current.packed += 1;
+      if (code.status === "CLAIMED") current.claimed += 1;
+
+      summaries.set(code.clinicOrderId, current);
+    }
+
+    return summaries;
+  }, [codes]);
+
   const bundleNameById = useMemo(() => {
     return new Map((libraryPayload?.bundles ?? []).map((bundle) => [bundle.id, bundle.name]));
   }, [libraryPayload?.bundles]);
@@ -1530,6 +1876,50 @@ export default function OwnerClinicDetailPage() {
     selectedCodeIsTier1 && isTier1FinalizableStatus(selectedCode?.status);
   const selectedCodeCanPack =
     selectedCodeIsTier1 && isTier1PackableStatus(selectedCode?.status);
+  const finalizationChecklist = [
+    {
+      label: "Clinic selected",
+      description: snapshotValidation?.preview?.activationCode.clinicTag || selectedCode?.clinicTag || "No clinic",
+      passed: Boolean(snapshotValidation?.preview?.activationCode.clinicTag || selectedCode?.clinicTag),
+    },
+    {
+      label: "Tier 1 product mode",
+      description: formatProductMode(snapshotValidation?.preview?.snapshot.productMode ?? codeEditorForm.productMode),
+      passed: (snapshotValidation?.preview?.snapshot.productMode ?? codeEditorForm.productMode) === "kit_only",
+    },
+    {
+      label: "Box items confirmed",
+      description: snapshotValidation?.preview
+        ? `${snapshotValidation.preview.counts.boxItems} item(s) in preview`
+        : "Run preview to confirm",
+      passed: (snapshotValidation?.preview?.counts.boxItems ?? 0) > 0,
+    },
+    {
+      label: "Guide or bundle assigned",
+      description: snapshotValidation?.preview
+        ? `${snapshotValidation.preview.counts.guides} guide(s) in preview`
+        : codeEditorForm.educationBundleId
+          ? "Bundle selected; run preview"
+          : "Run preview after assigning education",
+      passed:
+        (snapshotValidation?.preview?.counts.guides ?? 0) > 0 ||
+        Boolean(snapshotValidation?.preview?.snapshot.educationBundleId),
+    },
+    {
+      label: "Preview can render",
+      description: snapshotValidation?.preview ? "Preview loaded" : "Preview not loaded yet",
+      passed: Boolean(snapshotValidation?.preview),
+    },
+    {
+      label: "Snapshot can be created",
+      description: snapshotValidation
+        ? snapshotValidation.valid
+          ? "Ready to finalize"
+          : "Resolve validation messages"
+        : "Run preview validation",
+      passed: snapshotValidation?.valid === true,
+    },
+  ];
 
   if (loading) {
     return (
@@ -1968,6 +2358,21 @@ export default function OwnerClinicDetailPage() {
                       <div className="cell-strong">{codesByOrderId.get(order.id) ?? 0} loaded code(s)</div>
                       <div className="cell-muted">{order.batchCount} batch(es)</div>
                       {(() => {
+                        const summary = orderCodeSummaryById.get(order.id);
+                        if (!summary) return null;
+
+                        return (
+                          <div className="fulfillment-summary">
+                            <span className="status-pill active">{summary.readyToPack} ready to pack</span>
+                            <span className={summary.needsSetup > 0 ? "status-pill warning" : "status-pill active"}>
+                              {summary.needsSetup} need setup/finalization
+                            </span>
+                            {summary.packed > 0 ? <span className="status-pill active">{summary.packed} packed</span> : null}
+                            {summary.claimed > 0 ? <span className="status-pill inactive">{summary.claimed} claimed</span> : null}
+                          </div>
+                        );
+                      })()}
+                      {(() => {
                         const orderCodes = codes.filter((code) => code.clinicOrderId === order.id);
                         if (orderCodes.length === 0) return null;
 
@@ -2038,6 +2443,24 @@ export default function OwnerClinicDetailPage() {
                         >
                           View clinic codes
                         </button>
+                        <button
+                          className="button secondary action-button"
+                          type="button"
+                          onClick={() => void handleCopyOrderCodes(order)}
+                          disabled={(codesByOrderId.get(order.id) ?? 0) === 0}
+                        >
+                          <Clipboard size={16} />
+                          Copy order codes
+                        </button>
+                        <button
+                          className="button secondary action-button"
+                          type="button"
+                          onClick={() => handleExportOrderCodes(order)}
+                          disabled={(codesByOrderId.get(order.id) ?? 0) === 0}
+                        >
+                          <FileDown size={16} />
+                          Export order CSV
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -2063,6 +2486,8 @@ export default function OwnerClinicDetailPage() {
         {libraryError ? <div className="alert error">{libraryError}</div> : null}
         {codeEditorError ? <div className="alert error">{codeEditorError}</div> : null}
         {codeEditorSuccess ? <div className="alert success">{codeEditorSuccess}</div> : null}
+        {packingListError ? <div className="alert error">{packingListError}</div> : null}
+        {fulfillmentNotice ? <div className="alert success">{fulfillmentNotice}</div> : null}
 
         {codeEditorLoading ? (
           <div className="info-card">
@@ -2133,6 +2558,86 @@ export default function OwnerClinicDetailPage() {
                 ) : null}
               </div>
             </div>
+
+            {selectedCodeIsTier1 ? (
+              <div className="info-card form-stack print-hidden">
+                <div className="section-heading compact-section-heading">
+                  <div>
+                    <p className="eyebrow">Fulfillment tools</p>
+                    <h3>Frozen snapshot packing</h3>
+                    <p className="muted">
+                      Packing lists are available after finalization and read from the PatientSnapshot, not from live templates or bundles.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="action-row">
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => void handleLoadPackingList()}
+                    disabled={packingListLoading || !isCodeReadyToPack(selectedCode.status)}
+                  >
+                    {packingListLoading ? <Loader2 size={16} className="spin" /> : <ListChecks size={16} />}
+                    Load packing list
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => void handleCopyPackingList()}
+                    disabled={!packingList}
+                  >
+                    <ClipboardCheck size={16} />
+                    Copy checklist
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={handlePrintPackingList}
+                    disabled={!packingList}
+                  >
+                    <Printer size={16} />
+                    Print packing list
+                  </button>
+                </div>
+
+                {!isCodeReadyToPack(selectedCode.status) ? (
+                  <div className="inline-note compact-note">
+                    <LockKeyhole size={18} />
+                    <span>Finalize this code before packing so the physical box matches the patient’s frozen instructions.</span>
+                  </div>
+                ) : null}
+
+                {["FINALIZED", "PACKED", "CLAIMED"].includes(selectedCode.status) ? (
+                  <details className="advanced-panel danger-panel">
+                    <summary>Owner reset_for_reissue (audited)</summary>
+                    <div className="form-stack">
+                      <p className="muted">
+                        Claimed or finalized codes are not casually reusable. Reset only when an owner intentionally voids the current fulfillment path and records why.
+                      </p>
+                      <label className="field">
+                        <span>Audit reason required</span>
+                        <textarea
+                          value={codeReissueReason}
+                          onChange={(event) => setCodeReissueReason(event.target.value)}
+                          placeholder="Example: Box damaged before clinic handoff; reissue replacement code."
+                          rows={3}
+                        />
+                      </label>
+                      <button
+                        className="button danger"
+                        type="button"
+                        onClick={() => void handleResetCodeForReissue()}
+                        disabled={codeReissueLoading || !codeReissueReason.trim()}
+                      >
+                        {codeReissueLoading ? <Loader2 size={16} className="spin" /> : <RotateCcw size={16} />}
+                        Reset for reissue
+                      </button>
+                    </div>
+                  </details>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="grid-two">
               <label className="field">
@@ -2752,6 +3257,23 @@ export default function OwnerClinicDetailPage() {
                 </div>
               ) : null}
 
+              {selectedCodeIsTier1 ? (
+                <div className="validation-check-grid">
+                  {finalizationChecklist.map((item) => (
+                    <div
+                      className={item.passed ? "validation-check passed" : "validation-check needs-work"}
+                      key={item.label}
+                    >
+                      {item.passed ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
+                      <div>
+                        <strong>{item.label}</strong>
+                        <span>{item.description}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
               {snapshotValidation ? (
                 <div className={snapshotValidation.valid ? "alert success" : "alert error"}>
                   <strong>{snapshotValidation.valid ? "Validation passed." : "Validation needs attention."}</strong>
@@ -2851,6 +3373,168 @@ export default function OwnerClinicDetailPage() {
                 <p className="muted">Use Preview PatientSnapshot before finalizing this code.</p>
               )}
             </div>
+
+            {packingList ? (
+              <div className="info-card form-stack packing-list-panel">
+                <div className="section-heading compact-section-heading print-hidden">
+                  <div>
+                    <p className="eyebrow">Packing checklist</p>
+                    <h3>Fulfillment view from frozen snapshot</h3>
+                    <p className="muted">
+                      Use this checklist to prepare the physical box. It is sourced from PatientSnapshot v{packingList.snapshot.version}.
+                    </p>
+                  </div>
+                  <div className="action-row">
+                    <button className="button secondary" type="button" onClick={() => void handleCopyPackingList()}>
+                      <ClipboardCheck size={16} />
+                      Copy
+                    </button>
+                    <button className="button secondary" type="button" onClick={handlePrintPackingList}>
+                      <Printer size={16} />
+                      Print
+                    </button>
+                  </div>
+                </div>
+
+                <div className="packing-list-header">
+                  <div>
+                    <p className="eyebrow">Activation code</p>
+                    <h2>{packingList.activationCode.code}</h2>
+                    <p className="muted">
+                      {formatActivationCodeStatus(packingList.activationCode.status)} · Snapshot v{packingList.snapshot.version} ({packingList.snapshot.status})
+                    </p>
+                  </div>
+                  <span className="status-pill active">Source: frozen PatientSnapshot</span>
+                </div>
+
+                <div className="snapshot-preview-grid">
+                  <div className="library-preview-card">
+                    <h3>Box identity</h3>
+                    <dl className="meta-list">
+                      <div>
+                        <dt>Clinic</dt>
+                        <dd>{packingList.activationCode.clinicName || packingList.activationCode.clinicTag || "—"}</dd>
+                      </div>
+                      <div>
+                        <dt>Clinic order</dt>
+                        <dd>{packingList.clinicOrder?.orderNumber || packingList.clinicOrder?.id || packingList.activationCode.clinicOrderId || "—"}</dd>
+                      </div>
+                      <div>
+                        <dt>Procedure</dt>
+                        <dd>{packingList.snapshot.procedureName || packingList.activationCode.procedureName || "—"}</dd>
+                      </div>
+                      <div>
+                        <dt>Product mode</dt>
+                        <dd>{formatProductMode(packingList.snapshot.productMode)}</dd>
+                      </div>
+                    </dl>
+                  </div>
+
+                  <div className="library-preview-card">
+                    <h3>Assigned sources</h3>
+                    <dl className="meta-list">
+                      <div>
+                        <dt>BoxTemplate</dt>
+                        <dd>{getPackingListTemplateName(packingList)}</dd>
+                      </div>
+                      <div>
+                        <dt>EducationBundle</dt>
+                        <dd>{getPackingListBundleName(packingList)}</dd>
+                      </div>
+                      <div>
+                        <dt>Finalized</dt>
+                        <dd>{formatDateTime(packingList.activationCode.finalizedAt)}</dd>
+                      </div>
+                      <div>
+                        <dt>Packed</dt>
+                        <dd>{formatDateTime(packingList.activationCode.packedAt)}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                </div>
+
+                <div className="packing-checklist-grid">
+                  <div className="library-preview-card">
+                    <h3>Final box items</h3>
+                    {packingList.fulfillment.boxItems.length ? (
+                      <ol className="checklist-list">
+                        {packingList.fulfillment.boxItems.map((item, index) => (
+                          <li key={`${item.key ?? item.label ?? "item"}-${index}`}>
+                            <label>
+                              <input type="checkbox" />
+                              <span>
+                                <strong>{formatSnapshotBoxItemName(item)}</strong>
+                                {item.note ? <small>Note: {item.note}</small> : null}
+                                {item.instructions ? <small>Instructions: {item.instructions}</small> : null}
+                              </span>
+                            </label>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="muted">No box items frozen into this snapshot.</p>
+                    )}
+                  </div>
+
+                  <div className="library-preview-card">
+                    <h3>Assigned guides</h3>
+                    {packingList.fulfillment.guides.length ? (
+                      <ol className="checklist-list">
+                        {packingList.fulfillment.guides.map((guide, index) => (
+                          <li key={`${guide.id ?? guide.title ?? "guide"}-${index}`}>
+                            <label>
+                              <input type="checkbox" />
+                              <span>
+                                <strong>{formatSnapshotGuideTitle(guide)}</strong>
+                                {guide.summary ? <small>{guide.summary}</small> : null}
+                                {guide.recommendationLabel ? <small>Label: {guide.recommendationLabel}</small> : null}
+                                {guide.videoUrl ? <small>Video included</small> : null}
+                              </span>
+                            </label>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="muted">No guides frozen into this snapshot.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="snapshot-preview-grid">
+                  <div className="library-preview-card">
+                    <h3>Clinic notes</h3>
+                    <p className="muted">{getPackingClinicNotes(packingList) || "No clinic notes frozen into this snapshot."}</p>
+                    {getPackingItemNotes(packingList).length ? (
+                      <ul className="compact-list">
+                        {getPackingItemNotes(packingList).map((note, index) => (
+                          <li key={`${readRecordString(note, "key") ?? "note"}-${index}`}>
+                            {readRecordString(note, "label") || readRecordString(note, "key") || "Item"}: {readRecordString(note, "note") || "—"}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+
+                  <div className="library-preview-card">
+                    <h3>Videos and counts</h3>
+                    <dl className="meta-list">
+                      <div>
+                        <dt>Videos</dt>
+                        <dd>{packingList.fulfillment.counts.videos}</dd>
+                      </div>
+                      <div>
+                        <dt>Box items</dt>
+                        <dd>{packingList.fulfillment.counts.boxItems}</dd>
+                      </div>
+                      <div>
+                        <dt>Guides</dt>
+                        <dd>{packingList.fulfillment.counts.guides}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <button className="button primary" type="submit" disabled={codeEditorSaving || selectedCodeLocked}>
               {codeEditorSaving ? (

@@ -816,6 +816,18 @@ h3 {
   color: #59756b;
 }
 
+.status-pill.warning {
+  background: rgba(191, 90, 36, 0.12);
+  color: #9a4b1f;
+}
+
+.fulfillment-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
 .library-form-grid {
   margin-top: 0;
 }
@@ -978,6 +990,49 @@ h3 {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
+.validation-check-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.validation-check {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(21, 53, 44, 0.1);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.validation-check strong,
+.validation-check span {
+  display: block;
+}
+
+.validation-check strong {
+  color: #17362d;
+}
+
+.validation-check span {
+  color: #59756b;
+  font-size: 0.86rem;
+}
+
+.validation-check.passed {
+  border-color: rgba(27, 116, 75, 0.18);
+  background: rgba(27, 116, 75, 0.07);
+  color: #126346;
+}
+
+.validation-check.needs-work {
+  border-color: rgba(191, 90, 36, 0.22);
+  background: rgba(191, 90, 36, 0.07);
+  color: #9a4b1f;
+}
+
 .library-preview-card {
   display: grid;
   gap: 8px;
@@ -1001,6 +1056,70 @@ h3 {
 
 .compact-list-panel {
   max-height: 320px;
+}
+
+.danger-panel {
+  border-color: rgba(166, 49, 49, 0.2);
+  background: rgba(166, 49, 49, 0.04);
+}
+
+.packing-list-panel {
+  border-color: rgba(20, 81, 63, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 250, 246, 0.94));
+}
+
+.packing-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(20, 81, 63, 0.06);
+}
+
+.packing-list-header h2 {
+  margin: 4px 0;
+}
+
+.packing-checklist-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.checklist-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checklist-list label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(20, 81, 63, 0.05);
+}
+
+.checklist-list input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.checklist-list strong,
+.checklist-list small {
+  display: block;
+}
+
+.checklist-list small {
+  margin-top: 3px;
+  color: #59756b;
 }
 
 .owner-count-grid,
@@ -1036,6 +1155,33 @@ h3 {
 
 .spin {
   animation: spin 1s linear infinite;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .print-hidden,
+  .workspace-nav,
+  .hero-actions,
+  .owner-top-nav {
+    display: none !important;
+  }
+
+  .packing-list-panel {
+    box-shadow: none;
+    border: 1px solid #17362d;
+    background: #fff;
+    break-inside: avoid;
+  }
+
+  .packing-list-panel .library-preview-card,
+  .packing-list-panel .packing-list-header,
+  .packing-list-panel .checklist-list label {
+    border: 1px solid rgba(23, 54, 45, 0.25);
+    background: #fff;
+  }
 }
 
 @keyframes spin {
